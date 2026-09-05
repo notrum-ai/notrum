@@ -12,6 +12,7 @@ ahead of GitHub are included; a behind or diverged branch is rejected.
   Xcode Command Line Tools, and system Python 3.9 or newer (`/usr/bin/python3`).
 - A working local `codex` CLI in `PATH`, already signed in and able to use
   `gpt-5.6-luna`. The command explicitly selects `medium` reasoning effort.
+  Set `CODEX=/absolute/path/to/codex` to select another installation explicitly.
 - A `GITHUB_TOKEN` environment variable containing a fine-grained personal
   access token with `Contents: Read and write` permission for the repository.
   Repository rules still apply; publication does not bypass branch protection.
@@ -35,6 +36,24 @@ the token in shell history, for example:
 read -s GITHUB_TOKEN && export GITHUB_TOKEN
 make publish
 unset GITHUB_TOKEN
+```
+
+Every external command is printed as `publish: run ...` before execution. Prompt
+contents and credentials are never included in that line. Publication prints the
+resolved Codex executable separately. It does not launch Codex merely to check
+`--help`; the first launch is the actual read-only release-notes request.
+
+If macOS kills Codex or displays a security warning, do not bypass Gatekeeper.
+Install or update the native standalone CLI with OpenAI's official installer:
+
+```sh
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+```
+
+Open a new terminal, or point publishing at that installation explicitly:
+
+```sh
+CODEX="$HOME/.local/bin/codex" make publish
 ```
 
 ## What the command does

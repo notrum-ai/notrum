@@ -12,6 +12,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -47,6 +48,7 @@ def run(command, *, input=None, env=None, stdout=subprocess.PIPE, timeout=None):
     # arbitrary project commands must never inherit it.
     environment.pop("GITHUB_TOKEN", None)
     environment.update(env or {})
+    print("publish: run " + shlex.join(str(argument) for argument in command), flush=True)
     result = subprocess.run(command, cwd=ROOT, input=input, text=True, stdout=stdout,
                             env=environment, timeout=timeout, check=True)
     return result.stdout or ""
@@ -286,7 +288,10 @@ def codex_notes(evidence, *, final=False):
         directory = Path(temporary)
         schema, output = directory / "schema.json", directory / "notes.json"
         schema.write_text(json.dumps(NOTES_SCHEMA), encoding="utf-8")
-        run(["codex", "exec", "--model", "gpt-5.6-luna", "--config", 'model_reasoning_effort="medium"',
+        executable = shutil.which(os.environ.get("CODEX", "codex"))
+        if not executable:
+            raise ValueError("Codex CLI is required; set CODEX to its executable path")
+        run([executable, "exec", "--model", "gpt-5.6-luna", "--config", 'model_reasoning_effort="medium"',
              "--config", 'approval_policy="never"', "--sandbox", "read-only", "--ephemeral",
              "--skip-git-repo-check", "--cd", str(directory), "--output-schema", str(schema),
              "--output-last-message", str(output), "-"], input=prompt, stdout=None)
@@ -536,14 +541,16 @@ def upload_release(state, github, directory):
 def main():
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("make publish requires an Apple Silicon Mac for all three local builds")
-    for executable in ("docker", "codex", "xcrun"):
+    for executable in ("docker", "xcrun"):
         if not shutil.which(executable):
             raise ValueError(f"{executable} is required; see docs/publishing.md")
+    codex = shutil.which(os.environ.get("CODEX", "codex"))
+    if not codex:
+        raise ValueError("Codex CLI is required; set CODEX to its executable path")
+    print(f"publish: Codex executable: {codex}", flush=True)
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token or any(character.isspace() for character in token):
         raise ValueError("GITHUB_TOKEN is required; see docs/publishing.md")
-    # Fail before changing tracked files if the local CLI cannot even start.
-    run(["codex", "exec", "--help"], timeout=30)
     with publish_lock():
         repository = repository_from_remote(git("remote", "get-url", "origin").strip())
         github = GitHub(repository, token)

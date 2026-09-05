@@ -73,6 +73,7 @@ class VersionTests(unittest.TestCase):
 
     def test_codex_uses_requested_model_and_structured_output(self):
         def execute(command, **kwargs):
+            self.assertEqual(command[0], "/example/codex")
             self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
             self.assertIn('model_reasoning_effort="medium"', command)
             self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
@@ -80,9 +81,11 @@ class VersionTests(unittest.TestCase):
             self.assertIn("evidence fixture", kwargs["input"])
             output = Path(command[command.index("--output-last-message") + 1])
             output.write_text('{"improvements":["Faster search."],"bug_fixes":[]}', encoding="utf-8")
-        with patch.object(publish, "run", side_effect=execute):
+        with patch.object(publish.shutil, "which", return_value="/example/codex"), \
+                patch.object(publish, "run", side_effect=execute):
             self.assertEqual(publish.codex_notes("evidence fixture")["improvements"], ["Faster search."])
-        with patch.object(publish, "run", side_effect=subprocess.CalledProcessError(1, ["codex"])):
+        with patch.object(publish.shutil, "which", return_value="/example/codex"), \
+                patch.object(publish, "run", side_effect=subprocess.CalledProcessError(1, ["codex"])):
             with self.assertRaises(subprocess.CalledProcessError):
                 publish.codex_notes("evidence fixture")
         for value in ({}, {"improvements": [""], "bug_fixes": []},

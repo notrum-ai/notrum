@@ -17,7 +17,7 @@ rustup_init="$host_build_dir/rustup-init"
 output="$project_root/dist/Notrum.app"
 
 if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
-    echo "build-macos: make build requires an Apple Silicon Mac" >&2
+    echo "build-macos: make build-macos requires an Apple Silicon Mac" >&2
     exit 1
 fi
 if ! command -v xcrun >/dev/null 2>&1; then

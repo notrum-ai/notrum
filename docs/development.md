@@ -10,7 +10,8 @@ Docker with Compose and a running engine are required. The Dockerfile pins
 Rust 1.88.0 and the audit tools. Named Docker volumes retain build and download
 caches between runs.
 
-Native Apple Silicon operations run through `make build`, `make native-smoke`,
+Native Apple Silicon operations run through `make build-macos` (also available
+as `make build`), `make native-smoke`,
 and `make native-external-smoke`. They require macOS, Xcode Command Line Tools,
 and `python3`. The build installs pinned Rust under `.host-build/`, uses the
 system Xcode SDK, and leaves global Rust directories and shell profiles alone.
@@ -30,7 +31,9 @@ system Xcode SDK, and leaves global Rust directories and shell profiles alone.
 | `make audit` | Source boundary, dependency license/source, and RustSec checks |
 | `make check` | Full gate, including container builds and UI checks, without a native macOS build |
 | `make` | Full gate, native Apple Silicon build, then native external-file smoke |
-| `make build` | Build `dist/Notrum.app` on an Apple Silicon Mac |
+| `make build-macos` / `make build` | Build a release `dist/Notrum.app` on an Apple Silicon Mac |
+| `make build-linux` | Build a stripped Linux release executable in `dist/linux/<architecture>/notrum` through Docker |
+| `make build-linux-smoke` | Build and launch that Linux release executable under Xvfb in a temporary workspace |
 | `make native-smoke` | Generate demo data, build, and launch the bundle in a temporary workspace |
 | `make native-external-smoke` | Test Finder/Launch Services delivery to an existing bundle |
 | `make clean` | Remove Docker debug Cargo artifacts |
@@ -123,6 +126,31 @@ resource byte for byte. PNG encoding can differ between rendering toolchains
 even when the displayed pixels are identical.
 
 ## Packaging and release limitations
+
+### Linux
+
+`make build-linux` uses `cargo build --locked --release` for the application
+binary with its normal features, without `test-utils`. It copies and strips the
+result from the Docker Cargo cache into `dist/linux/<architecture>/notrum`.
+The architecture is that of the toolchain container (`aarch64` or `x86_64`);
+this target does not perform cross-compilation. Repeated builds replace that
+generated executable while preserving the macOS bundle and other architectures.
+
+`make check` includes `make build-linux-smoke`, which launches the copied
+release executable under Xvfb with software rendering, a temporary home, and a
+disposable demo workspace. The launch must exit successfully within 30 seconds.
+
+The binary dynamically links against the Debian 12 toolchain's system libraries
+and requires glibc 2.36 or newer on a compatible Linux desktop. Runtime support
+includes X11/Wayland libraries, libxkbcommon, EGL/OpenGL for GPU rendering, fonts,
+and an XDG desktop portal backend for native file dialogs. Inspect the actual
+linked dependencies with `ldd dist/linux/<architecture>/notrum` on Linux.
+System libraries are not bundled. This command does not produce an AppImage,
+DEB/RPM package, installer, or desktop registration. Test GPU rendering, Wayland,
+file dialogs, and the intended distribution before publishing binaries; retain
+dependency license notices and provide the corresponding source.
+
+### macOS
 
 You can package an existing arm64 binary from a controlled macOS runner inside
 Docker. Set `SOURCE_REVISION` to the actual source revision of that binary

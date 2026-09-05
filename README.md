@@ -24,9 +24,10 @@ Your notes remain Markdown files that you can back up or open in another editor.
 
 ## Project status
 
-Notrum is in early development. The current interface is in Russian.
-The documented native build targets **Apple Silicon Macs**. Linux containers
-are used for development and testing; Windows and Linux desktop releases
+Notrum is in early development. The interface defaults to English and offers
+17 language variants in Settings → General → Language.
+Native builds target **Apple Silicon Macs**. Linux release binaries can be
+built through Docker for the container's architecture. Windows desktop releases
 are not currently supported.
 
 There is no signed, notarized public release. Local builds are unsigned.
@@ -42,6 +43,8 @@ work and must not be treated as disposable cache.
 
 ## Build and run
 
+### macOS
+
 Requirements: an Apple Silicon Mac, Docker with Docker Compose and a running
 Docker engine, Xcode Command Line Tools, and `python3`. A preinstalled Rust
 toolchain is not required. Clone the repository, then build the application:
@@ -49,7 +52,7 @@ toolchain is not required. Clone the repository, then build the application:
 ```sh
 git clone https://github.com/notrum-ai/notrum.git
 cd notrum
-make build
+make build-macos
 open dist/Notrum.app
 ```
 
@@ -60,9 +63,11 @@ To open an existing workspace explicitly:
 open dist/Notrum.app --args /absolute/path/to/workspace
 ```
 
-`make build` downloads pinned Rust 1.88.0 into the ignored `.host-build/`
+`make build-macos` downloads pinned Rust 1.88.0 into the ignored `.host-build/`
 directory and builds with the system macOS SDK. It does not change your global
-Rust installation or shell profile.
+Rust installation or shell profile. It builds the application in release mode
+and packages it as `dist/Notrum.app`. `make build` remains an alias for this
+command.
 
 To try generated demo notes:
 
@@ -73,6 +78,33 @@ open dist/Notrum.app --args "$PWD/examples/demo-workspace"
 
 The demo command resets the generated demo notes. Use a separate workspace
 for your own writing.
+
+### Linux
+
+With Docker Compose and a running Docker engine, build an optimized Linux
+executable using the pinned toolchain (no host Rust installation required):
+
+```sh
+make build-linux
+```
+
+The stripped release binary is written to `dist/linux/<architecture>/notrum`,
+where the architecture matches the Docker container: `aarch64` on Apple
+Silicon by default, or `x86_64` on an Intel/AMD host. Build on the matching
+architecture for the destination Linux machine. The command also works from
+macOS, but the resulting executable runs only on Linux.
+
+On Linux, launch it with an optional workspace path:
+
+```sh
+./dist/linux/$(uname -m)/notrum /absolute/path/to/workspace
+```
+
+This is a dynamically linked binary built on Debian 12 (glibc 2.36), not a
+self-contained application bundle. A compatible Linux desktop with X11 or
+Wayland, the corresponding system libraries, fonts, and an XDG desktop portal
+for file dialogs is required. See the [development guide](docs/development.md)
+for build verification and release limitations.
 
 ## Documentation and contributions
 

@@ -178,7 +178,7 @@ audit-vulnerabilities:
 	$(RUN) cargo audit
 
 diff-check:
-	$(GIT) diff --check
+	$(GIT) --no-pager diff --check
 
 status:
 	$(GIT) status --short --branch

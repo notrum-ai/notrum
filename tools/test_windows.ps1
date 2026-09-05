@@ -38,6 +38,8 @@ try {
     New-Item -ItemType Directory -Path $junctionTarget | Out-Null
     $env:NOTRUM_TEST_JUNCTION = Join-Path $root 'junction'
     New-Item -ItemType Junction -Path $env:NOTRUM_TEST_JUNCTION -Target $junctionTarget | Out-Null
+    $report.phase = 'rust tests'
+    $failedExecutables = 0
     $executables = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'tests.json') | ConvertFrom-Json
     foreach ($name in $executables) {
         if ([IO.Path]::GetFileName($name) -ne $name -or -not $name.EndsWith('.exe')) {
@@ -52,10 +54,22 @@ try {
         }
         $code = $LASTEXITCODE
         $entry = [ordered]@{ executable = $name; exitCode = $code }
-        if (-not $CI) { $entry.log = $log }
+        if ($CI) {
+            $safeReport = & python (Join-Path $PSScriptRoot 'ci_diagnostics.py') $log
+            if ($LASTEXITCODE -ne 0) { throw 'Could not sanitize Rust test diagnostics.' }
+            $safeReport = $safeReport | ConvertFrom-Json
+            $entry.failedTests = @($safeReport.failedTests)
+            $entry.diagnostics = @($safeReport.diagnostics)
+            $safeReport.diagnostics | Write-Output
+        } else { $entry.log = $log }
         $report.tests += $entry
-        if ($code -ne 0) { throw "Test executable failed: $name (exit $code)" }
+        if ($code -ne 0) {
+            if (-not $CI) { throw "Test executable failed: $name (exit $code)" }
+            $failedExecutables += 1
+        }
     }
+    if ($failedExecutables -ne 0) { throw 'Rust test executables failed; inspect the recorded results.' }
+    $report.phase = 'native startup'
     $application = Join-Path (Split-Path -Parent $PSScriptRoot) 'Notrum.exe'
     $report.applicationSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $application).Hash
     $report.applicationVersion = (Get-Item -LiteralPath $application).VersionInfo.FileVersion
@@ -68,6 +82,7 @@ try {
         throw 'The native application smoke test timed out.'
     }
     if ($process.ExitCode -ne 0) { throw "The native application exited with $($process.ExitCode)." }
+    $report.phase = 'external file launch'
     $external = Join-Path $root 'External 日本語 #1.MD'
     $second = Join-Path $root 'External two.txt'
     [IO.File]::WriteAllText($external, "External unchanged`n", [Text.UTF8Encoding]::new($false))
@@ -82,6 +97,7 @@ try {
     if ($settings.external_files.Count -ne 2 -or $selectedPath -ne $external) { throw 'External file order/selection differs.' }
     if ([IO.File]::ReadAllText($external) -ne "External unchanged`n") { throw 'Opening modified external content.' }
     $report.externalLaunch = 'passed'
+    $report.phase = 'Open With registration'
     $registration = Join-Path (Split-Path -Parent $PSScriptRoot) 'Register.ps1'
     $testRegistry = 'Software\NotrumTests\' + [Guid]::NewGuid().ToString('N')
     try {

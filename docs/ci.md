@@ -102,8 +102,12 @@ panic payloads, thread names, editor text and temporary paths. Neither whole
 workspaces nor screenshots, raw application logs, recovery files or caches are
 uploaded. Native Windows CI reports omit temporary workspace/log paths and
 exception payloads; the default local PowerShell runner still retains its usual
-diagnostic workspace. CI logs are deliberately reduced: reproduce a failing
-named check locally to inspect unrestricted fixture diagnostics.
+diagnostic workspace. The Windows kit runs every Rust test executable before
+reporting failure; `windows-results.json` records failed test names, sanitized
+diagnostics and the current test phase. It uses the same diagnostic filter as
+the CI console, and does not upload raw test logs. CI logs are deliberately
+reduced: reproduce a failing named check locally to inspect unrestricted fixture
+diagnostics.
 
 ## Verify the first GitHub runs
 

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from unittest.mock import patch
 import zipfile
 
 import ci
+from ci_diagnostics import rust_test_report
 from source_revision import validate_revision
 
 SHA = "1234567890abcdef1234567890abcdef12345678"
@@ -64,6 +66,30 @@ class CITests(unittest.TestCase):
                 if path.is_file():
                     self.assertNotIn("SYNTHETIC_SECRET", path.read_text())
 
+    def test_windows_rust_report_keeps_failures_and_locations_without_payloads(self):
+        raw = "\n".join([
+            "test tests::first ... ok",
+            "test tests::second ... FAILED",
+            "thread 'SYNTHETIC_SECRET' panicked at app/notrum/src/main.rs:123:4:",
+            "assertion failed: SYNTHETIC_SECRET",
+            "left: C:\\Users\\SYNTHETIC_SECRET\\note.md",
+            "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        ])
+        report = rust_test_report(raw.splitlines())
+        self.assertEqual(report["failedTests"], ["tests::second"])
+        self.assertIn("Rust diagnostic location: app/notrum/src/main.rs:123:4", report["diagnostics"])
+        self.assertIn("test tests::first ... ok", report["diagnostics"])
+        self.assertNotIn("SYNTHETIC_SECRET", json.dumps(report))
+        self.assertEqual(rust_test_report(["SYNTHETIC_SECRET"]),
+                         {"failedTests": [], "diagnostics": []})
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "Windows 日本語 test.log"
+            log.write_text(raw, encoding="utf-8-sig")
+            result = subprocess.run([sys.executable, str(Path(ci.__file__).with_name("ci_diagnostics.py")),
+                                     str(log)], check=True, text=True, capture_output=True)
+            self.assertEqual(json.loads(result.stdout), report)
+            self.assertNotIn("SYNTHETIC_SECRET", result.stdout + result.stderr)
+
     def test_linux_archive_preserves_mode_and_excludes_unrelated_files(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, SOURCE_REVISION=SHA):
             root = Path(temporary)
@@ -87,7 +113,7 @@ class CITests(unittest.TestCase):
             root = Path(temporary)
             directory = root / "dist/windows/x86_64"
             (directory / "tests").mkdir(parents=True)
-            for name in ("Notrum.exe", "LICENSE.txt", "Register.ps1", "tests/test.exe", "tests/Run-Tests.ps1"):
+            for name in ("Notrum.exe", "LICENSE.txt", "Register.ps1", "tests/test.exe", "tests/Run-Tests.ps1", "tests/ci_diagnostics.py"):
                 (directory / name).write_text("fixture")
             for folder in (directory, directory / "tests"):
                 (folder / "dependencies.json").write_text("{}")

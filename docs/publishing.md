@@ -59,21 +59,26 @@ CODEX="$HOME/.local/bin/codex" make publish
 ## What the command does
 
 1. Validates prerequisites, the checkout and the remote default branch.
-2. Reads `app/notrum/Cargo.toml` and increases only its patch component:
-   `0.1.0` becomes `0.1.1`, and `0.1.9` becomes `0.1.10`. Updates only the
+2. Reads `app/notrum/Cargo.toml`. If the history has no commit that changed the
+   application version, publishes an initial release with the current version
+   and does not create a version commit. Its changelog covers the full history.
+   Once that version has a matching GitHub tag and Release, later publications
+   increase only the patch component: `0.1.0` becomes `0.1.1`, and `0.1.9`
+   becomes `0.1.10`. Updates only the
    corresponding application entry in `Cargo.lock`; dependency versions stay
    unchanged. macOS and Windows package versions come from the app manifest.
 3. Finds the last first-parent commit that changed the application's version
-   value. For the first release, this is the initial `0.1.0` commit. Feeds the
-   subsequent committed history, patches and net diff to local `codex exec` in
-   bounded portions, then combines the summaries. No notes workspace or ignored
-   files are included. Codex writes English `Improvements` and `Bug fixes`
-   sections; an empty category is `None.`. Its output is generated text and can
-   still contain interpretation errors.
-4. Creates `Release vX.Y.Z` with only the two version files, using
-   `Evgeniy Udodov <1926460+flrnull@users.noreply.github.com>` as author and
-   committer. The description is saved locally and used as the annotated tag's
-   message; it is not added as a tracked changelog file.
+   value. For the first release, feeds the full committed history, patches and
+   net diff to local `codex exec`. It processes the input in bounded portions,
+   then combines the summaries. No notes workspace or ignored files are included.
+   Codex writes English `Improvements` and `Bug fixes` sections; an empty category
+   is `None.`. Its output is generated text and can still contain interpretation
+   errors.
+4. For releases after the initial one, creates `Release vX.Y.Z` with only the two
+   version files, using `Evgeniy Udodov
+   <1926460+flrnull@users.noreply.github.com>` as author and committer. The
+   description is saved locally and used as the annotated tag's message; it is
+   not added as a tracked changelog file.
 5. Runs the full `make` aggregate on the release commit. Packages the resulting
    macOS arm64 application, Windows x64 application and Linux executable for the
    Docker architecture (normally aarch64 on Apple Silicon). Linux x86_64 is not

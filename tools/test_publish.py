@@ -127,16 +127,17 @@ class RepositoryTests(unittest.TestCase):
 
     def state(self):
         with patch.object(publish, "release_notes", return_value="## Improvements\n\n- Feature.\n"):
-            return publish.new_state("notrum-ai/notrum", "master", self.feature())
+            return publish.new_state("notrum-ai/notrum", "master", self.feature(),
+                                     released_current_sha=self.initial)
 
     def test_boundary_uses_version_value_not_any_manifest_edit(self):
         head = self.feature()
-        self.assertEqual(publish.previous_version_commit(head), self.initial)
+        self.assertIsNone(publish.previous_version_commit(head))
         manifest = self.root / app_version.MANIFEST
         manifest.write_text(MANIFEST.replace("[dependencies]", "# Formatting\n[dependencies]"), encoding="utf-8")
         self.git("add", app_version.MANIFEST)
         self.git("commit", "-qm", "Document dependencies")
-        self.assertEqual(publish.previous_version_commit("HEAD"), self.initial)
+        self.assertIsNone(publish.previous_version_commit("HEAD"))
         manifest.write_text(MANIFEST.replace('version = "0.1.0"', 'version = "0.1.1"'), encoding="utf-8")
         self.git("add", app_version.MANIFEST)
         self.git("commit", "-qm", "Release version")
@@ -144,6 +145,27 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(publish.previous_version_commit("HEAD"), bumped)
         with self.assertRaisesRegex(ValueError, "no commits"):
             publish.new_state("notrum-ai/notrum", "master", bumped)
+
+    def test_initial_release_keeps_current_version_and_head(self):
+        head = self.feature()
+        with patch.object(publish, "release_notes", return_value="Initial notes") as notes:
+            state = publish.new_state("notrum-ai/notrum", "master", head)
+        self.assertEqual(state["version"], "0.1.0")
+        self.assertEqual(state["tag"], "v0.1.0")
+        self.assertEqual(state["sha"], head)
+        self.assertEqual(state["updates"], {})
+        notes.assert_called_once_with(None, head)
+        publish.commit_version(state)
+        self.assertEqual(self.git("rev-list", "--count", f"{head}..HEAD").strip(), "0")
+
+    def test_release_after_initial_tag_increments_patch(self):
+        head = self.feature()
+        with patch.object(publish, "release_notes", return_value="Next notes") as notes:
+            state = publish.new_state("notrum-ai/notrum", "master", head,
+                                      released_current_sha=self.initial)
+        self.assertEqual(state["version"], "0.1.1")
+        self.assertIsNone(state["sha"])
+        notes.assert_called_once_with(self.initial, head)
 
     def test_commit_and_crash_recovery_do_not_bump_twice(self):
         state = self.state()

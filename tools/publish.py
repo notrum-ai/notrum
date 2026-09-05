@@ -256,9 +256,9 @@ def previous_version_commit(head):
         current = read_version(git("show", f"{revision}:{MANIFEST}"))
         parents = git("rev-list", "--parents", "-n", "1", revision).split()[1:]
         if not parents:
-            return revision
+            return None
         files = git("ls-tree", "--name-only", parents[0], "--", MANIFEST).strip()
-        if not files or current != read_version(git("show", f"{parents[0]}:{MANIFEST}")):
+        if files and current != read_version(git("show", f"{parents[0]}:{MANIFEST}")):
             return revision
     raise ValueError("could not find the previous application version commit")
 
@@ -302,12 +302,15 @@ def codex_notes(evidence, *, final=False):
 
 def release_notes(base, head):
     summaries = []
+    history = head if base is None else f"{base}..{head}"
+    if base is None:
+        base = git("hash-object", "-t", "tree", "--stdin", input="").strip()
     # Spool complete Git output, then feed bounded portions; never silently truncate history.
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as evidence:
         evidence.write("COMMIT HISTORY AND PATCHES\n")
         evidence.flush()
         git("log", "--reverse", "--format=commit %H%n%B", "-p", "--no-ext-diff", "--no-textconv",
-            "--no-color", "--no-renames", f"{base}..{head}", stdout=evidence)
+            "--no-color", "--no-renames", history, stdout=evidence)
         evidence.write("\nNET CHANGES (use these to resolve reversions)\n")
         evidence.flush()
         git("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", base, head,
@@ -337,18 +340,26 @@ def release_notes(base, head):
     return "\n\n".join(sections) + "\n"
 
 
-def new_state(repository, branch, head):
+def new_state(repository, branch, head, released_current_sha=None):
     base = previous_version_commit(head)
-    if base == head:
+    if base is not None and released_current_sha and base != released_current_sha:
+        raise ValueError("the current release tag does not match its version commit")
+    if base is None:
+        base = released_current_sha
+    initial = base is None
+    if not initial and base == head:
         raise ValueError("there are no commits since the last version change")
     originals = {name: (ROOT / name).read_text(encoding="utf-8") for name in VERSION_FILES}
     old = read_version(originals[MANIFEST])
-    version = next_version(old)
-    updates = {name: replace_version(text, old, version, lock=name == "Cargo.lock")
-               for name, text in originals.items()}
+    version = old if initial else next_version(old)
+    updates = {} if initial else {
+        name: replace_version(text, old, version, lock=name == "Cargo.lock")
+        for name, text in originals.items()
+    }
     return {"format": 1, "repository": repository, "branch": branch, "head": head, "base": base,
             "version": version, "tag": f"v{version}", "originals": originals, "updates": updates,
-            "notes": release_notes(base, head), "sha": None, "assets": {}, "published": False}
+            "notes": release_notes(base, head), "sha": head if initial else None,
+            "assets": {}, "published": False}
 
 
 def commit_version(state):
@@ -571,7 +582,16 @@ def main():
         git("merge-base", "--is-ancestor", f"refs/remotes/origin/{branch}", head)
         if state is None or state["published"]:
             require_clean(head)
-            state = new_state(repository, branch, head)
+            current_tag = f"v{read_version()}"
+            current_tag_sha = github.remote_tag(current_tag)
+            current_release = github.release(current_tag)
+            if bool(current_tag_sha) != bool(current_release):
+                raise ValueError(
+                    "the current version must have both a GitHub tag and release, or neither"
+                )
+            if current_tag_sha:
+                git("merge-base", "--is-ancestor", current_tag_sha, head)
+            state = new_state(repository, branch, head, released_current_sha=current_tag_sha)
             if github.remote_tag(state["tag"]) or github.release(state["tag"]):
                 raise ValueError("next release version already exists on GitHub")
             if git("tag", "--list", state["tag"]).strip():

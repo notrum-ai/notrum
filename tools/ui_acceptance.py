@@ -314,23 +314,7 @@ AI_CARD_MIN_HEIGHT = 24
 AI_EXPANDED_MIN_HEIGHT = 80
 # Rounded corners leave the first and last rows of a card without a border.
 AI_CARD_CORNER = 7
-AI_KEY_FIELD = (460, 246)
-AI_SAVE_X = AI_CARD_CONTENT_LEFT + 21
 AI_CANCEL_X = AI_CARD_CONTENT_LEFT + 91
-AI_EDIT_X = 955
-AI_MODEL_FIELD_X = 550
-AI_MODEL_SEARCH_X = 500
-AI_MODEL_ROW_X = 400
-# The second effort chip of every fixture model that offers efforts.
-AI_SECOND_EFFORT_X = 378
-# Offsets inside one profile card, from its top border down.
-AI_PROFILE_HEADER_DY = 40
-AI_PROFILE_MODEL_DY = 128
-AI_PROFILE_SEARCH_DY = 182
-AI_PROFILE_FIRST_MODEL_DY = 227
-AI_PROFILE_EFFORT_DY = 198
-# The action row sits above the bottom border of the card it belongs to.
-AI_PROFILE_ACTIONS_DY = -39
 
 
 def tag_row_top(index: int) -> int:
@@ -7294,105 +7278,264 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
         ]
 
     def bounds() -> tuple[int, int]:
-        # Move focus off the search input so its blinking caret does not prevent
-        # exact frame stability. Clicking the current section retains the draft.
         driver.click_point(*AI_SIDEBAR_ITEM)
-        driver.wheel("down", clicks=12, delay_ms=20)
         settle()
-        runs = shaded_row_runs(
-            driver.capture("ai-expanded"),
-            x=AI_CONTENT_LEFT,
-            y=0,
-            height=SCREEN_HEIGHT,
-            max_luminance=AI_ACCENT_LUMINANCE,
-        )
+        runs = shaded_row_runs(driver.capture("ai-editor"), x=AI_CONTENT_LEFT,
+                               y=0, height=SCREEN_HEIGHT, max_luminance=AI_ACCENT_LUMINANCE)
         runs = [(start, end) for start, end in runs if end - start >= AI_EXPANDED_MIN_HEIGHT]
         if len(runs) != 1:
-            raise AcceptanceFailure(f"expected one expanded AI profile, found {runs}")
-        start, end = runs[0]
-        return start - AI_CARD_CORNER, end + AI_CARD_CORNER
+            raise AcceptanceFailure("expected one alias editor")
+        return runs[0][0] - AI_CARD_CORNER, runs[0][1] + AI_CARD_CORNER
+
+    def controls() -> list[tuple[int, int]]:
+        top, bottom = bounds()
+        runs = shaded_row_runs(driver.capture("ai-fields"), x=AI_CARD_CONTENT_LEFT,
+                               y=top, height=bottom - top, max_luminance=AI_CARD_BORDER_LUMINANCE)
+        return [(start, end) for start, end in runs if end - start >= 22]
+
+    def field(index: int) -> int:
+        start, end = controls()[index]
+        return (start + end) // 2
+
+    def all_rows() -> list[tuple[int, int]]:
+        driver.wheel("up", clicks=20, delay_ms=20)
+        settle()
+        return cards()
+
+    def edit(index: int) -> None:
+        rows = all_rows()
+        driver.click_point(950, rows[index + 1][0] + 40)
+        settle()
+        bounds()
+
+    def add(name: str) -> None:
+        rows = all_rows()
+        driver.click_point(945, rows[0][1] + 44)
+        settle()
+        driver.click_point(470, field(0))
+        driver.type_text(name)
+        settle()
+
+    def choose(query: str, *, default: bool = False) -> None:
+        model_index = 0 if default else 1
+        driver.click_point(500, field(model_index))
+        settle()
+        review_frame("ai-model-dropdown")
+        # Only Luna and Sol support effort in the fixture. End therefore selects
+        # Sol even though GPT-4.1 is the last catalog entry.
+        driver.key("Home" if query == "Luna" else "End")
+        driver.key("Return")
+        settle()
+        driver.click_point(500, field(model_index + 1))
+        settle()
+        review_frame("ai-effort-dropdown")
+        driver.key("End" if query == "Luna" else "Home")
+        driver.key("Return")
+        settle()
+
+    def save_alias(name: str) -> None:
+        primary(within=bounds())
+        wait_until("saved alias", lambda: name in state()["aliases"])
+        settle()
+
+    def review_frame(name: str) -> None:
+        # Only synthetic catalog keys are used in this scenario.
+        shutil.copyfile(driver.capture(name), ARTIFACT_ROOT / f"{name}.png")
+
+    def danger_pixels(crop: tuple[int, int, int, int] = (280, 150, 710, 450)) -> int:
+        return near_color_pixel_count(driver.capture("ai-feedback"), (164, 69, 69), crop=crop)
+
+    def key_field() -> tuple[int, int]:
+        return (460, cards()[0][0] + 62)
 
     driver.start_app(workspace, "empty", environment_overrides=fixture)
     open_ai()
-    if state().get("connection") or state().get("profiles"):
+    review_frame("ai-empty")
+    if len(cards()) != 1:
+        raise AcceptanceFailure("unconnected models should not occupy a card")
+    if state().get("connection") or state().get("aliases"):
         raise AcceptanceFailure("AI was configured without explicit input")
-    driver.click_point(*AI_KEY_FIELD)
-    driver.type_text("sk-proj-abcdefghijklmnopqrstuv")
+    driver.click_point(*key_field())
+    driver.type_text("s")
     settle()
+    if danger_pixels() > 5:
+        raise AcceptanceFailure("AI key validation interrupted typing")
+    driver.click_point(*AI_SIDEBAR_ITEM)
+    settle()
+    if danger_pixels() < 20:
+        raise AcceptanceFailure("invalid key was not validated on blur")
+    driver.click_point(*key_field())
+    driver.type_text("k")
+    settle()
+    if danger_pixels() > 5:
+        raise AcceptanceFailure("editing retained an outdated key error")
+    set_clipboard_text(driver.environment, "invalid-key")
+    driver.key("ctrl+v")
+    settle()
+    if danger_pixels() < 20:
+        raise AcceptanceFailure("clipboard shortcut did not validate the key")
+    set_clipboard_text(driver.environment, "sk-proj-abcdefghijklmnopqrstuvdenied")
+    driver.click_point(938, key_field()[1])
+    settle()
+    if danger_pixels() > 5:
+        raise AcceptanceFailure("valid key paste retained format feedback")
     primary()
+    settle()
+    if state().get("connection") or danger_pixels() < 20:
+        raise AcceptanceFailure("rejected key was saved or lacked connection feedback")
+    review_frame("ai-connection-error")
+    driver.click_point(*key_field())
+    set_clipboard_text(driver.environment, "  sk-proj-abcdefghijklmnopqrstuvslow  ")
+    driver.key("ctrl+v")
+    settle()
+    field_y = key_field()[1]
+    masked = driver.capture("ai-masked")
+    driver.click_point(875, field_y)
+    driver.click_point(*AI_SIDEBAR_ITEM)
+    settle()
+    revealed = driver.capture("ai-revealed")
+    if image_difference(masked, revealed, crop=(310, field_y - 12, 400, 24)) < 50:
+        raise AcceptanceFailure("AI reveal control did not reveal the fixture key")
+    driver.click_point(875, field_y)
+    driver.click_point(*AI_SIDEBAR_ITEM)
+    settle()
+    if image_difference(masked, driver.capture("ai-concealed"), crop=(310, field_y - 12, 400, 24)) > 5:
+        raise AcceptanceFailure("AI reveal control did not conceal the key again")
+    driver.click_point(*key_field())
+    settle()
+    driver.key("Return")
+    review_frame("ai-connecting")
+    # Enter during the in-flight request must not start a second connection.
+    driver.key("Return")
     wait_until("verified AI connection", lambda: state().get("connection") is not None)
     settle()
-    if state().get("profiles"):
-        raise AcceptanceFailure("connecting a key populated AI profiles")
+    if state()["aliases"] != {"default": {"model": "gpt-5.6-luna", "effort": "high"}}:
+        raise AcceptanceFailure("connecting did not create the expected default alias")
 
-    for index, (size, query, model, effort) in enumerate([
-        ("small", "Luna", "gpt-5.6-luna", "high"),
-        ("medium", "Sol", "gpt-5.6-sol", "max"),
-        ("large", "4.1", "gpt-4.1", None),
-    ]):
-        top, bottom = bounds()
-        # Save is disabled before choosing a model.
-        driver.click_point(AI_SAVE_X, bottom + AI_PROFILE_ACTIONS_DY)
-        settle()
-        if len(state().get("profiles", {})) != index:
-            raise AcceptanceFailure("an empty AI profile was saved")
-        driver.click_point(AI_MODEL_FIELD_X, top + AI_PROFILE_MODEL_DY)
-        top, _ = bounds()
-        driver.click_point(AI_MODEL_SEARCH_X, top + AI_PROFILE_SEARCH_DY)
-        driver.type_text(query)
-        top, _ = bounds()
-        driver.click_point(AI_MODEL_ROW_X, top + AI_PROFILE_FIRST_MODEL_DY)
-        top, bottom = bounds()
-        if effort is not None:
-            driver.click_point(AI_SAVE_X, bottom + AI_PROFILE_ACTIONS_DY)
-            settle()
-            if len(state().get("profiles", {})) != index:
-                raise AcceptanceFailure("effort was selected implicitly")
-            driver.click_point(AI_SECOND_EFFORT_X, top + AI_PROFILE_EFFORT_DY)
-            settle()
-        primary(within=(top, bottom))
-        wait_until(f"explicit {size} profile", lambda: len(state().get("profiles", {})) == index + 1)
-        saved = state()["profiles"][size]
-        if saved != {"model": model, "effort": effort}:
-            raise AcceptanceFailure(f"wrong AI profile: {saved}")
-        settle()
-
-    saved = state()
-    driver.wheel("up", clicks=20, delay_ms=20)
+    review_frame("ai-default")
+    edit(0)
+    if danger_pixels() > 5:
+        raise AcceptanceFailure("default has a delete action or an invalid initial configuration")
+    choose("Sol", default=True)
+    primary(within=bounds())
+    wait_until("edited default", lambda: state()["aliases"]["default"]["model"] == "gpt-5.6-sol")
     settle()
-    complete = driver.capture("ai-complete")
-    accented = shaded_row_runs(
-        complete,
-        x=AI_CONTENT_LEFT,
-        y=0,
-        height=SCREEN_HEIGHT,
-        max_luminance=AI_ACCENT_LUMINANCE,
-    )
-    if [run for run in accented if run[1] - run[0] >= AI_EXPANDED_MIN_HEIGHT]:
-        raise AcceptanceFailure("completed AI profiles did not collapse")
+    default = state()["aliases"]["default"]
+
+    add("mini")
+    choose("Luna")
+    save_alias("mini")
+    if state()["aliases"]["mini"] != {"model": "gpt-5.6-luna", "effort": "high"}:
+        raise AcceptanceFailure("custom alias saved wrong model or effort")
+    # Creating multiple names is not constrained by the old three task slots.
+    for name in ["simple", "writing", "research"]:
+        add(name)
+        # A new alias already inherits the edited default (Sol/high).
+        save_alias(name)
+    if any(profile["model"] == "gpt-4.1" or profile["effort"] != "high"
+           for profile in state()["aliases"].values()):
+        raise AcceptanceFailure("dropdown selected a model without effort or wrong effort")
+    if len(state()["aliases"]) != 5:
+        raise AcceptanceFailure("custom aliases are still constrained to task slots")
+    review_frame("ai-aliases")
+
+    edit(1)  # default first, then alphabetical: mini
+    driver.click_point(470, field(0))
+    driver.key("ctrl+a")
+    driver.type_text("default")
+    settle()
+    name_bottom = controls()[0][1]
+    model_top = controls()[1][0]
+    if danger_pixels((300, name_bottom, 650, model_top - name_bottom)) < 20:
+        raise AcceptanceFailure("duplicate alias name was not rejected")
+    driver.click_point(470, field(0))
+    driver.key("ctrl+a")
+    driver.type_text("quick")
+    settle()
+    primary(within=bounds())
+    wait_until("renamed alias", lambda: "quick" in state()["aliases"] and "mini" not in state()["aliases"])
+    settle()
+    edit(1)  # quick sorts before research
+    last = controls()[-1]
+    driver.click_point(340, (last[0] + last[1]) // 2)
+    wait_until("deleted alias", lambda: "quick" not in state()["aliases"])
+    settle()
+    if state()["aliases"]["default"] != default:
+        raise AcceptanceFailure("deleting another alias changed default")
+
+    rows = all_rows()
+    saved = state()
+    driver.click_point(345, rows[0][1] - 39)
+    settle()
+    empty_key = driver.capture("ai-provider-empty")
+    key_y = key_field()[1]
+    set_clipboard_text(driver.environment, "sk-ant-api03-abcdefghijklmnopqrstuv")
+    driver.click_point(938, key_y)
+    driver.wait_for_visual_change("provider key pasted", empty_key,
+                                  crop=(310, key_y - 15, 540, 30), timeout=10)
+    settle()
+    review_frame("ai-provider-warning")
+    driver.click_point(435, cards()[0][1] - 39)
+    wait_until("key edit cancelled", lambda: cards()[0][1] - cards()[0][0] < 160, timeout=10)
+    settle()
+    if state() != saved:
+        raise AcceptanceFailure("cancelling provider change changed aliases")
+    driver.click_point(345, cards()[0][1] - 39)
+    settle()
+    empty_key = driver.capture("ai-replacement-empty")
+    set_clipboard_text(driver.environment, "sk-proj-abcdefghijklmnopqrstuv")
+    driver.click_point(938, key_field()[1])
+    driver.wait_for_visual_change("replacement key pasted", empty_key,
+                                  crop=(310, key_field()[1] - 15, 540, 30), timeout=10)
+    settle()
+    primary(within=cards()[0])
+    wait_until("replacement key", lambda: state()["connection"] != saved["connection"])
+    settle()
+    if state()["aliases"] != saved["aliases"]:
+        raise AcceptanceFailure("same-provider replacement overwrote aliases")
+    saved = state()
     driver.close_app()
     driver.start_app(workspace, "restart", environment_overrides=fixture)
     open_ai()
     if state() != saved:
-        raise AcceptanceFailure("AI profiles changed on restart")
-    # Reopen/edit/cancel repeatedly: queued list updates must not outlive drafts.
+        raise AcceptanceFailure("aliases changed on restart")
     for _ in range(2):
-        page = cards()
-        if len(page) != 4:
-            raise AcceptanceFailure(f"expected a connection card and three profiles, found {page}")
-        driver.click_point(AI_EDIT_X, page[1][0] + AI_PROFILE_HEADER_DY)
-        settle()
-        _, bottom = bounds()
-        driver.click_point(AI_CANCEL_X, bottom + AI_PROFILE_ACTIONS_DY)
-        settle()
-        driver.wheel("up", clicks=20, delay_ms=20)
+        edit(0)
+        # The built-in alias has no removal footer; Cancel sits beside Save.
+        last = controls()[-1]
+        driver.click_point(AI_CANCEL_X, (last[0] + last[1]) // 2)
         settle()
     if state() != saved:
-        raise AcceptanceFailure("cancelling AI edits changed saved profiles")
+        raise AcceptanceFailure("cancelling alias edits changed configuration")
 
+    edit(0)
+    changed = json.loads(config.read_text())
+    changed["ai"]["connection"]["checked_at"] += 1
+    config.write_text(json.dumps(changed))
+    primary(within=bounds())
+    settle()
+    top, bottom = bounds()
+    if danger_pixels((300, top, 670, bottom - top)) < 20:
+        raise AcceptanceFailure("save conflict was not shown inside the alias editor")
+    if state() != changed["ai"]:
+        raise AcceptanceFailure("conflicting save overwrote configuration")
+    review_frame("ai-alias-error")
+    driver.close_app()
+
+    global_settings = json.loads(config.read_text())
+    global_settings["locale"] = "ru"
+    config.write_text(json.dumps(global_settings))
+    driver.start_app(workspace, "ru", environment_overrides=fixture)
+    open_ai()
+    review_frame("ai-ready-ru")
+    edit(0)
     driver.resize_window(860, 560)
-    driver.wait_for_stable_frame("AI narrow", crop=(232, 0, 628, 560), stable_for=0.6)
+    settle()
+    driver.wheel("down", clicks=3, delay_ms=40)
+    settle()
+    review_frame("ai-narrow-ru")
     driver.resize_window(SCREEN_WIDTH, SCREEN_HEIGHT)
+    settle()
     driver.close_app()
     global_settings = json.loads(config.read_text())
     global_settings["locale"] = "ar"
@@ -7403,16 +7546,14 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.click_point(1110, 203)
     driver.wait_for_stable_frame("RTL AI", stable_for=0.6)
     driver.resize_window(860, 560)
-    # Window geometry changes before Floem finishes the mirrored layout pass.
-    wait_until("AI RTL sidebar after resize", lambda: near_color_pixel_count(
+    wait_until("AI RTL sidebar", lambda: near_color_pixel_count(
         driver.capture("ai-rtl-direction"), (35, 42, 51), crop=(628, 0, 232, 540)
     ) >= 50000, timeout=10)
-    frame = driver.wait_for_stable_frame("RTL AI narrow", crop=(0, 0, 860, 560), stable_for=0.6)
-    if near_color_pixel_count(frame, (35, 42, 51), crop=(628, 0, 232, 540)) < 50000:
-        raise AcceptanceFailure("AI settings did not preserve RTL navigation")
+    driver.wait_for_stable_frame("RTL AI narrow", crop=(0, 0, 860, 560), stable_for=0.6)
+    review_frame("ai-narrow-rtl")
     driver.close_app()
     if any("sk-proj-abcdefghijklmnopqrstuv" in path.read_text(errors="replace") for path in driver.app_log_paths):
-        raise AcceptanceFailure("AI credential reached application diagnostics")
+        raise AcceptanceFailure("AI credential reached diagnostics")
     if "sk-proj-abcdefghijklmnopqrstuv" in config.read_text():
         raise AcceptanceFailure("AI credential reached settings")
     if {path: path.read_bytes() for path in original} != original:

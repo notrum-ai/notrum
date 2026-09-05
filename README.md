@@ -22,7 +22,7 @@ Your notes remain Markdown files that you can back up or open in another editor.
 - External `.md`, `.markdown`, and `.txt` files opened in place, including through the file manager on macOS, Linux, and Windows.
 - HTTPS RSS and Atom subscriptions with a native reader and `J`/`K` navigation.
 - Global AI settings for OpenAI or Anthropic: system-stored API keys, connection
-  checks, and three manually configured model/effort profiles. Assistant commands
+  checks, and named model/effort aliases with an editable default. Assistant commands
   are not implemented yet; connection checks only retrieve the model catalog.
 
 ## Project status

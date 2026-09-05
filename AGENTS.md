@@ -30,9 +30,11 @@
   HTTPS article opening is allowed only through that crate's dedicated
   hardened opener.
 - AI settings are global. API keys belong only in the OS credential store via
-  `notrum-platform`; config files contain opaque references and model profiles.
-  Never send notes while checking a key or listing models. All three AI profiles
-  start empty and require explicit model/effort choices.
+  `notrum-platform`; config files contain opaque references and model aliases.
+  Never send notes while checking a key or listing models. Connecting creates
+  the provider-specific `default` model alias.
+  It can be edited but not deleted or renamed; missing aliases resolve through
+  `default`. Existing unavailable selections must fail explicitly.
 - `.notrum/` contains settings and potentially unsaved recovery work as well
   as derived caches. Never treat the whole directory as disposable. Preserve
   `.notrum_security/` and `.notrum_backups/`; see [storage documentation](docs/storage.md).

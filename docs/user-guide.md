@@ -2,25 +2,40 @@
 
 ## AI settings
 
-Open Settings → AI assistant. Paste an OpenAI or Anthropic API key; the provider
-is detected locally. “Verify and save” fetches the model catalog and stores the
-key in the system credential store. This checks catalog access, not generation
-permissions or billing. The connection card then collapses; use Edit to replace
-or remove it, or Refresh models to update the available models.
+Open Settings → AI settings. Paste an OpenAI or Anthropic API key; the provider
+is detected locally. Connect fetches the model catalog and stores the key in the
+system credential store. This checks catalog access, not generation permissions
+or billing. Use Change key to replace or remove it, or Refresh models to update
+the available models. Verification never sends notes.
 
-Configure Small (simple tasks), Medium (everyday tasks), and Large (complex tasks)
-individually. No model or effort is preselected. Search for a model, explicitly
-choose one of its supported effort levels, and Save. Models without an effort
-parameter display “Managed by the model”. Saving one profile never fills another.
-The counter reaches 3 of 3 only when all profiles are valid. Saved profiles
-collapse to a summary and can be edited again. A higher effort may require more
-time and tokens; size labels describe task categories, not effort levels.
+After connecting, Model aliases lets you name model/effort combinations for use
+throughout the product. Changing an alias updates the model used by every task
+that refers to that name. There is no fixed number of aliases. Use Add alias to
+create one, or click an existing alias to change its name, model, or effort.
+Names are case-sensitive, trimmed on save, and must be unique and nonempty.
 
-Settings apply across workspaces. Switching providers clears the profiles;
-replacing a key with one from the same provider retains the choices, marking
-models unavailable if the new catalog no longer includes them. Network errors
-retain the previous connection. On Linux, unlock the desktop Secret Service if
-key storage fails. No key is written to a settings file.
+The built-in `default` starts with GPT-5.6 Luna for OpenAI or Claude Sonnet 5 for
+Anthropic, both with `high` effort. These reviewed defaults are explicit because
+the catalogs do not expose a consistent model-tier field. An available dated
+snapshot is used if the canonical model ID is absent. If neither is listed,
+`default` is shown as unavailable; select an accessible model before using it.
+Refreshing the catalog or replacing a key for the same provider never changes a
+saved alias automatically.
+
+You can change the model and effort of `default`, but cannot delete or rename
+it. Deleted, renamed, or unknown alias names resolve to `default`. An existing
+alias with an unavailable model or effort returns an error instead of silently
+switching models; the same applies if `default` itself is unavailable. New
+aliases start with the model and effort from `default`. Changing the model keeps
+a compatible effort, otherwise selecting `high` or the first supported level.
+The model dropdown only includes models with a supported effort parameter. Choose effort from the second
+dropdown; there is no separate model search field.
+
+Settings apply across workspaces. Switching providers clears the aliases and
+creates a new provider-specific `default`. Network errors retain the previous
+connection. On Linux, unlock the desktop Secret Service if key storage fails.
+No key is written to a settings file. The retired Small/Medium/Large profiles
+are not migrated to aliases.
 
 Assistant commands and text generation will be added separately.
 

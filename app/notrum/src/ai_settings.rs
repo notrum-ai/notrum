@@ -5,23 +5,38 @@
 
 use crate::ai_service::{Action, Failure};
 use crate::*;
-use notrum_ai::{AiError, AiModel, AiProfile, AiSettings, AiTaskSize, detect_provider};
+use notrum_ai::{
+    AiEffort, AiError, AiModel, AiProfile, AiSettings, DEFAULT_ALIAS, detect_provider,
+};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering as AtomicOrdering},
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Operation {
+    Connect,
+    Refresh,
+    Save,
+    Remove,
+    Disconnect,
+    Cleanup,
+}
+
 #[derive(Clone)]
 struct Controller {
     settings: RwSignal<AiSettings>,
     busy: RwSignal<bool>,
+    operation: RwSignal<Operation>,
     feedback: RwSignal<Option<i18n::Key>>,
     connection_open: RwSignal<bool>,
-    expanded: RwSignal<Option<AiTaskSize>>,
+    editing: RwSignal<Option<String>>,
     scroll_target: RwSignal<Option<ViewId>>,
     key: Rc<RefCell<Zeroizing<String>>>,
     key_revision: RwSignal<u64>,
     visible_key: RwSignal<bool>,
+    validate_key: RwSignal<bool>,
+    selected_key: RwSignal<bool>,
     generation: Rc<Cell<u64>>,
     cancellation: Rc<RefCell<Arc<AtomicBool>>>,
     global: Rc<RefCell<GlobalSettingsStore>>,
@@ -32,24 +47,62 @@ impl Controller {
         self.key.borrow_mut().zeroize();
         self.key_revision.update(|revision| *revision += 1);
         self.visible_key.set(false);
+        self.validate_key.set(false);
+        self.selected_key.set(false);
+    }
+
+    fn paste_key(&self) {
+        if self.busy.get_untracked() {
+            return;
+        }
+        self.feedback.set(None);
+        self.operation.set(Operation::Connect);
+        self.validate_key.set(true);
+        match Clipboard::get_contents() {
+            Ok(value) => {
+                let value = Zeroizing::new(value);
+                if value.trim().len() <= 4096 {
+                    self.key.borrow_mut().zeroize();
+                    self.key.borrow_mut().push_str(value.trim());
+                    self.selected_key.set(false);
+                    self.key_revision.update(|revision| *revision += 1);
+                } else {
+                    self.feedback.set(Some(i18n::Key::AiKeyFormat));
+                }
+            }
+            Err(_) => self.feedback.set(Some(i18n::Key::PastePasswordFailed)),
+        }
+    }
+
+    fn connect(&self) {
+        if self.busy.get_untracked() {
+            return;
+        }
+        self.validate_key.set(true);
+        if detect_provider(&self.key.borrow()).is_some() {
+            let key = self.key.borrow().clone();
+            self.submit(Action::Connect(key));
+        }
     }
 
     fn submit(&self, action: Action) {
         if self.busy.get_untracked() {
             return;
         }
+        self.operation.set(match &action {
+            Action::Connect(_) => Operation::Connect,
+            Action::Refresh => Operation::Refresh,
+            Action::Save { .. } => Operation::Save,
+            Action::Remove(_) => Operation::Remove,
+            Action::Disconnect => Operation::Disconnect,
+            Action::Cleanup => Operation::Cleanup,
+        });
         let Some(home) = self.global.borrow().home() else {
             self.feedback.set(Some(i18n::Key::AiSettingsError));
             return;
         };
         let expected = self.settings.get_untracked();
-        let next = match &action {
-            Action::Save(size, _) => AiTaskSize::ALL
-                .into_iter()
-                .find(|candidate| candidate != size && expected.profile(*candidate).is_err()),
-            _ => None,
-        };
-        let save = matches!(action, Action::Save(..));
+        let save = matches!(action, Action::Save { .. } | Action::Remove(_));
         let connecting = matches!(action, Action::Connect(..));
         self.busy.set(true);
         self.feedback.set(None);
@@ -85,7 +138,6 @@ impl Controller {
             self.clone(),
             Rc::new(receiver),
             generation,
-            next,
             save,
             connecting,
         );
@@ -96,7 +148,6 @@ fn poll(
     controller: Controller,
     receiver: Rc<Receiver<Result<AiSettings, Failure>>>,
     generation: u64,
-    next: Option<AiTaskSize>,
     save: bool,
     connecting: bool,
 ) {
@@ -127,20 +178,16 @@ fn poll(
                             .set(settings.connection.is_none());
                         if connecting {
                             controller.clear_key();
-                            controller.expanded.set(
-                                AiTaskSize::ALL
-                                    .into_iter()
-                                    .find(|size| settings.profile(*size).is_err()),
-                            );
+                            controller.editing.set(None);
                         } else if save {
-                            controller.expanded.set(next);
+                            controller.editing.set(None);
                         }
                     }
                     Err(error) => controller.feedback.set(Some(error_key(error))),
                 }
             }
             Err(mpsc::TryRecvError::Empty) => {
-                poll(controller, receiver, generation, next, save, connecting)
+                poll(controller, receiver, generation, save, connecting)
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 controller.busy.set(false);
@@ -158,6 +205,9 @@ fn error_key(error: Failure) -> i18n::Key {
         Failure::Cancelled => K::Cancel,
         Failure::Cleanup => K::AiCleanupError,
         Failure::Api(error) => match error {
+            AiError::AliasName => K::AiAliasNameError,
+            AiError::AliasExists => K::AiAliasExists,
+            AiError::DefaultAlias => K::AiDefaultProtected,
             AiError::KeyFormat => K::AiKeyFormat,
             AiError::Unauthorized => K::AiUnauthorized,
             AiError::Forbidden => K::AiForbidden,
@@ -189,7 +239,7 @@ fn page_description(key: i18n::Key, palette: Palette) -> impl IntoView {
         .style(move |style| style.font_size(13.5).color(palette.muted).selectable(false))
 }
 
-/// A step of the page: the connection and the task profiles are two sections
+/// A step of the page: the connection and the model aliases are two sections
 /// of one page, titled like the cards of the general settings page.
 fn section_title(key: i18n::Key, palette: Palette) -> impl IntoView {
     label(move || key.to_string()).style(move |style| {
@@ -207,8 +257,8 @@ fn spacer(height: f64) -> impl IntoView {
 
 /// One row of form actions. Buttons keep their own width instead of
 /// stretching across the card, and wrap before they shrink.
-fn actions(children: impl IntoView + 'static) -> impl IntoView {
-    v_stack((children,)).style(|style| {
+fn actions(children: impl ViewTuple + 'static) -> impl IntoView {
+    h_stack(children).style(|style| {
         rtl_row(style)
             .gap(8.0)
             .items_center()
@@ -225,13 +275,16 @@ pub(super) fn page(
     let controller = Controller {
         settings: create_rw_signal(initial),
         busy: create_rw_signal(false),
+        operation: create_rw_signal(Operation::Connect),
         feedback: create_rw_signal(None),
         connection_open: create_rw_signal(true),
-        expanded: create_rw_signal(None),
+        editing: create_rw_signal(None),
         scroll_target: create_rw_signal(None),
         key: Rc::new(RefCell::new(Zeroizing::new(String::with_capacity(4096)))),
         key_revision: create_rw_signal(0),
         visible_key: create_rw_signal(false),
+        validate_key: create_rw_signal(false),
+        selected_key: create_rw_signal(false),
         generation: Rc::new(Cell::new(0)),
         cancellation: Rc::new(RefCell::new(Arc::new(AtomicBool::new(false)))),
         global,
@@ -250,17 +303,14 @@ pub(super) fn page(
             .store(true, AtomicOrdering::Release);
         lifecycle.clear_key();
         lifecycle.feedback.set(None);
+        lifecycle.operation.set(Operation::Connect);
         if visible {
             let home = lifecycle.global.borrow().home();
             let loaded = GlobalSettingsStore::load(home.as_deref());
             let settings = loaded.settings.ai.clone();
             lifecycle.connection_open.set(settings.connection.is_none());
             lifecycle.settings.set(settings.clone());
-            lifecycle.expanded.set(
-                AiTaskSize::ALL
-                    .into_iter()
-                    .find(|size| settings.profile(*size).is_err()),
-            );
+            lifecycle.editing.set(None);
             *lifecycle.global.borrow_mut() = loaded.store;
             if loaded.diagnostic.is_some() {
                 lifecycle.feedback.set(Some(i18n::Key::AiSettingsError));
@@ -268,7 +318,6 @@ pub(super) fn page(
         }
     });
     let settings = controller.settings;
-    let feedback = controller.feedback;
     let busy = controller.busy;
     let connection_open = controller.connection_open;
     // Keep form signals alive while changing visibility. Rebuilding nested
@@ -280,40 +329,14 @@ pub(super) fn page(
             .style(move |style| style.apply_if(connection_open.get(), |style| style.hide())),
     ))
     .style(|style| style.width_full());
-    // One line for both states of the section: the request in flight and the
-    // error it ended with never move the form below them.
-    let status = label(move || {
-        if busy.get() {
-            tr!(AiWorking)
-        } else {
-            feedback
-                .get()
-                .map(|key| key.to_string())
-                .unwrap_or_default()
-        }
-    })
-    .style(move |style| {
-        style
-            .width_full()
-            .max_width(SETTINGS_CARD_MAX_WIDTH_PX)
-            .min_height(18.0)
-            .font_size(12.5)
-            .line_height(1.4)
-            .color(if busy.get() {
-                palette.accent
-            } else {
-                palette.danger
-            })
-            .selectable(false)
-    });
     let cleanup_controller = controller.clone();
-    let cleanup = actions(action_button(
+    let cleanup = actions((action_button(
         move || tr!(AiRetryCleanup),
         IconButtonTone::Danger,
         palette,
         move || !busy.get(),
         move || cleanup_controller.submit(Action::Cleanup),
-    ))
+    ),))
     .style(move |style| {
         style
             .margin_top(10.0)
@@ -321,62 +344,17 @@ pub(super) fn page(
                 style.hide()
             })
     });
-    let profiles = v_stack((
-        v_stack((
-            profile_card(AiTaskSize::Small, controller.clone(), palette),
-            profile_card(AiTaskSize::Medium, controller.clone(), palette),
-            profile_card(AiTaskSize::Large, controller.clone(), palette),
-        ))
-        .style(move |style| {
-            rtl_column(style)
-                .width_full()
-                .gap(12.0)
-                .apply_if(settings.get().connection.is_none(), |style| style.hide())
-        }),
-        h_stack((
-            svg(ICON_LOCK).style(|style| style.size(16.0, 16.0)),
-            settings_hint(i18n::Key::AiConnectFirst, palette),
-        ))
-        .style(move |style| {
-            rtl_row(settings_card_style(style, palette))
-                .items_center()
-                .gap(10.0)
-                .color(palette.muted)
-                .apply_if(settings.get().connection.is_some(), |style| style.hide())
-        }),
-    ))
-    .style(|style| style.width_full());
     let scroll_target = controller.scroll_target;
     let connection_section = v_stack((
         section_title(i18n::Key::AiConnect, palette),
-        spacer(7.0),
-        settings_hint(i18n::Key::AiKeyStorage, palette)
-            .style(|style| style.max_width(SETTINGS_CARD_MAX_WIDTH_PX)),
         spacer(12.0),
         connection,
-        spacer(10.0),
-        status,
+        feedback_view(controller.clone(), false, false, palette),
+        feedback_view(controller.clone(), false, true, palette),
         cleanup,
     ))
     .style(|style| rtl_column(style).width_full());
-    let models_section = v_stack((
-        section_title(i18n::Key::AiModels, palette),
-        spacer(7.0),
-        label(move || msg!(AiProgress, "count" => settings.get().configured_count()).render())
-            .style(move |style| {
-                style
-                    .font_size(12.5)
-                    .selectable(false)
-                    .color(if settings.get().ready() {
-                        palette.accent
-                    } else {
-                        palette.muted
-                    })
-            }),
-        spacer(12.0),
-        profiles,
-    ))
-    .style(|style| rtl_column(style).width_full());
+    let models_section = aliases_section(controller.clone(), palette);
     scroll(
         v_stack((
             page_title(i18n::Key::AiAssistant, palette),
@@ -384,7 +362,7 @@ pub(super) fn page(
             page_description(i18n::Key::AiDescription, palette),
             spacer(28.0),
             connection_section,
-            spacer(24.0),
+            spacer(28.0),
             models_section,
         ))
         .style(|style| {
@@ -404,10 +382,46 @@ pub(super) fn page(
     })
 }
 
+fn feedback_view(
+    controller: Controller,
+    alias: bool,
+    cleanup: bool,
+    palette: Palette,
+) -> impl IntoView {
+    let message = move || {
+        let feedback = controller.feedback.get();
+        let is_cleanup = feedback == Some(i18n::Key::AiCleanupError);
+        let target = matches!(
+            controller.operation.get(),
+            Operation::Save | Operation::Remove
+        );
+        feedback.filter(|_| {
+            !controller.busy.get()
+                && if cleanup {
+                    is_cleanup
+                } else {
+                    !is_cleanup && target == alias
+                }
+        })
+    };
+    label(move || message().map(|key| key.to_string()).unwrap_or_default()).style(move |style| {
+        style
+            .width_full()
+            .max_width(SETTINGS_CARD_MAX_WIDTH_PX)
+            .margin_top(10.0)
+            .font_size(12.5)
+            .line_height(1.4)
+            .color(palette.danger)
+            .selectable(false)
+            .apply_if(message().is_none(), |style| style.hide())
+    })
+}
+
 fn connection_summary(controller: Controller, palette: Palette) -> impl IntoView {
     let settings = controller.settings;
     let busy = controller.busy;
     let edit = controller.clone();
+    let operation = controller.operation;
     let refresh = controller;
     v_stack((
         v_stack((
@@ -425,45 +439,57 @@ fn connection_summary(controller: Controller, palette: Palette) -> impl IntoView
                     .color(palette.ink)
                     .selectable(false)
             }),
-            label(move || tr!(AiKeySaved)).style(move |style| {
-                style
-                    .font_size(12.5)
-                    .color(palette.accent)
-                    .selectable(false)
-            }),
-            label(move || {
-                settings
-                    .get()
-                    .connection
-                    .map(|connection| {
-                        let date =
-                            chrono::DateTime::from_timestamp(connection.checked_at as i64, 0)
+            label(move || tr!(AiKeySaved))
+                .style(move |style| {
+                    style
+                        .font_size(12.5)
+                        .color(palette.accent)
+                        .selectable(false)
+                })
+                .tooltip(move || {
+                    tooltip_label(
+                        settings
+                            .get()
+                            .connection
+                            .map(|connection| {
+                                let date = chrono::DateTime::from_timestamp(
+                                    connection.checked_at as i64,
+                                    0,
+                                )
                                 .map(|time| {
                                     time.with_timezone(&chrono::Local)
                                         .format("%Y-%m-%d %H:%M")
                                         .to_string()
                                 })
                                 .unwrap_or_default();
-                        msg!(AiLastChecked, "value" => date).render()
-                    })
-                    .unwrap_or_default()
-            })
-            .style(move |style| style.font_size(12.0).color(palette.muted).selectable(false)),
+                                msg!(AiLastChecked, "value" => date).render()
+                            })
+                            .unwrap_or_default(),
+                        palette,
+                    )
+                }),
         ))
         .style(|style| rtl_column(style).width_full().gap(4.0)),
         actions((
             action_button(
-                move || tr!(AiEdit),
+                move || tr!(AiChangeKey),
                 IconButtonTone::Secondary,
                 palette,
                 move || !busy.get(),
                 move || {
                     edit.clear_key();
+                    edit.feedback.set(None);
                     edit.connection_open.set(true);
                 },
             ),
             action_button(
-                move || tr!(AiRefreshModels),
+                move || {
+                    if busy.get() && operation.get() == Operation::Refresh {
+                        tr!(AiRefreshing)
+                    } else {
+                        tr!(AiRefreshModels)
+                    }
+                },
                 IconButtonTone::Secondary,
                 palette,
                 move || !busy.get(),
@@ -478,6 +504,8 @@ fn connection_form(controller: Controller, palette: Palette) -> impl IntoView {
     let busy = controller.busy;
     let settings = controller.settings;
     let revision = controller.key_revision;
+    let validate = controller.validate_key;
+    let operation = controller.operation;
     let provider_key = controller.key.clone();
     let provider_state = controller.key.clone();
     // One line under the field: the provider read from the key, or why the key
@@ -486,17 +514,23 @@ fn connection_form(controller: Controller, palette: Palette) -> impl IntoView {
         revision.get();
         let key = provider_key.borrow();
         if key.is_empty() {
-            tr!(AiDetectHint)
+            String::new()
         } else {
             detect_provider(&key)
                 .map(|provider| provider.name().to_owned())
-                .unwrap_or_else(|| tr!(AiKeyFormat))
+                .unwrap_or_else(|| {
+                    if validate.get() {
+                        tr!(AiKeyFormat)
+                    } else {
+                        String::new()
+                    }
+                })
         }
     })
     .style(move |style| {
         revision.get();
         let key = provider_state.borrow();
-        let rejected = !key.is_empty() && detect_provider(&key).is_none();
+        let rejected = validate.get() && !key.is_empty() && detect_provider(&key).is_none();
         style
             .width_full()
             .font_size(12.5)
@@ -507,6 +541,10 @@ fn connection_form(controller: Controller, palette: Palette) -> impl IntoView {
             } else {
                 palette.muted
             })
+            .apply_if(
+                key.is_empty() || (!validate.get() && detect_provider(&key).is_none()),
+                |style| style.hide(),
+            )
     });
     let warning_key = controller.key.clone();
     let warning_visible = controller.key.clone();
@@ -544,20 +582,26 @@ fn connection_form(controller: Controller, palette: Palette) -> impl IntoView {
         v_stack((settings_field_label(i18n::Key::AiKeyLabel, palette), secret))
             .style(|style| rtl_column(style).width_full().gap(7.0)),
         provider_hint,
+        settings_hint(i18n::Key::AiKeyStorage, palette),
         warning,
         actions((
             action_button(
-                move || tr!(AiVerify),
+                move || {
+                    if busy.get() && operation.get() == Operation::Connect {
+                        tr!(AiConnecting)
+                    } else if settings.get().connection.is_some() {
+                        tr!(AiSaveKey)
+                    } else {
+                        tr!(AiVerify)
+                    }
+                },
                 IconButtonTone::Primary,
                 palette,
                 move || {
                     revision.get();
                     !busy.get() && detect_provider(&valid_key.borrow()).is_some()
                 },
-                move || {
-                    let key = submit.key.borrow().clone();
-                    submit.submit(Action::Connect(key));
-                },
+                move || submit.connect(),
             ),
             action_button(
                 move || tr!(Cancel),
@@ -571,7 +615,10 @@ fn connection_form(controller: Controller, palette: Palette) -> impl IntoView {
                         .connection_open
                         .set(cancel.settings.get_untracked().connection.is_none());
                 },
-            ),
+            )
+            .style(move |style| {
+                style.apply_if(settings.get().connection.is_none(), |style| style.hide())
+            }),
             action_button(
                 move || tr!(AiDisconnect),
                 IconButtonTone::Danger,
@@ -591,14 +638,17 @@ fn connection_form(controller: Controller, palette: Palette) -> impl IntoView {
 }
 
 fn secret_input(controller: Controller, palette: Palette) -> impl IntoView {
+    const EYE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>"##;
+    const EYE_OFF: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 3 18 18M10.6 5.1 12 5c6.5 0 10 7 10 7a19 19 0 0 1-3.2 4M6.5 6.5A20 20 0 0 0 2 12s3.5 7 10 7a11 11 0 0 0 5.5-1.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>"##;
     let revision = controller.key_revision;
     let visible = controller.visible_key;
     let busy = controller.busy;
+    let selected = controller.selected_key;
+    let validate = controller.validate_key;
+    let focused = create_rw_signal(false);
     let display = controller.key.clone();
-    let entry = controller.key.clone();
     let empty_key = controller.key.clone();
-    let selected = Rc::new(Cell::new(false));
-    let selected_style = selected.clone();
+    let input = controller.clone();
     let field = MaskedPasswordView::new(
         label(move || {
             revision.get();
@@ -623,35 +673,33 @@ fn secret_input(controller: Controller, palette: Palette) -> impl IntoView {
             let shortcut = event.modifiers.meta() || event.modifiers.control();
             match &event.key.logical_key {
                 Key::Named(NamedKey::Tab) => return EventPropagation::Continue,
-                Key::Named(NamedKey::Escape) => {
-                    entry.borrow_mut().zeroize();
-                    selected.set(false);
-                }
-                Key::Named(NamedKey::Backspace) | Key::Named(NamedKey::Delete) => {
-                    if selected.replace(false) {
-                        entry.borrow_mut().zeroize();
-                    } else {
-                        entry.borrow_mut().pop();
-                    }
-                }
-                Key::Character(value) if shortcut && value.eq_ignore_ascii_case("a") => {
-                    selected.set(true)
+                Key::Named(NamedKey::Enter) => {
+                    input.connect();
+                    return EventPropagation::Stop;
                 }
                 Key::Character(value) if shortcut && value.eq_ignore_ascii_case("v") => {
-                    if let Ok(value) = Clipboard::get_contents() {
-                        let value = Zeroizing::new(value);
-                        if value.trim().len() <= 4096 {
-                            entry.borrow_mut().zeroize();
-                            entry.borrow_mut().push_str(value.trim());
-                            selected.set(false);
-                        }
+                    input.paste_key();
+                    return EventPropagation::Stop;
+                }
+                Key::Character(value) if shortcut && value.eq_ignore_ascii_case("a") => {
+                    selected.set(true);
+                    return EventPropagation::Stop;
+                }
+                Key::Named(NamedKey::Escape) => input.clear_key(),
+                Key::Named(NamedKey::Backspace) | Key::Named(NamedKey::Delete) => {
+                    if selected.get_untracked() {
+                        input.key.borrow_mut().zeroize();
+                    } else {
+                        input.key.borrow_mut().pop();
                     }
+                    selected.set(false);
                 }
                 Key::Character(value) if !shortcut => {
-                    if selected.replace(false) {
-                        entry.borrow_mut().zeroize();
+                    if selected.get_untracked() {
+                        input.key.borrow_mut().zeroize();
                     }
-                    let mut entry = entry.borrow_mut();
+                    selected.set(false);
+                    let mut entry = input.key.borrow_mut();
                     if entry.len() + value.len() <= 4096
                         && value.is_ascii()
                         && !value.chars().any(char::is_control)
@@ -661,295 +709,380 @@ fn secret_input(controller: Controller, palette: Palette) -> impl IntoView {
                 }
                 _ => return EventPropagation::Stop,
             }
+            validate.set(false);
+            input.feedback.set(None);
             revision.update(|r| *r += 1);
             EventPropagation::Stop
         },
     )
     .style(move |style| {
         revision.get();
-        let empty = empty_key.borrow().is_empty();
-        settings_secret_style(style, palette, empty, false)
-            .apply_if(selected_style.get(), |style| {
+        style
+            .min_width(0.0)
+            .flex_grow(1.0)
+            .height_full()
+            .items_center()
+            .cursor(CursorStyle::Text)
+            .font_size(13.5)
+            .color(if empty_key.borrow().is_empty() {
+                palette.muted
+            } else {
+                palette.ink
+            })
+            .apply_if(selected.get(), |style| {
                 style.background(palette.accent_soft)
             })
     })
-    .style(move |style| style.focus(move |style| style.border_color(palette.accent)))
+    .on_event_stop(EventListener::FocusGained, move |_| focused.set(true))
+    .on_event_stop(EventListener::FocusLost, move |_| {
+        focused.set(false);
+        validate.set(true);
+    })
     .keyboard_navigable();
     let reveal_key = controller.key.clone();
-    let paste_key = controller.key.clone();
-    let paste = controller;
-    v_stack((
-        field,
-        actions((
-            action_button(
-                move || {
-                    if visible.get() {
-                        tr!(AiConcealCredential)
-                    } else {
-                        tr!(AiRevealCredential)
-                    }
-                },
-                IconButtonTone::Secondary,
-                palette,
-                move || {
-                    revision.get();
-                    !busy.get() && !reveal_key.borrow().is_empty()
-                },
-                move || visible.update(|show| *show = !*show),
-            ),
-            action_button(
-                move || tr!(AiPaste),
-                IconButtonTone::Secondary,
-                palette,
-                move || !busy.get(),
-                move || match Clipboard::get_contents() {
-                    Ok(value) => {
-                        let value = Zeroizing::new(value);
-                        if value.trim().len() <= 4096 {
-                            paste_key.borrow_mut().zeroize();
-                            paste_key.borrow_mut().push_str(value.trim());
-                            revision.update(|r| *r += 1);
-                        } else {
-                            paste.feedback.set(Some(i18n::Key::AiKeyFormat));
-                        }
-                    }
-                    Err(_) => paste.feedback.set(Some(i18n::Key::PastePasswordFailed)),
-                },
-            ),
-        )),
-    ))
-    .style(|style| rtl_column(style).width_full().gap(8.0))
-}
-
-fn size_key(size: AiTaskSize) -> i18n::Key {
-    match size {
-        AiTaskSize::Small => i18n::Key::AiSmall,
-        AiTaskSize::Medium => i18n::Key::AiMedium,
-        AiTaskSize::Large => i18n::Key::AiLarge,
-    }
-}
-
-fn profile_card(size: AiTaskSize, controller: Controller, palette: Palette) -> impl IntoView {
-    let settings = controller.settings;
-    let expanded = controller.expanded;
-    let busy = controller.busy;
-    let scroll_target = controller.scroll_target;
-    let form_controller = controller;
-    let view = v_stack((
-        reliable_button(
-            h_stack((
-                v_stack((
-                    label(move || size_key(size).to_string()).style(move |style| {
-                        style.font_size(14.0).color(palette.ink).selectable(false)
-                    }),
-                    label(move || {
-                        let settings = settings.get();
-                        match settings.profiles.get(&size) {
-                            Some(profile) => {
-                                let name = settings
-                                    .connection
-                                    .as_ref()
-                                    .and_then(|connection| {
-                                        connection
-                                            .models
-                                            .iter()
-                                            .find(|model| model.id == profile.model)
-                                    })
-                                    .map(|model| model.name.as_str())
-                                    .unwrap_or(&profile.model);
-                                let effort = profile
-                                    .effort
-                                    .map(|effort| effort.name().to_owned())
-                                    .unwrap_or_else(|| tr!(AiManaged));
-                                if settings.profile(size).is_ok() {
-                                    format!("{name} · {effort}")
-                                } else {
-                                    format!("{name} · {effort} · {}", tr!(AiUnavailable))
-                                }
-                            }
-                            None => tr!(AiNotConfigured),
-                        }
-                    })
-                    .style(move |style| {
-                        let settings = settings.get();
-                        style.width_full().font_size(12.0).selectable(false).color(
-                            if settings.profile(size).is_ok() {
-                                palette.muted
-                            } else if settings.profiles.contains_key(&size) {
-                                palette.danger
-                            } else {
-                                palette.muted
-                            },
-                        )
-                    }),
-                ))
-                .style(|style| rtl_column(style).min_width(0.0).flex_grow(1.0).gap(4.0)),
-                label(move || {
-                    if expanded.get() == Some(size) {
-                        tr!(AiCollapse)
-                    } else {
-                        tr!(AiEdit)
-                    }
-                })
-                .style(move |style| {
-                    style
-                        .font_size(12.5)
-                        .color(palette.accent)
-                        .selectable(false)
-                }),
-            ))
-            .style(|style| {
-                rtl_row(style)
-                    .width_full()
-                    .justify_between()
-                    .items_center()
-                    .gap(12.0)
-            }),
-            move || {
-                if !busy.get_untracked() {
-                    expanded.update(|open| {
-                        *open = if *open == Some(size) {
-                            None
-                        } else {
-                            Some(size)
-                        }
-                    });
-                }
-            },
-        )
-        .style(move |style| {
-            style
-                .width_full()
-                .cursor(CursorStyle::Pointer)
-                .focus(|style| style.outline(1.0).outline_color(palette.accent))
-        }),
-        profile_form(size, form_controller, palette).style(move |style| {
-            style
-                .margin_top(14.0)
-                .padding_top(14.0)
-                .border_top(1.0)
-                .border_color(palette.divider)
-                .apply_if(expanded.get() != Some(size), |style| style.hide())
-        }),
-    ))
-    .style(move |style| {
-        settings_card_style(style, palette).border_color(if expanded.get() == Some(size) {
-            palette.accent
-        } else {
-            palette.divider
-        })
-    });
-    let id = view.id();
-    create_effect(move |_| {
-        if expanded.get() == Some(size) {
-            exec_after(Duration::from_millis(100), move |_| {
-                if expanded.get_untracked() == Some(size) {
-                    scroll_target.set(Some(id));
-                }
-            });
-        }
-    });
-    view
-}
-
-fn profile_form(size: AiTaskSize, controller: Controller, palette: Palette) -> impl IntoView {
-    let settings = controller.settings;
-    let busy = controller.busy;
-    let saved = settings.get_untracked().profiles.get(&size).cloned();
-    let model = create_rw_signal(saved.as_ref().map(|p| p.model.clone()));
-    let effort = create_rw_signal(saved.and_then(|p| p.effort));
-    let search = create_rw_signal(String::new());
-    let choosing = create_rw_signal(false);
-    let changed_effort = create_rw_signal(false);
-    let expanded = controller.expanded;
-    create_effect(move |_| {
-        expanded.get();
-        let saved = settings.get_untracked().profiles.get(&size).cloned();
-        model.set(saved.as_ref().map(|profile| profile.model.clone()));
-        effort.set(saved.and_then(|profile| profile.effort));
-        search.set(String::new());
-        choosing.set(false);
-        changed_effort.set(false);
-    });
-    let choices = dyn_stack(
+    let reveal_enabled = move || {
+        revision.get();
+        !busy.get() && !reveal_key.borrow().is_empty()
+    };
+    let reveal_press_enabled = reveal_enabled.clone();
+    let reveal = reliable_button(
+        svg(EYE)
+            .update_value(move || if visible.get() { EYE_OFF } else { EYE })
+            .style(|style| style.size(16.0, 16.0)),
         move || {
-            let query = search.get().to_lowercase();
-            settings
-                .get()
-                .connection
-                .map(|c| {
-                    c.models
-                        .into_iter()
-                        .filter(|m| {
-                            m.name.to_lowercase().contains(&query)
-                                || m.id.to_lowercase().contains(&query)
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        },
-        |item| item.clone(),
-        move |item: AiModel| {
-            let id = item.id.clone();
-            let selected_id = id.clone();
-            reliable_button(
-                label(move || item.name.clone()).style(|style| style.selectable(false)),
-                move || {
-                    if busy.get_untracked() {
-                        return;
-                    }
-                    let previous = effort.get_untracked();
-                    let compatible = previous.is_some_and(|e| item.efforts.contains(&e));
-                    if !compatible {
-                        effort.set(None);
-                    }
-                    changed_effort.set(previous.is_some() && !compatible);
-                    model.set(Some(id.clone()));
-                    choosing.set(false);
-                    search.set(String::new());
-                },
-            )
-            .style(move |style| {
-                style
-                    .width_full()
-                    .padding_horiz(12.0)
-                    .padding_vert(9.0)
-                    .font_size(13.0)
-                    .cursor(CursorStyle::Pointer)
-                    .color(palette.ink)
-                    .background(if model.get().as_ref() == Some(&selected_id) {
-                        palette.accent_soft
-                    } else {
-                        palette.paper
-                    })
-                    .hover(|style| style.background(palette.accent_soft))
-                    .focus(|style| style.background(palette.accent_soft))
-            })
+            if reveal_press_enabled() {
+                visible.update(|show| *show = !*show);
+            }
         },
     )
-    .style(|style| rtl_column(style).flex_col().width_full());
-    let selected = label(move || {
-        let current = model.get();
-        settings
-            .get()
-            .connection
-            .and_then(|c| {
-                c.models
-                    .into_iter()
-                    .find(|m| Some(&m.id) == current.as_ref())
-            })
-            .map(|m| m.name)
-            .unwrap_or_else(|| current.unwrap_or_else(|| tr!(AiChooseModel)))
-    })
     .style(move |style| {
         style
-            .min_width(0.0)
-            .selectable(false)
-            .color(if model.get().is_some() {
+            .size(28.0, 28.0)
+            .items_center()
+            .justify_center()
+            .border_radius(4.0)
+            .color(if reveal_enabled() {
                 palette.ink
             } else {
                 palette.muted
             })
+            .cursor(if reveal_enabled() {
+                CursorStyle::Pointer
+            } else {
+                CursorStyle::Default
+            })
+            .hover(|style| style.background(palette.canvas))
+            .focus(|style| style.outline(1.0).outline_color(palette.accent))
+    })
+    .tooltip(move || {
+        tooltip_label(
+            if visible.get() {
+                tr!(AiConcealCredential)
+            } else {
+                tr!(AiRevealCredential)
+            },
+            palette,
+        )
+    });
+    h_stack((
+        h_stack((field, reveal)).style(move |style| {
+            // Keys and the reveal control retain left-to-right order in RTL locales.
+            settings_control_style(style, palette)
+                .flex_row()
+                .flex_grow(1.0)
+                .width(0.0)
+                .gap(8.0)
+                .padding_right(5.0)
+                .border_color(if focused.get() {
+                    palette.accent
+                } else {
+                    palette.divider
+                })
+        }),
+        action_button(
+            move || tr!(AiPaste),
+            IconButtonTone::Secondary,
+            palette,
+            move || !busy.get(),
+            move || controller.paste_key(),
+        ),
+    ))
+    .style(|style| rtl_row(style).width_full().items_center().gap(8.0))
+}
+
+fn aliases_section(controller: Controller, palette: Palette) -> impl IntoView {
+    let settings = controller.settings;
+    let editing = controller.editing;
+    let busy = controller.busy;
+    let feedback = controller.feedback;
+    let rows = dyn_stack(
+        move || {
+            let mut names: Vec<_> =
+                settings.with(|settings| settings.aliases.keys().cloned().collect());
+            names.sort_by(|a, b| (a != DEFAULT_ALIAS, a).cmp(&(b != DEFAULT_ALIAS, b)));
+            names
+        },
+        |name| name.clone(),
+        move |name| {
+            let title = name.clone();
+            let summary_name = name.clone();
+            let valid_name = name.clone();
+            let hidden_name = name.clone();
+            reliable_button(
+                h_stack((
+                    v_stack((
+                        label(move || title.clone()).style(move |style| {
+                            style
+                                .width_full()
+                                .min_width(0.0)
+                                .font_size(14.0)
+                                .color(palette.ink)
+                                .text_ellipsis()
+                                .selectable(false)
+                        }),
+                        label(move || {
+                            settings.with(|settings| {
+                                let Some(profile) = settings.aliases.get(&summary_name) else {
+                                    return String::new();
+                                };
+                                let model = settings
+                                    .connection
+                                    .as_ref()
+                                    .and_then(|c| c.models.iter().find(|m| m.id == profile.model));
+                                let name = model.map(|m| m.name.as_str()).unwrap_or(&profile.model);
+                                let effort = profile
+                                    .effort
+                                    .map(|e| e.name().to_owned())
+                                    .unwrap_or_else(|| tr!(AiManaged));
+                                if settings.validate_profile(profile).is_ok() {
+                                    format!("{name} · {effort}")
+                                } else {
+                                    format!("{name} · {}", tr!(AiUnavailable))
+                                }
+                            })
+                        })
+                        .style(move |style| {
+                            let valid = settings.with(|settings| {
+                                settings
+                                    .aliases
+                                    .get(&valid_name)
+                                    .is_some_and(|p| settings.validate_profile(p).is_ok())
+                            });
+                            style
+                                .width_full()
+                                .min_width(0.0)
+                                .font_size(12.0)
+                                .text_ellipsis()
+                                .color(if valid { palette.muted } else { palette.danger })
+                                .selectable(false)
+                        }),
+                    ))
+                    .style(|style| rtl_column(style).flex_grow(1.0).min_width(0.0).gap(4.0)),
+                    svg(ICON_CHEVRON_RIGHT)
+                        .update_value(move || {
+                            if i18n::current().is_rtl() {
+                                ICON_BACK
+                            } else {
+                                ICON_CHEVRON_RIGHT
+                            }
+                        })
+                        .style(move |style| style.size(14.0, 14.0).color(palette.muted)),
+                ))
+                .style(|style| rtl_row(style).width_full().items_center().gap(12.0)),
+                move || {
+                    if !busy.get_untracked() {
+                        feedback.set(None);
+                        editing.set(Some(name.clone()));
+                    }
+                },
+            )
+            .style(move |style| {
+                settings_card_style(style, palette)
+                    .cursor(CursorStyle::Pointer)
+                    .focus(|style| style.outline(1.0).outline_color(palette.accent))
+                    .apply_if(editing.get().as_ref() == Some(&hidden_name), |style| {
+                        style.hide()
+                    })
+            })
+        },
+    )
+    .style(|style| rtl_column(style).flex_col().width_full().gap(12.0));
+    // One persistent editor avoids disposing nested model lists when an alias is
+    // added, renamed, or removed while Floem still has queued signal updates.
+    let editor = v_stack((
+        section_title(i18n::Key::AiAliasEdit, palette),
+        alias_form(controller.clone(), palette),
+    ))
+    .style(move |style| {
+        settings_card_style(style, palette)
+            .gap(16.0)
+            .border_color(palette.accent)
+            .apply_if(editing.get().is_none(), |style| style.hide())
+    });
+    let editor_id = editor.id();
+    let scroll_target = controller.scroll_target;
+    create_effect(move |_| {
+        if editing.get().is_some() {
+            exec_after(Duration::from_millis(100), move |_| {
+                if editing.get_untracked().is_some() {
+                    scroll_target.set(Some(editor_id));
+                }
+            });
+        }
+    });
+    v_stack((
+        h_stack((
+            section_title(i18n::Key::AiModels, palette),
+            action_button(
+                move || tr!(AiAliasAdd),
+                IconButtonTone::Secondary,
+                palette,
+                move || !busy.get() && editing.get().is_none(),
+                move || {
+                    feedback.set(None);
+                    editing.set(Some(String::new()));
+                },
+            ),
+        ))
+        .style(|style| {
+            rtl_row(style)
+                .width_full()
+                .items_center()
+                .justify_between()
+                .gap(12.0)
+                .flex_wrap(floem::taffy::FlexWrap::Wrap)
+        }),
+        settings_hint(i18n::Key::AiAliasesHint, palette),
+        editor,
+        rows,
+    ))
+    .style(move |style| {
+        rtl_column(style)
+            .width_full()
+            .max_width(SETTINGS_CARD_MAX_WIDTH_PX)
+            .gap(12.0)
+            .apply_if(settings.get().connection.is_none(), |style| style.hide())
+    })
+}
+
+fn alias_dropdown<T: Clone + 'static>(
+    value: RwSignal<Option<T>>,
+    items: Vec<T>,
+    display: impl Fn(Option<T>) -> String + 'static,
+    accept: impl Fn(T) + 'static,
+    enabled: impl Fn() -> bool + 'static,
+    palette: Palette,
+) -> impl IntoView {
+    let display = Rc::new(display);
+    let item_display = display.clone();
+    floem::views::dropdown::Dropdown::custom(
+        move || value.get(),
+        move |item| {
+            let display = display.clone();
+            h_stack((
+                label(move || display(item.clone()))
+                    .style(|style| style.min_width(0.0).text_ellipsis().selectable(false)),
+                svg(ICON_CHEVRON_DOWN).style(|style| style.size(12.0, 12.0)),
+            ))
+            .style(|style| {
+                rtl_row(style)
+                    .width_full()
+                    .items_center()
+                    .justify_between()
+                    .gap(8.0)
+            })
+            .into_any()
+        },
+        items.into_iter().map(Some).collect::<Vec<_>>(),
+        move |item| {
+            let display = item_display.clone();
+            label(move || display(item.clone()))
+                .style(move |style| {
+                    style
+                        .width_full()
+                        .height(34.0)
+                        .padding_horiz(12.0)
+                        .items_center()
+                        .font_size(13.0)
+                        .color(palette.ink)
+                        .background(palette.paper)
+                        .selectable(false)
+                        .hover(|style| style.background(palette.accent_soft))
+                        .focus(|style| style.background(palette.accent_soft))
+                })
+                .into_any()
+        },
+    )
+    .on_accept(move |item| {
+        if let Some(item) = item {
+            accept(item);
+        }
+    })
+    .disabled(move || !enabled())
+    .keyboard_navigable()
+    .style(move |style| {
+        settings_control_style(style, palette)
+            .cursor(CursorStyle::Pointer)
+            .focus(|style| style.border_color(palette.accent))
+            .disabled(|style| style.color(palette.muted).cursor(CursorStyle::Default))
+            .class(floem::views::scroll::ScrollClass, |style| {
+                style
+                    .width_full()
+                    .max_height(204.0)
+                    .background(palette.paper)
+                    .border(1.0)
+                    .border_color(palette.divider)
+                    .border_radius(6.0)
+            })
+    })
+}
+
+fn selected_effort(model: &AiModel, previous: Option<AiEffort>) -> Option<AiEffort> {
+    previous
+        .filter(|effort| model.efforts.contains(effort))
+        .or_else(|| {
+            model
+                .efforts
+                .contains(&AiEffort::High)
+                .then_some(AiEffort::High)
+        })
+        .or_else(|| model.efforts.first().copied())
+}
+
+fn alias_draft(settings: &AiSettings, name: &str) -> Option<AiProfile> {
+    let models = &settings.connection.as_ref()?.models;
+    let saved = settings
+        .aliases
+        .get(name)
+        .or_else(|| settings.aliases.get(DEFAULT_ALIAS));
+    let model = models
+        .iter()
+        .find(|model| {
+            !model.efforts.is_empty() && saved.is_some_and(|saved| saved.model == model.id)
+        })
+        .or_else(|| models.iter().find(|model| !model.efforts.is_empty()))?;
+    Some(AiProfile {
+        model: model.id.clone(),
+        effort: selected_effort(model, saved.and_then(|saved| saved.effort)),
+    })
+}
+
+fn alias_form(controller: Controller, palette: Palette) -> impl IntoView {
+    let settings = controller.settings;
+    let busy = controller.busy;
+    let name = create_rw_signal(String::new());
+    let model = create_rw_signal(None::<String>);
+    let effort = create_rw_signal(None);
+    let changed_effort = create_rw_signal(false);
+    let editing = controller.editing;
+    create_effect(move |_| {
+        let current = editing.get();
+        name.set(current.clone().unwrap_or_default());
+        let saved =
+            settings.with_untracked(|s| alias_draft(s, current.as_deref().unwrap_or_default()));
+        model.set(saved.as_ref().map(|profile| profile.model.clone()));
+        effort.set(saved.and_then(|profile| profile.effort));
+        changed_effort.set(false);
     });
     let available = move || {
         settings.get().connection.and_then(|c| {
@@ -958,129 +1091,140 @@ fn profile_form(size: AiTaskSize, controller: Controller, palette: Palette) -> i
                 .find(|m| Some(&m.id) == model.get().as_ref())
         })
     };
-    let effort_choices = dyn_stack(
-        move || available().map(|m| m.efforts).unwrap_or_default(),
-        |value| value.name(),
-        move |value| {
-            reliable_button(
-                text(value.name()).style(|style| style.selectable(false)),
-                move || {
-                    if !busy.get_untracked() {
-                        effort.set(Some(value));
-                        changed_effort.set(false);
-                    }
-                },
-            )
-            .style(move |style| {
-                let chosen = effort.get() == Some(value);
-                style
-                    .height(30.0)
-                    .padding_horiz(12.0)
-                    .items_center()
-                    .justify_center()
-                    .font_size(12.5)
-                    .cursor(CursorStyle::Pointer)
-                    .border_radius(5.0)
-                    .border(1.0)
-                    .border_color(if chosen {
-                        palette.accent
-                    } else {
-                        palette.divider
+    let model_picker = dyn_container(
+        move || {
+            settings.with(|s| {
+                s.connection
+                    .as_ref()
+                    .map(|c| {
+                        c.models
+                            .iter()
+                            .filter(|m| !m.efforts.is_empty())
+                            .cloned()
+                            .collect::<Vec<_>>()
                     })
-                    .color(if chosen { palette.accent } else { palette.ink })
-                    .background(if chosen {
-                        palette.accent_soft
-                    } else {
-                        palette.paper
-                    })
-                    .hover(move |style| style.background(palette.accent_soft))
-                    .focus(|style| style.outline(1.0).outline_color(palette.accent))
+                    .unwrap_or_default()
             })
         },
+        move |models| {
+            alias_dropdown(
+                model,
+                models.iter().map(|m| m.id.clone()).collect(),
+                move |value| {
+                    settings.with(|s| {
+                        s.connection
+                            .as_ref()
+                            .and_then(|c| c.models.iter().find(|m| Some(&m.id) == value.as_ref()))
+                            .map(|m| m.name.clone())
+                            .unwrap_or_else(|| value.unwrap_or_else(|| tr!(AiChooseModel)))
+                    })
+                },
+                move |id| {
+                    let previous = effort.get_untracked();
+                    let next = models
+                        .iter()
+                        .find(|m| m.id == id)
+                        .and_then(|model| selected_effort(model, previous));
+                    effort.set(next);
+                    changed_effort.set(previous.is_some() && previous != next);
+                    model.set(Some(id));
+                },
+                move || !busy.get(),
+                palette,
+            )
+        },
     )
-    .style(|style| {
-        rtl_row(style)
-            .gap(6.0)
-            .flex_wrap(floem::taffy::FlexWrap::Wrap)
-    });
+    .style(|style| style.width_full());
+    let effort_picker = dyn_container(
+        move || available().map(|m| m.efforts).unwrap_or_default(),
+        move |efforts| {
+            let has_efforts = !efforts.is_empty();
+            alias_dropdown(
+                effort,
+                efforts,
+                move |value| {
+                    value
+                        .map(|e| e.name().to_owned())
+                        .unwrap_or_else(|| tr!(AiChooseEffort))
+                },
+                move |value| {
+                    effort.set(Some(value));
+                    changed_effort.set(false);
+                },
+                move || !busy.get() && has_efforts,
+                palette,
+            )
+        },
+    )
+    .style(|style| style.width_full());
     let save = controller.clone();
+    let operation = controller.operation;
+    let feedback = controller.clone();
+    let remove = controller.clone();
     let cancel = controller;
     v_stack((
         v_stack((
-            settings_field_label(i18n::Key::AiModelLabel, palette),
-            reliable_button(
-                h_stack((
-                    selected,
-                    svg(ICON_CHEVRON_DOWN).style(|style| style.size(12.0, 12.0)),
-                ))
-                .style(|style| {
-                    rtl_row(style)
-                        .width_full()
-                        .min_width(0.0)
-                        .items_center()
-                        .justify_between()
-                        .gap(8.0)
-                }),
-                move || {
-                    if !busy.get_untracked() {
-                        choosing.update(|open| *open = !*open);
-                    }
+            settings_field_label(i18n::Key::AiAliasName, palette),
+            localized_input::LocalizedInput::new(name, i18n::Key::AiAliasNamePlaceholder).style(
+                move |style| {
+                    settings_input_style(style, palette)
+                        .apply_if(editing.get().as_deref() == Some(DEFAULT_ALIAS), |style| {
+                            style.hide()
+                        })
                 },
-            )
-            .style(move |style| {
-                settings_control_style(style, palette)
-                    .cursor(CursorStyle::Pointer)
-                    .border_color(if choosing.get() {
-                        palette.accent
-                    } else {
-                        palette.divider
+            ),
+            label(move || DEFAULT_ALIAS.to_owned()).style(move |style| {
+                style
+                    .font_size(13.0)
+                    .color(palette.ink)
+                    .apply_if(editing.get().as_deref() != Some(DEFAULT_ALIAS), |style| {
+                        style.hide()
                     })
-                    .focus(|style| style.border_color(palette.accent))
+            }),
+            label(move || {
+                if name.get().is_empty() {
+                    return String::new();
+                }
+                let old = editing.get().filter(|old| !old.is_empty());
+                settings
+                    .get()
+                    .validate_alias_name(old.as_deref(), name.get().trim())
+                    .err()
+                    .map(|error| error_key(Failure::Api(error)).to_string())
+                    .unwrap_or_default()
+            })
+            .style(move |style| {
+                let old = editing.get().filter(|old| !old.is_empty());
+                style
+                    .width_full()
+                    .font_size(12.5)
+                    .color(palette.danger)
+                    .apply_if(
+                        name.get().is_empty()
+                            || settings
+                                .get()
+                                .validate_alias_name(old.as_deref(), name.get().trim())
+                                .is_ok(),
+                        |style| style.hide(),
+                    )
             }),
         ))
         .style(|style| rtl_column(style).width_full().gap(7.0)),
+        settings_hint(i18n::Key::AiNoModels, palette)
+            .style(move |style| style.apply_if(model.get().is_some(), |style| style.hide())),
         v_stack((
-            localized_input::LocalizedInput::new(search, i18n::Key::AiSearchModels)
-                .style(move |style| settings_input_style(style, palette)),
-            scroll(choices).style(move |style| {
-                style
-                    .width_full()
-                    .max_height(180.0)
-                    .background(palette.paper)
-                    .border(1.0)
-                    .border_color(palette.divider)
-                    .border_radius(6.0)
-            }),
+            settings_field_label(i18n::Key::AiModelLabel, palette),
+            model_picker,
         ))
         .style(move |style| {
             rtl_column(style)
                 .width_full()
-                .gap(8.0)
-                .apply_if(!choosing.get(), |style| style.hide())
+                .gap(7.0)
+                .apply_if(model.get().is_none(), |style| style.hide())
         }),
         v_stack((
-            label(move || match available() {
-                Some(m) if m.efforts.is_empty() => tr!(AiManaged),
-                _ if effort.get().is_none() => tr!(AiChooseEffort),
-                _ => tr!(AiEffortLabel),
-            })
-            .style(move |style| {
-                style
-                    .font_size(12.5)
-                    .selectable(false)
-                    .color(if effort.get().is_none() {
-                        palette.ink
-                    } else {
-                        palette.muted
-                    })
-            }),
-            effort_choices,
-            settings_hint(i18n::Key::AiEffortHint, palette).style(move |style| {
-                style.apply_if(
-                    available().is_none_or(|model| model.efforts.is_empty()),
-                    |style| style.hide(),
-                )
-            }),
+            settings_field_label(i18n::Key::AiEffortLabel, palette),
+            effort_picker,
             label(move || tr!(AiEffortReset))
                 .style(move |style| {
                     style
@@ -1096,15 +1240,26 @@ fn profile_form(size: AiTaskSize, controller: Controller, palette: Palette) -> i
             rtl_column(style)
                 .width_full()
                 .gap(8.0)
-                .apply_if(available().is_none(), |style| style.hide())
+                .apply_if(model.get().is_none(), |style| style.hide())
         }),
         actions((
             action_button(
-                move || tr!(Save),
+                move || {
+                    if busy.get() && operation.get() == Operation::Save {
+                        tr!(AiSaving)
+                    } else {
+                        tr!(Save)
+                    }
+                },
                 IconButtonTone::Primary,
                 palette,
                 move || {
+                    let old = editing.get().filter(|old| !old.is_empty());
                     !busy.get()
+                        && settings
+                            .get()
+                            .validate_alias_name(old.as_deref(), name.get().trim())
+                            .is_ok()
                         && model.get().is_some_and(|model| {
                             settings
                                 .get()
@@ -1117,13 +1272,14 @@ fn profile_form(size: AiTaskSize, controller: Controller, palette: Palette) -> i
                 },
                 move || {
                     if let Some(model) = model.get_untracked() {
-                        save.submit(Action::Save(
-                            size,
-                            AiProfile {
+                        save.submit(Action::Save {
+                            old: editing.get_untracked().filter(|old| !old.is_empty()),
+                            name: name.get_untracked().trim().to_owned(),
+                            profile: AiProfile {
                                 model,
                                 effort: effort.get_untracked(),
                             },
-                        ));
+                        });
                     }
                 },
             ),
@@ -1132,9 +1288,109 @@ fn profile_form(size: AiTaskSize, controller: Controller, palette: Palette) -> i
                 IconButtonTone::Secondary,
                 palette,
                 move || !busy.get(),
-                move || cancel.expanded.set(None),
+                move || {
+                    cancel.feedback.set(None);
+                    cancel.editing.set(None);
+                },
             ),
         )),
+        settings_hint(i18n::Key::AiAliasDeleteHint, palette).style(move |style| {
+            style.apply_if(
+                editing
+                    .get()
+                    .as_deref()
+                    .is_none_or(|name| name.is_empty() || name == DEFAULT_ALIAS),
+                |style| style.hide(),
+            )
+        }),
+        actions((action_button(
+            move || tr!(AiAliasDelete),
+            IconButtonTone::Danger,
+            palette,
+            move || !busy.get(),
+            move || {
+                if let Some(name) = editing
+                    .get_untracked()
+                    .filter(|name| !name.is_empty() && name != DEFAULT_ALIAS)
+                {
+                    remove.submit(Action::Remove(name));
+                }
+            },
+        ),))
+        .style(move |style| {
+            style.apply_if(
+                editing
+                    .get()
+                    .as_deref()
+                    .is_none_or(|name| name.is_empty() || name == DEFAULT_ALIAS),
+                |style| style.hide(),
+            )
+        }),
+        feedback_view(feedback, true, false, palette),
     ))
     .style(|style| rtl_column(style).width_full().gap(14.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(id: &str, efforts: Vec<AiEffort>) -> AiModel {
+        AiModel {
+            id: id.into(),
+            name: id.into(),
+            efforts,
+        }
+    }
+
+    #[test]
+    fn model_changes_always_select_a_supported_effort() {
+        let model = model("test", vec![AiEffort::Low, AiEffort::High]);
+        assert_eq!(selected_effort(&model, None), Some(AiEffort::High));
+        assert_eq!(
+            selected_effort(&model, Some(AiEffort::Low)),
+            Some(AiEffort::Low)
+        );
+        assert_eq!(
+            selected_effort(&model, Some(AiEffort::Max)),
+            Some(AiEffort::High)
+        );
+        let restricted = self::model("restricted", vec![AiEffort::Low]);
+        assert_eq!(
+            selected_effort(&restricted, Some(AiEffort::High)),
+            Some(AiEffort::Low)
+        );
+    }
+
+    #[test]
+    fn new_alias_inherits_default_and_excludes_models_without_effort() {
+        let mut settings = AiSettings::default();
+        settings.connect(notrum_ai::AiConnection {
+            provider: notrum_ai::AiProvider::OpenAi,
+            credential: "fixture".into(),
+            checked_at: 1,
+            models: vec![
+                model("managed", vec![]),
+                model("custom", vec![AiEffort::Low, AiEffort::High]),
+            ],
+        });
+        let fallback = alias_draft(&settings, "new").unwrap();
+        assert_eq!(fallback.model, "custom");
+        assert_eq!(fallback.effort, Some(AiEffort::High));
+        let custom = AiProfile {
+            model: "custom".into(),
+            effort: Some(AiEffort::Low),
+        };
+        settings
+            .aliases
+            .insert(DEFAULT_ALIAS.into(), custom.clone());
+        assert_eq!(alias_draft(&settings, "new"), Some(custom));
+        settings
+            .connection
+            .as_mut()
+            .unwrap()
+            .models
+            .retain(|model| model.efforts.is_empty());
+        assert!(alias_draft(&settings, "new").is_none());
+    }
 }

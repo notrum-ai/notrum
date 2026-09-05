@@ -70,19 +70,18 @@ pub(crate) fn valid_id(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
-fn exact_or_snapshot(id: &str, alias: &str) -> bool {
-    id == alias
-        || id.strip_prefix(alias).is_some_and(|suffix| {
-            let bytes = suffix.as_bytes();
-            bytes.len() == 11
-                && bytes[0] == b'-'
-                && bytes[5] == b'-'
-                && bytes[8] == b'-'
-                && bytes
-                    .iter()
-                    .enumerate()
-                    .all(|(i, b)| matches!(i, 0 | 5 | 8) || b.is_ascii_digit())
-        })
+pub(crate) fn is_snapshot(id: &str, alias: &str) -> bool {
+    id.strip_prefix(alias).is_some_and(|suffix| {
+        let bytes = suffix.as_bytes();
+        bytes.len() == 11
+            && bytes[0] == b'-'
+            && bytes[5] == b'-'
+            && bytes[8] == b'-'
+            && bytes
+                .iter()
+                .enumerate()
+                .all(|(i, b)| matches!(i, 0 | 5 | 8) || b.is_ascii_digit())
+    })
 }
 
 fn openai(id: &str) -> Option<(String, Vec<AiEffort>)> {
@@ -94,7 +93,7 @@ fn openai(id: &str) -> Option<(String, Vec<AiEffort>)> {
         ("gpt-5.6-sol", "GPT-5.6 Sol"),
     ];
     for (alias, name) in current {
-        if exact_or_snapshot(id, alias) {
+        if id == alias || is_snapshot(id, alias) {
             let levels = if alias == "gpt-6-astra" {
                 vec![Low, Medium, High, Xhigh, Max]
             } else {
@@ -115,7 +114,7 @@ fn openai(id: &str) -> Option<(String, Vec<AiEffort>)> {
         "gpt-4o",
         "gpt-4o-mini",
     ] {
-        if exact_or_snapshot(id, alias) {
+        if id == alias || is_snapshot(id, alias) {
             return Some((id.to_owned(), vec![]));
         }
     }

@@ -148,6 +148,13 @@ test-recovery:
 test-search:
 	$(RUN) cargo test -p notrum-search
 
+.PHONY: test-ai
+test-ai:
+	$(RUN) cargo test -p notrum-ai
+	$(RUN) cargo test -p notrum-app --features test-utils ai_service::tests
+	$(RUN) cargo test -p notrum-app --features test-utils ai_settings::tests
+	$(RUN) cargo test -p notrum-app --features test-utils i18n::tests::all_catalogs_have_exactly_the_english_keys_and_parameters
+
 test-secure:
 	$(RUN) cargo test -p notrum-secure
 

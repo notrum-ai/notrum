@@ -69,23 +69,7 @@ pub fn detect_provider(value: &str) -> Option<AiProvider> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AiTaskSize {
-    Small,
-    Medium,
-    Large,
-}
-impl AiTaskSize {
-    pub const ALL: [Self; 3] = [Self::Small, Self::Medium, Self::Large];
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Small => "Small",
-            Self::Medium => "Medium",
-            Self::Large => "Large",
-        }
-    }
-}
+pub const DEFAULT_ALIAS: &str = "default";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -144,29 +128,125 @@ pub struct AiConnection {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "StoredSettings")]
 pub struct AiSettings {
     pub connection: Option<AiConnection>,
-    pub profiles: BTreeMap<AiTaskSize, AiProfile>,
+    pub aliases: BTreeMap<String, AiProfile>,
     /// Retained until the system store confirms deletion; never contains keys.
     pub pending_deletions: Vec<String>,
     #[serde(flatten)]
     pub additional: BTreeMap<String, serde_json::Value>,
 }
 
+// Supply the built-in alias in memory; reading settings never rewrites the file.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct StoredSettings {
+    connection: Option<AiConnection>,
+    aliases: BTreeMap<String, AiProfile>,
+    pending_deletions: Vec<String>,
+    #[serde(flatten)]
+    additional: BTreeMap<String, serde_json::Value>,
+}
+
+impl From<StoredSettings> for AiSettings {
+    fn from(stored: StoredSettings) -> Self {
+        let mut settings = Self {
+            connection: stored.connection,
+            aliases: stored.aliases,
+            pending_deletions: stored.pending_deletions,
+            additional: stored.additional,
+        };
+        // The unused fixed task profiles are intentionally retired, not migrated.
+        settings.additional.remove("profiles");
+        settings.ensure_default();
+        settings
+    }
+}
+
 impl AiSettings {
     pub fn is_empty(&self) -> bool {
         self.connection.is_none()
-            && self.profiles.is_empty()
+            && self.aliases.is_empty()
             && self.pending_deletions.is_empty()
             && self.additional.is_empty()
     }
-    /// Shared engine-facing lookup, never silently substitutes a model or effort.
-    pub fn profile(&self, size: AiTaskSize) -> Result<&AiProfile, AiError> {
-        let profile = self.profiles.get(&size).ok_or(AiError::Incomplete)?;
+    /// Resolve a product alias. Only a missing name falls back to default;
+    /// an existing but unavailable selection is an error, never a silent substitution.
+    pub fn resolve(&self, alias: &str) -> Result<&AiProfile, AiError> {
+        let profile = self
+            .aliases
+            .get(alias)
+            .or_else(|| self.aliases.get(DEFAULT_ALIAS))
+            .ok_or(AiError::Incomplete)?;
         self.validate_profile(profile)?;
         Ok(profile)
     }
+
+    pub fn validate_alias_name(&self, old: Option<&str>, name: &str) -> Result<(), AiError> {
+        if name.is_empty() || name.trim() != name || name.chars().any(char::is_control) {
+            return Err(AiError::AliasName);
+        }
+        if old == Some(DEFAULT_ALIAS) && name != DEFAULT_ALIAS {
+            return Err(AiError::DefaultAlias);
+        }
+        if old != Some(name) && self.aliases.contains_key(name) {
+            return Err(AiError::AliasExists);
+        }
+        if old.is_some_and(|old| !self.aliases.contains_key(old)) {
+            return Err(AiError::Incomplete);
+        }
+        Ok(())
+    }
+
+    pub fn save_alias(
+        &mut self,
+        old: Option<&str>,
+        name: String,
+        profile: AiProfile,
+    ) -> Result<(), AiError> {
+        self.validate_alias_name(old, &name)?;
+        self.validate_profile(&profile)?;
+        if let Some(old) = old {
+            self.aliases.remove(old);
+        }
+        self.aliases.insert(name, profile);
+        Ok(())
+    }
+
+    pub fn remove_alias(&mut self, name: &str) -> Result<(), AiError> {
+        if name == DEFAULT_ALIAS {
+            return Err(AiError::DefaultAlias);
+        }
+        self.aliases.remove(name).ok_or(AiError::Incomplete)?;
+        Ok(())
+    }
+
+    fn ensure_default(&mut self) {
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        // Catalogs do not provide a portable "mini tier" field. Keep reviewed
+        // defaults explicit, and prefer an available dated snapshot of that model.
+        let preferred = match connection.provider {
+            AiProvider::OpenAi => "gpt-5.6-luna",
+            AiProvider::Anthropic => "claude-sonnet-5",
+        };
+        let available = connection
+            .models
+            .iter()
+            .filter(|model| model.id == preferred || models::is_snapshot(&model.id, preferred))
+            .max_by_key(|model| (model.id == preferred, &model.id));
+        self.aliases
+            .entry(DEFAULT_ALIAS.into())
+            .or_insert_with(|| AiProfile {
+                model: available
+                    .map(|model| model.id.clone())
+                    .unwrap_or_else(|| preferred.into()),
+                effort: Some(AiEffort::High),
+            });
+    }
+
     pub fn validate_profile(&self, profile: &AiProfile) -> Result<(), AiError> {
         let model = self
             .connection
@@ -188,30 +268,25 @@ impl AiSettings {
             Err(AiError::EffortRequired)
         }
     }
-    pub fn configured_count(&self) -> usize {
-        AiTaskSize::ALL
-            .iter()
-            .filter(|size| self.profile(**size).is_ok())
-            .count()
-    }
-    pub fn ready(&self) -> bool {
-        self.configured_count() == 3
-    }
     pub fn connect(&mut self, connection: AiConnection) {
         if self
             .connection
             .as_ref()
             .is_some_and(|old| old.provider != connection.provider)
         {
-            self.profiles.clear();
+            self.aliases.clear();
         }
         self.connection = Some(connection);
-        // Retain unavailable selections visibly, but profile() refuses to use them.
+        self.ensure_default();
+        // Retain unavailable selections visibly; resolve() refuses to use them.
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AiError {
+    AliasName,
+    AliasExists,
+    DefaultAlias,
     KeyFormat,
     Unauthorized,
     Forbidden,
@@ -242,25 +317,81 @@ mod tests {
         settings
     }
     #[test]
-    fn every_profile_requires_an_explicit_choice() {
+    fn default_is_automatic_and_custom_aliases_are_unbounded() {
         let mut settings = connected();
-        assert!(settings.profiles.is_empty());
-        assert_eq!(settings.configured_count(), 0);
-        let mut profile = AiProfile {
-            model: "gpt-5.6-luna".into(),
-            effort: None,
-        };
+        assert_eq!(settings.aliases.len(), 1);
         assert_eq!(
-            settings.validate_profile(&profile),
+            settings.resolve(DEFAULT_ALIAS).unwrap().effort,
+            Some(AiEffort::High)
+        );
+        let profile = settings.resolve(DEFAULT_ALIAS).unwrap().clone();
+        for index in 0..1000 {
+            settings
+                .save_alias(None, format!("Моя задача {index}"), profile.clone())
+                .unwrap();
+        }
+        assert_eq!(settings.aliases.len(), 1001);
+        let mut incomplete = profile;
+        incomplete.effort = None;
+        assert_eq!(
+            settings.save_alias(None, "mini".into(), incomplete),
             Err(AiError::EffortRequired)
         );
-        profile.effort = Some(AiEffort::High);
-        for (index, size) in AiTaskSize::ALL.into_iter().enumerate() {
-            settings.profiles.insert(size, profile.clone());
-            assert_eq!(settings.configured_count(), index + 1);
-            assert_eq!(settings.ready(), index == 2);
+    }
+
+    #[test]
+    fn default_is_protected_and_deleted_or_renamed_aliases_fall_back() {
+        let mut settings = connected();
+        let profile = settings.resolve(DEFAULT_ALIAS).unwrap().clone();
+        assert_eq!(
+            settings.remove_alias(DEFAULT_ALIAS),
+            Err(AiError::DefaultAlias)
+        );
+        assert_eq!(
+            settings.save_alias(Some(DEFAULT_ALIAS), "new".into(), profile.clone()),
+            Err(AiError::DefaultAlias)
+        );
+        settings
+            .save_alias(None, "mini".into(), profile.clone())
+            .unwrap();
+        assert_eq!(
+            settings.save_alias(None, "mini".into(), profile.clone()),
+            Err(AiError::AliasExists)
+        );
+        settings
+            .save_alias(Some("mini"), "simple".into(), profile.clone())
+            .unwrap();
+        assert!(!settings.aliases.contains_key("mini"));
+        assert_eq!(settings.resolve("mini"), settings.resolve(DEFAULT_ALIAS));
+        settings.remove_alias("simple").unwrap();
+        assert_eq!(settings.resolve("simple"), settings.resolve(DEFAULT_ALIAS));
+        assert_eq!(settings.resolve("unknown"), settings.resolve(DEFAULT_ALIAS));
+        for name in ["", " ", " trailing ", "line\nbreak"] {
+            assert_eq!(
+                settings.save_alias(None, name.into(), profile.clone()),
+                Err(AiError::AliasName)
+            );
         }
     }
+
+    #[test]
+    fn retired_profiles_are_ignored_and_unknown_settings_survive() {
+        let mut raw = serde_json::to_value(connected()).unwrap();
+        let aliases = raw.as_object_mut().unwrap().remove("aliases").unwrap();
+        raw["profiles"] = serde_json::json!({"small": aliases["default"]});
+        raw["future"] = serde_json::json!({"keep": true});
+        let loaded: AiSettings = serde_json::from_value(raw).unwrap();
+        assert!(!loaded.aliases.contains_key("small"));
+        assert!(loaded.aliases.contains_key(DEFAULT_ALIAS));
+        let serialized = serde_json::to_value(&loaded).unwrap();
+        assert!(serialized.get("profiles").is_none());
+        assert_eq!(serialized["future"]["keep"], true);
+        assert_eq!(
+            serde_json::from_value::<AiSettings>(serialized).unwrap(),
+            loaded
+        );
+    }
+
     #[test]
     fn provider_detection_never_probes_multiple_services() {
         assert_eq!(
@@ -281,25 +412,46 @@ mod tests {
         }
     }
     #[test]
-    fn connection_changes_do_not_fill_or_substitute_profiles() {
+    fn connection_changes_preserve_custom_defaults_and_unavailable_selections() {
         let mut settings = connected();
-        settings.profiles.insert(
-            AiTaskSize::Small,
-            AiProfile {
-                model: "gpt-5.6-luna".into(),
-                effort: Some(AiEffort::High),
-            },
-        );
+        let profile = settings.resolve(DEFAULT_ALIAS).unwrap().clone();
+        settings.save_alias(None, "mini".into(), profile).unwrap();
         let mut connection = settings.connection.clone().unwrap();
         connection.models.clear();
         settings.connect(connection.clone());
+        assert_eq!(settings.resolve("mini"), Err(AiError::ModelUnavailable));
+        assert_eq!(settings.resolve("unknown"), Err(AiError::ModelUnavailable));
+        assert_eq!(settings.aliases.len(), 2);
+        connection.provider = AiProvider::Anthropic;
+        connection.models.push(AiModel {
+            id: "claude-sonnet-5".into(),
+            name: "Sonnet 5".into(),
+            efforts: vec![AiEffort::High],
+        });
+        settings.connect(connection);
+        assert_eq!(settings.aliases.len(), 1);
         assert_eq!(
-            settings.profile(AiTaskSize::Small),
+            settings.resolve(DEFAULT_ALIAS).unwrap().model,
+            "claude-sonnet-5"
+        );
+    }
+
+    #[test]
+    fn default_uses_available_snapshot_but_does_not_invent_availability() {
+        let mut connection = connected().connection.unwrap();
+        connection.models[0].id = "gpt-5.6-luna-2026-09-01".into();
+        let mut settings = AiSettings::default();
+        settings.connect(connection);
+        assert_eq!(
+            settings.resolve(DEFAULT_ALIAS).unwrap().model,
+            "gpt-5.6-luna-2026-09-01"
+        );
+        settings.aliases.get_mut(DEFAULT_ALIAS).unwrap().model = "unavailable".into();
+        let connection = settings.connection.clone().unwrap();
+        settings.connect(connection);
+        assert_eq!(
+            settings.resolve(DEFAULT_ALIAS),
             Err(AiError::ModelUnavailable)
         );
-        assert_eq!(settings.profiles.len(), 1);
-        connection.provider = AiProvider::Anthropic;
-        settings.connect(connection);
-        assert!(settings.profiles.is_empty());
     }
 }

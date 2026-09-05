@@ -63,9 +63,10 @@ separate backup.
 
 AI settings are shared by all workspaces in `~/.notrum.cfg` (the usual profile
 directory on Windows). The `ai` object contains a provider, an opaque credential
-reference, the last verified model catalog, and explicit Small/Medium/Large
-profiles. It never contains the API key. Reading settings does not rewrite them.
-Catalog refresh failures retain the previous catalog and profiles; unavailable
+reference, the last verified model catalog, and an `aliases` map from names to
+model/effort selections. The reserved `default` alias is created on connection.
+The config never contains the API key. Reading settings does not rewrite them.
+Catalog refresh failures retain the previous catalog and aliases; unavailable
 selections remain visible but cannot be resolved for use by an engine.
 
 Keys are stored through `notrum-platform` in macOS Keychain, Windows Credential

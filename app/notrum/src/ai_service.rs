@@ -4,9 +4,7 @@
 #![forbid(unsafe_code)]
 
 use crate::settings::GlobalSettingsStore;
-use notrum_ai::{
-    AiConnection, AiError, AiProfile, AiSettings, AiTaskSize, ApiKey, CatalogTransport,
-};
+use notrum_ai::{AiConnection, AiError, AiProfile, AiSettings, ApiKey, CatalogTransport};
 use notrum_platform::credentials::CredentialStore;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +14,12 @@ pub(crate) enum Action {
     Connect(Zeroizing<String>),
     Refresh,
     Disconnect,
-    Save(AiTaskSize, AiProfile),
+    Save {
+        old: Option<String>,
+        name: String,
+        profile: AiProfile,
+    },
+    Remove(String),
     Cleanup,
 }
 
@@ -86,12 +89,14 @@ pub(crate) fn execute(
             if let Some(old) = wanted.connection.take() {
                 wanted.pending_deletions.push(old.credential);
             }
-            wanted.profiles.clear();
+            wanted.aliases.clear();
         }
-        Action::Save(size, profile) => {
-            wanted.validate_profile(&profile).map_err(Failure::Api)?;
-            wanted.profiles.insert(size, profile);
+        Action::Save { old, name, profile } => {
+            wanted
+                .save_alias(old.as_deref(), name, profile)
+                .map_err(Failure::Api)?;
         }
+        Action::Remove(name) => wanted.remove_alias(&name).map_err(Failure::Api)?,
         Action::Cleanup => {}
     }
     let mut store = GlobalSettingsStore::load(Some(home)).store;
@@ -202,8 +207,8 @@ pub(crate) mod fixtures {
                     },
                 ],
                 AiProvider::Anthropic => vec![AiModel {
-                    id: "claude-sonnet-4-6".into(),
-                    name: "Claude Sonnet 4.6".into(),
+                    id: "claude-sonnet-5".into(),
+                    name: "Claude Sonnet 5".into(),
                     efforts: vec![AiEffort::Low, AiEffort::High],
                 }],
             })
@@ -277,7 +282,7 @@ mod tests {
             &vault,
         )
         .unwrap();
-        assert!(connected.profiles.is_empty());
+        assert_eq!(connected.aliases.len(), 1);
         assert!(
             !std::fs::read_to_string(home.join(".notrum.cfg"))
                 .unwrap()
@@ -290,14 +295,19 @@ mod tests {
         let saved = execute(
             &home,
             connected.clone(),
-            Action::Save(AiTaskSize::Small, profile),
+            Action::Save {
+                old: None,
+                name: "mini".into(),
+                profile,
+            },
             &cancelled,
             &Catalog,
             &vault,
         )
         .unwrap();
         assert_eq!(GlobalSettingsStore::load(Some(&home)).store.ai(), saved);
-        assert_eq!(saved.configured_count(), 1);
+        assert_eq!(saved.aliases.len(), 2);
+        assert_eq!(saved.resolve("missing"), saved.resolve("default"));
         assert_eq!(
             execute(
                 &home,
@@ -323,6 +333,79 @@ mod tests {
         assert!(vault.0.lock().unwrap().is_empty());
         std::fs::remove_dir_all(home).unwrap();
     }
+    #[test]
+    fn alias_mutations_are_atomic_and_default_survives_deletion() {
+        let home = home();
+        let vault = Vault(Mutex::default());
+        let flag = AtomicBool::new(false);
+        let connected = execute(
+            &home,
+            AiSettings::default(),
+            Action::Connect(Zeroizing::new("sk-proj-abcdefghijklmnopqrstuv".into())),
+            &flag,
+            &Catalog,
+            &vault,
+        )
+        .unwrap();
+        let profile = connected.resolve("default").unwrap().clone();
+        let added = execute(
+            &home,
+            connected,
+            Action::Save {
+                old: None,
+                name: "mini".into(),
+                profile: profile.clone(),
+            },
+            &flag,
+            &Catalog,
+            &vault,
+        )
+        .unwrap();
+        let bytes = std::fs::read(home.join(".notrum.cfg")).unwrap();
+        assert_eq!(
+            execute(
+                &home,
+                added.clone(),
+                Action::Remove("default".into()),
+                &flag,
+                &Catalog,
+                &vault
+            ),
+            Err(Failure::Api(AiError::DefaultAlias))
+        );
+        assert_eq!(std::fs::read(home.join(".notrum.cfg")).unwrap(), bytes);
+        assert_eq!(
+            execute(
+                &home,
+                added.clone(),
+                Action::Save {
+                    old: Some("mini".into()),
+                    name: "default".into(),
+                    profile
+                },
+                &flag,
+                &Catalog,
+                &vault
+            ),
+            Err(Failure::Api(AiError::AliasExists))
+        );
+        assert_eq!(std::fs::read(home.join(".notrum.cfg")).unwrap(), bytes);
+        let removed = execute(
+            &home,
+            added,
+            Action::Remove("mini".into()),
+            &flag,
+            &Catalog,
+            &vault,
+        )
+        .unwrap();
+        let loaded = GlobalSettingsStore::load(Some(&home)).store.ai();
+        assert_eq!(loaded, removed);
+        assert_eq!(loaded.resolve("mini"), loaded.resolve("default"));
+        assert_eq!(vault.0.lock().unwrap().len(), 1);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
     #[test]
     fn failed_authentication_cancellation_and_corrupt_config_do_not_replace_connection() {
         struct Denied;

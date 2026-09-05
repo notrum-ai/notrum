@@ -5291,6 +5291,8 @@ mod tests {
             "note.md",
             b"---\ntitle: Keep\ncreated: '2022-02-03T18:57:43.598Z'\nfuture: yes\n---\nold body\n",
         );
+        #[cfg(windows)]
+        let permissions = fs::metadata(&path).unwrap().permissions();
         let (_, version) = open_versioned(&path).unwrap();
         let body = "new 🦀 body\n";
         let commit = rewrite_note(
@@ -5313,6 +5315,8 @@ mod tests {
         assert!(output.ends_with(body));
         let (_, current) = open_versioned(&path).unwrap();
         assert_eq!(current, commit.version);
+        #[cfg(windows)]
+        assert_eq!(fs::metadata(&path).unwrap().permissions(), permissions);
         assert_no_temp_files(&workspace);
     }
 

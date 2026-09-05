@@ -396,6 +396,11 @@ mod tests {
         let candidate = directory.0.join("candidate.md");
         std_fs::write(&source, b"original").unwrap();
         let expected = fs::metadata(&source).unwrap().permissions();
+        #[cfg(windows)]
+        {
+            assert!(expected.rules.len() >= 3);
+            assert!(expected.rules.iter().all(|rule| rule.flags & 0x10 != 0));
+        }
         let mut options = fs::OpenOptions::new();
         options.read(true).write(true).create_new(true);
         let candidate_file = options.open(&candidate).unwrap();
@@ -403,6 +408,75 @@ mod tests {
         drop(candidate_file);
         #[cfg(windows)]
         assert_eq!(fs::metadata(&candidate).unwrap().permissions(), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replacement_preserves_mixed_acl_order_and_rejects_unrepresentable_order() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        use windows_acl::acl::{ACL, AceType};
+        use windows_acl::helper::string_to_sid;
+
+        let directory = TestDirectory::new();
+        let source = directory.0.join("mixed.md");
+        std_fs::write(&source, b"original").unwrap();
+        // Build the source fixture directly through the dependency, independently
+        // of our permission copier. Keep inherited rules from the private parent.
+        let source_file = OpenOptions::new()
+            .access_mode(0x0006_0000)
+            .open(&source)
+            .unwrap();
+        let mut acl = ACL::from_file_handle(source_file.as_raw_handle().cast(), false).unwrap();
+        for (sid, kind, mask) in [
+            ("S-1-5-32-546", AceType::AccessDeny, 0x0000_0002),
+            ("S-1-5-18", AceType::AccessAllow, 0x0002_0000),
+        ] {
+            let sid = string_to_sid(sid).unwrap();
+            assert!(
+                acl.add_entry(sid.as_ptr().cast_mut().cast(), kind, 0, mask)
+                    .unwrap()
+            );
+        }
+        drop(source_file);
+        let expected = fs::metadata(&source).unwrap().permissions();
+        assert!(expected.rules.len() >= 5);
+        assert!(!expected.rules[0].allow);
+        assert!(expected.rules[1].allow);
+        assert!(
+            expected.rules[..2]
+                .iter()
+                .all(|rule| rule.flags & 0x10 == 0)
+        );
+        assert!(
+            expected.rules[2..]
+                .iter()
+                .all(|rule| rule.flags & 0x10 != 0)
+        );
+
+        let candidate = directory.0.join("candidate.md");
+        let candidate_file = create_private_file(&candidate).unwrap();
+        let source_file = File::open(&source).unwrap();
+        preserve_permissions(&source_file, &candidate_file).unwrap();
+        drop(source_file);
+        drop(candidate_file);
+        assert_eq!(fs::metadata(&candidate).unwrap().permissions(), expected);
+
+        // The dependency canonicalizes explicit deny/allow ordering. Never
+        // accept a requested ACL whose access-check order cannot be reproduced.
+        let rejected = directory.0.join("rejected.md");
+        let rejected_file = create_private_file(&rejected).unwrap();
+        let mut unsupported = expected;
+        unsupported.rules.swap(0, 1);
+        assert_eq!(
+            windows::apply_permissions(&rejected_file, &unsupported)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Unsupported
+        );
+        drop(rejected_file);
+        std_fs::remove_file(rejected).unwrap();
+        assert_eq!(std_fs::read(source).unwrap(), b"original");
     }
     #[test]
     fn replacement_preserves_private_permissions_through_handles() {

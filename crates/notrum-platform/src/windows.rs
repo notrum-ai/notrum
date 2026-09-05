@@ -19,6 +19,7 @@ const GENERIC_WRITE: u32 = 0x4000_0000;
 const FILE_ALL_ACCESS: u32 = 0x001f_01ff;
 const BACKUP_SEMANTICS: u32 = 0x0200_0000;
 const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+const INHERITED_ACE: u8 = 0x10;
 const ADMINISTRATORS: &str = "S-1-5-32-544";
 const SYSTEM: &str = "S-1-5-18";
 
@@ -195,7 +196,20 @@ pub(super) fn apply_permissions(
             .remove_entry(sid.as_ptr().cast_mut().cast(), None, None)
             .map_err(error)?;
     }
-    for rule in &permissions.rules {
+    // windows-acl 0.3.0 inserts every new ACE before the first inherited ACE.
+    // Rebuild the inherited suffix backwards, then add explicit rules in their
+    // original order. Replaying all rules forwards reverses inherited access
+    // checks; the exact comparison below must continue rejecting any other loss.
+    let inherited = permissions
+        .rules
+        .iter()
+        .rev()
+        .filter(|rule| rule.flags & INHERITED_ACE != 0);
+    let explicit = permissions
+        .rules
+        .iter()
+        .filter(|rule| rule.flags & INHERITED_ACE == 0);
+    for rule in inherited.chain(explicit) {
         let sid = string_to_sid(&rule.sid).map_err(error)?;
         ensure_applied(
             access

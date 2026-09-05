@@ -5,6 +5,14 @@ Rust and Floem. Notes live in ordinary files in a Notable-style workspace.
 There is no WebView, JavaScript runtime, cloud account, or database holding
 the authoritative copy of your notes.
 
+Use it to keep project notes and reading lists in folders you control, edit
+existing text files in place, and read subscribed feeds in the same application.
+Your notes remain Markdown files that you can back up or open in another editor.
+
+![Notrum showing the generated demo workspace, with tagged notes in the sidebar and Markdown in the editor](docs/images/demo-workspace.png)
+
+*Demo workspace in the native interface, captured in the Linux test environment.*
+
 ## Features
 
 - Markdown editing with autosave, crash recovery, and external change detection.
@@ -35,11 +43,12 @@ work and must not be treated as disposable cache.
 ## Build and run
 
 Requirements: an Apple Silicon Mac, Docker with Docker Compose and a running
-Docker engine, Xcode Command Line Tools, and `python3`. Run these commands from
-a local Git checkout of this repository. A preinstalled Rust toolchain is not
-required.
+Docker engine, Xcode Command Line Tools, and `python3`. A preinstalled Rust
+toolchain is not required. Clone the repository, then build the application:
 
 ```sh
+git clone https://github.com/notrum-ai/notrum.git
+cd notrum
 make build
 open dist/Notrum.app
 ```
@@ -71,6 +80,7 @@ for your own writing.
 - [Storage and security](docs/storage.md): file layout, recovery, encryption, and backups.
 - [Development guide](docs/development.md): toolchain, checks, benchmarks, and packaging.
 - [Contributing](CONTRIBUTING.md): reporting bugs and submitting changes.
+- [Security policy](SECURITY.md): reporting vulnerabilities privately.
 
 ## License
 

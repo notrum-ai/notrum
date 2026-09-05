@@ -12,9 +12,12 @@ workspace is more useful than a personal notes directory. Remove private note
 content, passwords, feed credentials, and personal paths from logs and images
 before posting them.
 
+For suspected vulnerabilities, follow the [security policy](SECURITY.md)
+instead of posting technical details in a public issue.
+
 ## Changes and checks
 
-- Keep changes focused and preserve unrelated working changes.
+- Keep each pull request focused on one change.
 - Use the root Makefile and Docker toolchain. See the development guide for
   native build exceptions and the available commands.
 - Add or update tests with behavior changes; never weaken tests to hide a bug.
@@ -26,12 +29,9 @@ before posting them.
 - Use scoped UI styles, not global theme overrides for local changes.
 - Update relevant English documentation when behavior or setup changes.
 
-Before submitting, run exactly one suitable final aggregate: `make ui-check`
-for UI changes, `make check` for the full gate without a native build, or
-`make` for the full gate plus native build and external-file smoke. If it fails,
-diagnose the failing target, fix it, then repeat the original aggregate once.
-Review `make diff` and state what changed, how you checked it, and any remaining
-failures or limitations in the pull request.
+Run the appropriate [checks](docs/development.md#toolchain-and-commands)
+before submitting. In the pull request, describe the problem, your change,
+how you checked it, and any remaining failures or limitations.
 
 ## License
 

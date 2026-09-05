@@ -2,6 +2,8 @@
 
 [Back to README](../README.md)
 
+To report a suspected vulnerability, follow the [security policy](../SECURITY.md).
+
 ## Files are the source of truth
 
 The authoritative text and metadata of workspace notes live in UTF-8 Markdown

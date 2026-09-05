@@ -16,19 +16,10 @@ and `python3`. The build installs pinned Rust under `.host-build/`, uses the
 system Xcode SDK, and leaves global Rust directories and shell profiles alone.
 `native-external-smoke` requires an already built bundle.
 
-Start by inspecting the current checkout:
-
-```sh
-make status
-make diff
-```
-
-`make log` is available when recent history is relevant and the task permits
-inspecting it. Do not overwrite unrelated working changes.
-
 | Command | Purpose |
 |---|---|
 | `make help` | Reminder of aggregate check selection |
+| `make status` / `make diff` / `make log` | Inspect the checkout, changes, and recent commits |
 | `make image` | Build the pinned Docker toolchain image |
 | `make test` / `make test-release` | Workspace Rust tests in debug / release mode |
 | `make test-<crate>` | Focused tests for crates with a Makefile target |
@@ -44,11 +35,11 @@ inspecting it. Do not overwrite unrelated working changes.
 | `make native-external-smoke` | Test Finder/Launch Services delivery to an existing bundle |
 | `make clean` | Remove Docker debug Cargo artifacts |
 
-Choose exactly one final aggregate appropriate to the change: `make ui-check`,
-`make check`, or `make`. Do not run each narrower target followed by every
-aggregate that includes it on an unchanged diff. If an aggregate fails,
-diagnose the failing target, fix the cause, and repeat the original aggregate
-once. Do not run `make ui-build` separately before an aggregate that includes it.
+Use focused targets while developing. Before submitting a change, run
+`make ui-check` for UI changes, `make check` for the full container check, or
+`make` to include the native build and external-file smoke. Each includes its
+prerequisites, so separate build and check runs are unnecessary. After fixing
+a failure, rerun the selected check.
 
 `make clean` retains release and macOS cross-target artifacts, Cargo registry
 and Git caches, benchmark data, and the native `.host-build/` directory.
@@ -117,8 +108,6 @@ from the final quality gate.
 
 `make demo-data` recreates the generated notes in `examples/demo-workspace`.
 The ignored demo folder is for disposable data, not personal notes.
-The demo generator, probe tools, UI test helpers, Cargo.lock, and both icon
-assets are maintained project inputs and should stay in the repository.
 
 The vector source is `app/notrum/assets/notrum-app-icon.svg`; the bundle uses
 `Notrum.icns` from the same directory. To regenerate the icon after editing it:
@@ -127,6 +116,11 @@ The vector source is `app/notrum/assets/notrum-app-icon.svg`; the bundle uses
 docker compose run --rm toolchain python3 -B tools/generate_app_icon.py \
   app/notrum/assets/notrum-app-icon.svg app/notrum/assets/Notrum.icns
 ```
+
+Generate the ICNS in the Docker toolchain and commit it alongside the SVG.
+`make package-macos-smoke` verifies that regeneration matches the committed
+resource byte for byte. PNG encoding can differ between rendering toolchains
+even when the displayed pixels are identical.
 
 ## Packaging and release limitations
 

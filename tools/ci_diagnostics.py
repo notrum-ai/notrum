@@ -69,6 +69,13 @@ DELETE_ERRORS = frozenset({
 
 
 def native_line(line):
+    retry = re.fullmatch(
+        r"NATIVE_REPLACE_RETRY thread=ThreadId\(([1-9][0-9]{0,19})\) "
+        r"attempt=([1-4]) delay_ms=(10|20|40|80) os_error=(5|32)", line,
+    )
+    if retry:
+        return line if (int(retry[1]) <= 2**64 - 1
+                        and int(retry[3]) == 10 * 2**(int(retry[2]) - 1)) else None
     post_replace = re.fullmatch(
         r"NATIVE_(POST_REPLACE|DIRECTORY_SYNC) thread=ThreadId\(([1-9][0-9]{0,19})\) "
         r"stage=([A-Za-z]+) kind=([A-Za-z]+) os_error=(-?[0-9]{1,10})", line,
@@ -79,7 +86,7 @@ def native_line(line):
             return None
         if operation == "POST_REPLACE" and stage == "CommittedIdentity":
             return line if kind == "IdentityMismatch" and os_error == "0" else None
-        stages = ({"CommittedInspect", "ParentCheckpoint", "ParentSync"}
+        stages = ({"CommittedInspect", "ParentCheckpoint", "ParentSync", "ReplaceReportedFailure"}
                   if operation == "POST_REPLACE" else
                   {"Validate", "Create", "FileSync", "Publish", "Remove", "Cleanup", "Exhausted"})
         return line if stage in stages and kind in NATIVE_IO_KINDS else None
@@ -108,7 +115,7 @@ def native_line(line):
                         and -(2**31) <= int(match[4]) < 2**31) else None
     patterns = (
         r"NATIVE_DELETE_TEST round=([1-9]|[12][0-9]|3[0-2]) deletion=[12] phase=(Begin|End)",
-        r"NATIVE_VERSION site=(MetadataOpened|OpenVersioned|RewriteTarget|RewriteOpened|RewriteBeforeReplace) identity_equal=(true|false|Unavailable) size_equal=(true|false) modified_equal=(true|false) changed_equal=(true|false|Unavailable) digest_equal=(true|false|Unavailable)",
+        r"NATIVE_VERSION site=(MetadataOpened|OpenVersioned|RewriteTarget|RewriteOpened|RewriteBeforeReplace|RewriteRetryTarget) identity_equal=(true|false|Unavailable) size_equal=(true|false) modified_equal=(true|false) changed_equal=(true|false|Unavailable) digest_equal=(true|false|Unavailable)",
         r"NATIVE_SAVE stage=(OpenTarget|Scan|CreateTemp|Write|FileSync|ConflictCheck|Replace|SourceRemove|ParentSync) outcome=PreCommit",
         r"NATIVE_OPERATION stage=(Validate|CreateDirectory|Write|FileSync|Publish|SourceRemove|DirectorySync) outcome=Failed",
         r"NATIVE_CLEANUP outcome=(Removed|Absent|Failed)",

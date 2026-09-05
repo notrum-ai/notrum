@@ -24,6 +24,32 @@ SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    def test_replace_retry_diagnostics_reject_invalid_attempts_and_payloads(self):
+        accepted = [
+            f"NATIVE_REPLACE_RETRY thread=ThreadId(7) attempt={attempt} delay_ms={delay} os_error={code}"
+            for attempt, delay in enumerate((10, 20, 40, 80), 1)
+            for code in (5, 32)
+        ] + [
+            "NATIVE_POST_REPLACE thread=ThreadId(7) stage=ReplaceReportedFailure kind=PermissionDenied os_error=5",
+            "NATIVE_VERSION site=RewriteRetryTarget identity_equal=true size_equal=false modified_equal=false changed_equal=false digest_equal=Unavailable",
+        ]
+        rejected = [
+            accepted[0].replace("attempt=1", "attempt=0"),
+            accepted[0].replace("attempt=1", "attempt=5"),
+            accepted[0].replace("delay_ms=10", "delay_ms=80"),
+            accepted[0].replace("os_error=5", "os_error=87"),
+            accepted[0].replace("ThreadId(7)", "ThreadId(18446744073709551616)"),
+            accepted[0].replace("ThreadId(7)", "ThreadId(0)"),
+        ]
+        for line in accepted:
+            self.assertEqual(ci.safe_line(ci.safe_line(line)), line)
+            for secret in ("SYNTHETIC_SECRET", r"C:\private\note.md", "body (os error 5)"):
+                rejected.extend([line + " " + secret, line.replace("=", "=" + secret, 1)])
+        for line in rejected:
+            with self.subTest(line=line):
+                self.assertIsNone(ci.safe_line(line))
+        self.assertEqual(rust_test_report(accepted + rejected)["diagnostics"], accepted)
+
     def test_post_replace_diagnostics_keep_stage_thread_and_os_code_only(self):
         accepted = [
             f"NATIVE_POST_REPLACE thread=ThreadId(7) stage={stage} kind=PermissionDenied os_error=32"

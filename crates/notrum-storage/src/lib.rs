@@ -4,6 +4,8 @@
 #![forbid(unsafe_code)]
 
 mod password_change;
+#[cfg(any(windows, test))]
+mod replace_retry;
 mod secure_backups;
 
 pub use password_change::{
@@ -3072,10 +3074,10 @@ fn rewrite_note_with(
         .map_err(|error| precommit(SaveStage::FileSync, error))?;
     temp.sync_all()
         .map_err(|error| precommit(SaveStage::FileSync, error))?;
-    let temp_version = temp
+    let temp_metadata = temp
         .metadata()
-        .map(|metadata| FileVersion::from_metadata(&metadata))
         .map_err(|error| precommit(SaveStage::FileSync, error))?;
+    let temp_version = FileVersion::from_metadata(&temp_metadata);
 
     checkpoint
         .check(SaveStage::ConflictCheck)
@@ -3096,8 +3098,13 @@ fn rewrite_note_with(
         .check(SaveStage::Replace)
         .map_err(|error| precommit(SaveStage::Replace, error))?;
     drop(temp);
-    fs::rename(guard.path(), path).map_err(|error| precommit(SaveStage::Replace, error))?;
-    guard.disarm();
+    #[cfg(windows)]
+    replace_retry::replace_note(&mut guard, path, expected_version, &temp_metadata)?;
+    #[cfg(unix)]
+    {
+        fs::rename(guard.path(), path).map_err(|error| precommit(SaveStage::Replace, error))?;
+        guard.disarm();
+    }
     let committed_metadata = fs::symlink_metadata(path)
         .map_err(|error| post_replace_failure("CommittedInspect", Some(error)))?;
     let committed_version = FileVersion::from_metadata(&committed_metadata);

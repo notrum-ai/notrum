@@ -296,6 +296,42 @@ TAG_POPOVER_FOOTER_X = TAG_POPOVER_LEFT + 212
 TAG_POPOVER_LINE_LUMINANCE = 244.0
 TAG_POPOVER_CROP = (TAG_POPOVER_LEFT - 6, 44, 292, 390)
 
+# AI settings geometry. Every section of the page is a settings card at the
+# page content edge (settings sidebar 232 plus the 44px page padding), so the
+# clicks below are anchored on a card border instead of on absolute rows: only
+# the offsets inside one card are fixed here.
+AI_SIDEBAR_ITEM = (90, 203)
+AI_CONTENT_LEFT = 232 + 44
+AI_CARD_PADDING = 22
+AI_CARD_CONTENT_LEFT = AI_CONTENT_LEFT + 1 + AI_CARD_PADDING
+# A column inside a filled primary button that its centred label never covers.
+AI_PRIMARY_PROBE_X = AI_CARD_CONTENT_LEFT + 3
+# Card borders are the divider grey; the expanded profile card is accented.
+AI_CARD_BORDER_LUMINANCE = 240.0
+AI_ACCENT_LUMINANCE = 150.0
+# Shorter runs in the border column are glyphs of a heading, not a card.
+AI_CARD_MIN_HEIGHT = 24
+AI_EXPANDED_MIN_HEIGHT = 80
+# Rounded corners leave the first and last rows of a card without a border.
+AI_CARD_CORNER = 7
+AI_KEY_FIELD = (460, 246)
+AI_SAVE_X = AI_CARD_CONTENT_LEFT + 21
+AI_CANCEL_X = AI_CARD_CONTENT_LEFT + 91
+AI_EDIT_X = 955
+AI_MODEL_FIELD_X = 550
+AI_MODEL_SEARCH_X = 500
+AI_MODEL_ROW_X = 400
+# The second effort chip of every fixture model that offers efforts.
+AI_SECOND_EFFORT_X = 378
+# Offsets inside one profile card, from its top border down.
+AI_PROFILE_HEADER_DY = 40
+AI_PROFILE_MODEL_DY = 128
+AI_PROFILE_SEARCH_DY = 182
+AI_PROFILE_FIRST_MODEL_DY = 227
+AI_PROFILE_EFFORT_DY = 198
+# The action row sits above the bottom border of the card it belongs to.
+AI_PROFILE_ACTIONS_DY = -39
+
 
 def tag_row_top(index: int) -> int:
     """Top y of the ``index``-th assigned tag row of an unscrolled popover."""
@@ -7221,36 +7257,66 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
         driver.click("settings")
         settle()
         before = driver.capture("before-ai")
-        driver.click_point(90, 203)
+        driver.click_point(*AI_SIDEBAR_ITEM)
         driver.wait_for_visual_change("AI section", before, crop=(260, 30, 740, 550), timeout=10)
         settle()
 
-    def primary(x: int = 900) -> None:
-        runs = shaded_row_runs(driver.capture("ai-primary"), x=x, y=0, height=800, max_luminance=150)
+    def primary(within: tuple[int, int] | None = None) -> None:
+        """Click the accent-filled primary action, proving it is enabled."""
+        top, bottom = within or (0, SCREEN_HEIGHT)
+        runs = shaded_row_runs(
+            driver.capture("ai-primary"),
+            x=AI_PRIMARY_PROBE_X,
+            y=top,
+            height=bottom - top,
+            max_luminance=AI_ACCENT_LUMINANCE,
+        )
         runs = [(start, end) for start, end in runs if end - start >= 20]
         if not runs:
             raise AcceptanceFailure("AI primary action is not enabled")
         start, end = max(runs, key=lambda run: run[1] - run[0])
-        driver.click_point(x, (start + end) // 2)
+        driver.click_point(AI_PRIMARY_PROBE_X, (start + end) // 2)
+
+    def cards() -> list[tuple[int, int]]:
+        """Every settings card of the page, read from its left border."""
+        luminances = crop_luminances(
+            driver.capture("ai-cards"), (AI_CONTENT_LEFT, 0, 1, SCREEN_HEIGHT)
+        )
+        rows = {
+            row
+            for (_x, row), luminance in luminances.items()
+            if luminance <= AI_CARD_BORDER_LUMINANCE
+        }
+        return [
+            (start - AI_CARD_CORNER, end + AI_CARD_CORNER)
+            for start, end in column_runs(rows, merge_gap=0)
+            if end - start >= AI_CARD_MIN_HEIGHT
+        ]
 
     def bounds() -> tuple[int, int]:
         # Move focus off the search input so its blinking caret does not prevent
         # exact frame stability. Clicking the current section retains the draft.
-        driver.click_point(90, 203)
+        driver.click_point(*AI_SIDEBAR_ITEM)
         driver.wheel("down", clicks=12, delay_ms=20)
         settle()
-        runs = shaded_row_runs(driver.capture("ai-expanded"), x=276, y=0, height=800, max_luminance=150)
-        runs = [(start, end) for start, end in runs if end - start >= 80]
+        runs = shaded_row_runs(
+            driver.capture("ai-expanded"),
+            x=AI_CONTENT_LEFT,
+            y=0,
+            height=SCREEN_HEIGHT,
+            max_luminance=AI_ACCENT_LUMINANCE,
+        )
+        runs = [(start, end) for start, end in runs if end - start >= AI_EXPANDED_MIN_HEIGHT]
         if len(runs) != 1:
             raise AcceptanceFailure(f"expected one expanded AI profile, found {runs}")
         start, end = runs[0]
-        return start - 7, end + 7
+        return start - AI_CARD_CORNER, end + AI_CARD_CORNER
 
     driver.start_app(workspace, "empty", environment_overrides=fixture)
     open_ai()
     if state().get("connection") or state().get("profiles"):
         raise AcceptanceFailure("AI was configured without explicit input")
-    driver.click_point(460, 239)
+    driver.click_point(*AI_KEY_FIELD)
     driver.type_text("sk-proj-abcdefghijklmnopqrstuv")
     settle()
     primary()
@@ -7266,25 +7332,25 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
     ]):
         top, bottom = bounds()
         # Save is disabled before choosing a model.
-        driver.click_point(324, bottom - 38)
+        driver.click_point(AI_SAVE_X, bottom + AI_PROFILE_ACTIONS_DY)
         settle()
         if len(state().get("profiles", {})) != index:
             raise AcceptanceFailure("an empty AI profile was saved")
-        driver.click_point(550, top + 123)
+        driver.click_point(AI_MODEL_FIELD_X, top + AI_PROFILE_MODEL_DY)
         top, _ = bounds()
-        driver.click_point(500, top + 167)
+        driver.click_point(AI_MODEL_SEARCH_X, top + AI_PROFILE_SEARCH_DY)
         driver.type_text(query)
         top, _ = bounds()
-        driver.click_point(400, top + 207)
+        driver.click_point(AI_MODEL_ROW_X, top + AI_PROFILE_FIRST_MODEL_DY)
         top, bottom = bounds()
         if effort is not None:
-            driver.click_point(324, bottom - 38)
+            driver.click_point(AI_SAVE_X, bottom + AI_PROFILE_ACTIONS_DY)
             settle()
             if len(state().get("profiles", {})) != index:
                 raise AcceptanceFailure("effort was selected implicitly")
-            driver.click_point(367, top + 192)
+            driver.click_point(AI_SECOND_EFFORT_X, top + AI_PROFILE_EFFORT_DY)
             settle()
-        primary(345)
+        primary(within=(top, bottom))
         wait_until(f"explicit {size} profile", lambda: len(state().get("profiles", {})) == index + 1)
         saved = state()["profiles"][size]
         if saved != {"model": model, "effort": effort}:
@@ -7295,7 +7361,14 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.wheel("up", clicks=20, delay_ms=20)
     settle()
     complete = driver.capture("ai-complete")
-    if shaded_row_runs(complete, x=276, y=380, height=400, max_luminance=150):
+    accented = shaded_row_runs(
+        complete,
+        x=AI_CONTENT_LEFT,
+        y=0,
+        height=SCREEN_HEIGHT,
+        max_luminance=AI_ACCENT_LUMINANCE,
+    )
+    if [run for run in accented if run[1] - run[0] >= AI_EXPANDED_MIN_HEIGHT]:
         raise AcceptanceFailure("completed AI profiles did not collapse")
     driver.close_app()
     driver.start_app(workspace, "restart", environment_overrides=fixture)
@@ -7304,10 +7377,13 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
         raise AcceptanceFailure("AI profiles changed on restart")
     # Reopen/edit/cancel repeatedly: queued list updates must not outlive drafts.
     for _ in range(2):
-        driver.click_point(955, 431)
+        page = cards()
+        if len(page) != 4:
+            raise AcceptanceFailure(f"expected a connection card and three profiles, found {page}")
+        driver.click_point(AI_EDIT_X, page[1][0] + AI_PROFILE_HEADER_DY)
         settle()
         _, bottom = bounds()
-        driver.click_point(390, bottom - 38)
+        driver.click_point(AI_CANCEL_X, bottom + AI_PROFILE_ACTIONS_DY)
         settle()
         driver.wheel("up", clicks=20, delay_ms=20)
         settle()

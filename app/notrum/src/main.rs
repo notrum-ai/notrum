@@ -155,6 +155,12 @@ const RSS_FORM_GAP_PX: f64 = 8.0;
 /// One field height for every engine form: the creation popover and the
 /// toolbar editing bars share it through `form_field_style`.
 const FORM_FIELD_HEIGHT_PX: f64 = 32.0;
+/// One card, one field height and one field label for every settings page:
+/// the general page, encryption and the AI assistant share them through
+/// `settings_card_style`, `settings_control_style` and `settings_field_label`.
+const SETTINGS_CARD_MAX_WIDTH_PX: f64 = 720.0;
+const SETTINGS_CARD_PADDING_PX: f64 = 22.0;
+const SETTINGS_FIELD_HEIGHT_PX: f64 = 40.0;
 /// Gap between toolbar controls, shared by the document header and the feed
 /// toolbar so both read as one row of controls.
 const TOOLBAR_ACTION_GAP_PX: f64 = 6.0;
@@ -5285,17 +5291,7 @@ fn settings_page_view(
         })
         .style(move |style| style.font_size(12.5).color(palette.danger)),
     ))
-    .style(move |style| {
-        rtl_column(style)
-            .width_full()
-            .max_width(720.0)
-            .padding(22.0)
-            .gap(10.0)
-            .background(palette.paper)
-            .border(1.0)
-            .border_color(palette.divider)
-            .border_radius(8.0)
-    });
+    .style(move |style| settings_card_style(style, palette).gap(10.0));
     let close_action = close_settings.clone();
     let general_navigation_model = model.clone();
     let encryption_navigation_model = model.clone();
@@ -5415,21 +5411,8 @@ fn settings_page_view(
     });
 
     let path_input =
-        localized_input::LocalizedInput::new(signals.path, i18n::Key::WorkspacePlaceholder).style(
-            move |style| {
-                text_input_affordance(style, palette.muted, palette.accent)
-                    .width_full()
-                    .height(40.0)
-                    .items_center()
-                    .padding_horiz(12.0)
-                    .background(palette.paper)
-                    .color(palette.ink)
-                    .border(1.0)
-                    .border_color(palette.divider)
-                    .border_radius(6.0)
-                    .font_size(13.0)
-            },
-        );
+        localized_input::LocalizedInput::new(signals.path, i18n::Key::WorkspacePlaceholder)
+            .style(move |style| settings_input_style(style, palette));
 
     let picker_apply = apply_workspace.clone();
     let picker_action = move || {
@@ -5517,8 +5500,7 @@ fn settings_page_view(
         ))
         .style(|style| rtl_row(style).items_start().gap(12.0)),
         empty().style(|style| style.height(20.0)),
-        label(move || tr!(Path))
-            .style(move |style| style.font_size(10.0).color(palette.muted).selectable(false)),
+        settings_field_label(i18n::Key::Path, palette),
         empty().style(|style| style.height(7.0)),
         path_input,
         empty().style(|style| style.height(10.0)),
@@ -5526,16 +5508,7 @@ fn settings_page_view(
         empty().style(|style| style.height(12.0)),
         feedback,
     ))
-    .style(move |style| {
-        rtl_column(style)
-            .width_full()
-            .max_width(720.0)
-            .padding(22.0)
-            .background(palette.paper)
-            .border(1.0)
-            .border_color(palette.divider)
-            .border_radius(8.0)
-    });
+    .style(move |style| settings_card_style(style, palette));
 
     let general_content = scroll(
         v_stack((
@@ -6051,15 +6024,7 @@ fn encryption_settings_view(
             .is_some_and(WorkspaceSession::master_password_configured);
         password_change_busy(&model) || !configured
     })
-    .style(move |style| {
-        style.disabled(move |style| {
-            style
-                .cursor(CursorStyle::Default)
-                .background(palette.canvas)
-                .color(palette.muted)
-                .border_color(palette.divider)
-        })
-    });
+    .style(move |style| disabled_control_style(style, palette));
 
     let status_model = model.clone();
     let status = label(move || {
@@ -6141,17 +6106,7 @@ fn encryption_settings_view(
         submit,
         status,
     ))
-    .style(move |style| {
-        rtl_column(style)
-            .width_full()
-            .max_width(720.0)
-            .gap(14.0)
-            .padding(22.0)
-            .background(palette.paper)
-            .border(1.0)
-            .border_color(palette.divider)
-            .border_radius(8.0)
-    });
+    .style(move |style| settings_card_style(style, palette).gap(14.0));
 
     scroll(
         v_stack((
@@ -6311,32 +6266,9 @@ fn encryption_password_field(
         let empty = signals
             .encryption_entry
             .with(|entry| entry.field(field).is_empty());
-        style
-            .width_full()
-            .height(40.0)
-            .items_center()
-            .padding_horiz(12.0)
-            .cursor(CursorStyle::Text)
-            .background(palette.paper)
-            .color(if empty { palette.muted } else { palette.ink })
-            .border(1.0)
-            .border_color(if active {
-                palette.accent
-            } else {
-                palette.divider
-            })
-            .border_radius(6.0)
-            .font_size(13.5)
+        settings_secret_style(style, palette, empty, active)
     })
-    .style(move |style| {
-        style.disabled(move |style| {
-            style
-                .cursor(CursorStyle::Default)
-                .background(palette.canvas)
-                .color(palette.muted)
-                .border_color(palette.divider)
-        })
-    })
+    .style(move |style| disabled_control_style(style, palette))
     .disabled(move || {
         revision.get();
         password_change_busy(&disabled_model.borrow())
@@ -14609,22 +14541,91 @@ fn text_button(
     palette: Palette,
     action: impl Fn() + 'static,
 ) -> impl IntoView {
-    let colors = button_colors(tone, palette);
-    reliable_button(
+    text_button_view(
         text(label_text).style(|style| style.font_size(13.0).selectable(false)),
+        tone,
+        palette,
+        Rc::new(|| false),
         action,
     )
-    .style(move |style| {
+}
+
+/// The same button with a translated label that follows the current locale and
+/// an enabled predicate. Settings forms keep their actions visible but inert
+/// until the form is valid, so the unavailable affordance is part of the
+/// shared button instead of a per-page invention.
+///
+/// The button stays enabled for the event system and refuses the press
+/// itself: a Floem view excluded from event dispatch swallows the pointer
+/// sequence that follows it, so clicking an unavailable action would lose the
+/// user's next click.
+fn action_button(
+    label_text: impl Fn() -> String + 'static,
+    tone: IconButtonTone,
+    palette: Palette,
+    enabled: impl Fn() -> bool + 'static,
+    action: impl Fn() + 'static,
+) -> impl IntoView {
+    let enabled: Rc<dyn Fn() -> bool> = Rc::new(enabled);
+    let press_enabled = enabled.clone();
+    text_button_view(
+        label(label_text).style(|style| style.font_size(13.0).selectable(false)),
+        tone,
+        palette,
+        Rc::new(move || !enabled()),
+        move || {
+            if press_enabled() {
+                action();
+            }
+        },
+    )
+}
+
+/// One style closure decides the whole button, the unavailable state
+/// included, and its `hover` block stays constant. A `hover` block that is
+/// itself computed from the signals the closure reads leaves the view without
+/// a style pass when those signals change, and the surrounding form then
+/// paints a stale frame until an unrelated event repaints it. Only the
+/// pointer cursor marks an unavailable button while it is hovered.
+fn text_button_view<V>(
+    child: V,
+    tone: IconButtonTone,
+    palette: Palette,
+    unavailable: Rc<dyn Fn() -> bool>,
+    action: impl Fn() + 'static,
+) -> impl IntoView
+where
+    V: IntoView + 'static,
+{
+    let colors = button_colors(tone, palette);
+    reliable_button(child, action).style(move |style| {
+        let unavailable = unavailable();
         style
             .height(BUTTON_SIZE_PX)
             .padding_horiz(14.0)
             .items_center()
             .justify_center()
-            .cursor(CursorStyle::Pointer)
-            .background(colors.background)
-            .color(colors.foreground)
+            .cursor(if unavailable {
+                CursorStyle::Default
+            } else {
+                CursorStyle::Pointer
+            })
+            .background(if unavailable {
+                palette.canvas
+            } else {
+                colors.background
+            })
+            .color(if unavailable {
+                palette.muted
+            } else {
+                colors.foreground
+            })
             .border(1.0)
-            .border_color(colors.border)
+            .border_color(if unavailable {
+                palette.divider
+            } else {
+                colors.border
+            })
             .border_radius(5.0)
             .hover(move |style| {
                 style
@@ -14800,6 +14801,92 @@ fn form_field_style(style: Style, palette: Palette, invalid: bool) -> Style {
                 style.background(palette.paper).border_color(palette.accent)
             }
         })
+}
+
+/// One card for every settings page: the general page, encryption and both AI
+/// sections share width, padding, surface and border. Callers add their own
+/// gap because a card of stacked fields and a card of prose need different
+/// rhythms.
+fn settings_card_style(style: Style, palette: Palette) -> Style {
+    rtl_column(style)
+        .width_full()
+        .min_width(0.0)
+        .max_width(SETTINGS_CARD_MAX_WIDTH_PX)
+        .padding(SETTINGS_CARD_PADDING_PX)
+        .background(palette.paper)
+        .border(1.0)
+        .border_color(palette.divider)
+        .border_radius(8.0)
+}
+
+/// The shape every settings form control shares: text fields, the masked
+/// secret fields and the AI model dropdown are one affordance, so a settings
+/// form never mixes control heights or radii.
+fn settings_control_style(style: Style, palette: Palette) -> Style {
+    style
+        .width_full()
+        .min_width(0.0)
+        .height(SETTINGS_FIELD_HEIGHT_PX)
+        .items_center()
+        .padding_horiz(12.0)
+        .background(palette.paper)
+        .color(palette.ink)
+        .border(1.0)
+        .border_color(palette.divider)
+        .border_radius(6.0)
+        .font_size(13.0)
+}
+
+/// A settings text field: the shared control plus the placeholder and caret
+/// colors and the focused border every other field in the app already has.
+fn settings_input_style(style: Style, palette: Palette) -> Style {
+    text_input_affordance(
+        settings_control_style(style, palette),
+        palette.muted,
+        palette.accent,
+    )
+    .focus(move |style| style.border_color(palette.accent))
+}
+
+/// A settings field that never reveals what it holds: the master password
+/// fields and the AI API key. An empty field prints its placeholder in the
+/// placeholder color instead of the value color.
+fn settings_secret_style(style: Style, palette: Palette, empty: bool, active: bool) -> Style {
+    settings_control_style(style, palette)
+        .cursor(CursorStyle::Text)
+        .font_size(13.5)
+        .color(if empty { palette.muted } else { palette.ink })
+        .border_color(if active { palette.accent } else { palette.divider })
+}
+
+/// The disabled affordance shared by every settings control: a control that
+/// cannot act says so instead of looking pressable.
+fn disabled_control_style(style: Style, palette: Palette) -> Style {
+    style.disabled(move |style| {
+        style
+            .cursor(CursorStyle::Default)
+            .background(palette.canvas)
+            .color(palette.muted)
+            .border_color(palette.divider)
+    })
+}
+
+/// The small caption above a settings control ("Path", "API key", "Model").
+fn settings_field_label(key: i18n::Key, palette: Palette) -> impl IntoView {
+    label(move || key.to_string())
+        .style(move |style| style.font_size(10.0).color(palette.muted).selectable(false))
+}
+
+/// A settings paragraph: card subtitles, form hints and inline explanations.
+fn settings_hint(key: i18n::Key, palette: Palette) -> impl IntoView {
+    label(move || key.to_string()).style(move |style| {
+        style
+            .width_full()
+            .font_size(12.5)
+            .line_height(1.4)
+            .color(palette.muted)
+            .selectable(false)
+    })
 }
 
 /// An inline editing row under a toolbar: the shared shape behind renaming an

@@ -18155,12 +18155,18 @@ mod tests {
 
     #[test]
     fn group_activation_opens_first_match_only_when_selection_is_empty() {
+        for round in 1..=32 {
+            group_activation_round(round);
+        }
+    }
+
+    fn group_activation_round(round: usize) {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("test clock is after the Unix epoch")
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "notrum-app-group-activation-{}-{nonce}",
+            "notrum-app-group-activation-{}-{nonce}-{round}",
             std::process::id()
         ));
         let notes = root.join("notes");
@@ -18178,47 +18184,56 @@ mod tests {
         .expect("write favorite Work note");
 
         let mut model = AppModel::load(&root);
-        let deleted = model.set_deleted_selected(true);
-        eprintln!("NATIVE_ASSERT operation=DeleteNote success={deleted}");
-        assert!(deleted);
-        assert_eq!(
-            model
-                .workspace
-                .as_ref()
-                .expect("workspace stays open")
-                .selected_note(),
-            None
-        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            eprintln!("NATIVE_DELETE_TEST round={round} deletion=1 phase=Begin");
+            let deleted = model.set_deleted_selected(true);
+            eprintln!("NATIVE_DELETE_TEST round={round} deletion=1 phase=End");
+            eprintln!("NATIVE_ASSERT operation=DeleteNote success={deleted}");
+            assert!(deleted);
+            assert_eq!(
+                model
+                    .workspace
+                    .as_ref()
+                    .expect("workspace stays open")
+                    .selected_note(),
+                None
+            );
 
-        model.open_first_matching_note_if_unselected(&SidebarFilter::Tag("Work".to_owned()));
-        let workspace = model.workspace.as_ref().expect("workspace stays open");
-        let selected = workspace
-            .selected_note()
-            .expect("first descendant note opens for virtual parent");
-        assert_eq!(workspace.notes()[selected].title, "work body");
+            model.open_first_matching_note_if_unselected(&SidebarFilter::Tag("Work".to_owned()));
+            let workspace = model.workspace.as_ref().expect("workspace stays open");
+            let selected = workspace
+                .selected_note()
+                .expect("first descendant note opens for virtual parent");
+            assert_eq!(workspace.notes()[selected].title, "work body");
 
-        model.open_first_matching_note_if_unselected(&SidebarFilter::Favorites);
-        let workspace = model.workspace.as_ref().expect("workspace stays open");
-        let selected = workspace
-            .selected_note()
-            .expect("existing selection is preserved");
-        assert_eq!(workspace.notes()[selected].title, "work body");
+            model.open_first_matching_note_if_unselected(&SidebarFilter::Favorites);
+            let workspace = model.workspace.as_ref().expect("workspace stays open");
+            let selected = workspace
+                .selected_note()
+                .expect("existing selection is preserved");
+            assert_eq!(workspace.notes()[selected].title, "work body");
 
-        let deleted = model.set_deleted_selected(true);
-        eprintln!("NATIVE_ASSERT operation=DeleteNote success={deleted}");
-        assert!(deleted);
-        model.open_first_matching_note_if_unselected(&SidebarFilter::Tag("Gone".to_owned()));
-        assert_eq!(
-            model
-                .workspace
-                .as_ref()
-                .expect("workspace stays open")
-                .selected_note(),
-            None
-        );
+            eprintln!("NATIVE_DELETE_TEST round={round} deletion=2 phase=Begin");
+            let deleted = model.set_deleted_selected(true);
+            eprintln!("NATIVE_DELETE_TEST round={round} deletion=2 phase=End");
+            eprintln!("NATIVE_ASSERT operation=DeleteNote success={deleted}");
+            assert!(deleted);
+            model.open_first_matching_note_if_unselected(&SidebarFilter::Tag("Gone".to_owned()));
+            assert_eq!(
+                model
+                    .workspace
+                    .as_ref()
+                    .expect("workspace stays open")
+                    .selected_note(),
+                None
+            );
+        }));
 
         model.shutdown_search_worker();
         drop(model);
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
         fs::remove_dir_all(root).expect("remove group-activation workspace");
     }
 

@@ -2649,7 +2649,11 @@ pub fn rewrite_metadata_versioned(
     let path = path.as_ref();
     let (mut input, opened_version) = open_versioned(path)?;
     if opened_version != *expected_version {
-        return Err(SaveError::Conflict);
+        return Err(version_conflict(
+            "MetadataOpened",
+            &opened_version,
+            expected_version,
+        ));
     }
     let scan = scan_reader(&mut input).map_err(|error| precommit(SaveStage::Scan, error))?;
     let body_offset = match scan.status {
@@ -2683,7 +2687,7 @@ pub fn open_versioned(path: impl AsRef<Path>) -> Result<(File, FileVersion), Sav
         .map(|metadata| FileVersion::from_metadata(&metadata))
         .map_err(|error| precommit(SaveStage::OpenTarget, error))?;
     if opened_version != version {
-        return Err(SaveError::Conflict);
+        return Err(version_conflict("OpenVersioned", &opened_version, &version));
     }
     Ok((file, version))
 }
@@ -3022,7 +3026,11 @@ fn rewrite_note_with(
         ));
     }
     if FileVersion::from_metadata(&target_metadata) != *expected_version {
-        return Err(SaveError::Conflict);
+        return Err(version_conflict(
+            "RewriteTarget",
+            &FileVersion::from_metadata(&target_metadata),
+            expected_version,
+        ));
     }
     let mut input = File::open(path).map_err(|error| precommit(SaveStage::OpenTarget, error))?;
     let opened_version = input
@@ -3030,7 +3038,11 @@ fn rewrite_note_with(
         .map(|metadata| FileVersion::from_metadata(&metadata))
         .map_err(|error| precommit(SaveStage::OpenTarget, error))?;
     if opened_version != *expected_version {
-        return Err(SaveError::Conflict);
+        return Err(version_conflict(
+            "RewriteOpened",
+            &opened_version,
+            expected_version,
+        ));
     }
     let scan = scan_reader(&mut input).map_err(|error| precommit(SaveStage::Scan, error))?;
     drop(input);
@@ -3073,7 +3085,11 @@ fn rewrite_note_with(
     if !current_metadata.file_type().is_file()
         || FileVersion::from_metadata(&current_metadata) != *expected_version
     {
-        return Err(SaveError::Conflict);
+        return Err(version_conflict(
+            "RewriteBeforeReplace",
+            &FileVersion::from_metadata(&current_metadata),
+            expected_version,
+        ));
     }
 
     checkpoint
@@ -3398,6 +3414,36 @@ pub struct FileVersion {
     changed_nanoseconds: i64,
     #[cfg(windows)]
     digest: [u8; 32],
+}
+
+fn version_conflict(
+    _site: &'static str,
+    _actual: &FileVersion,
+    _expected: &FileVersion,
+) -> SaveError {
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        #[cfg(any(unix, windows))]
+        let identity = _actual.same_file_as(_expected).to_string();
+        #[cfg(not(any(unix, windows)))]
+        let identity = "Unavailable";
+        #[cfg(any(unix, windows))]
+        let changed = (_actual.changed_seconds == _expected.changed_seconds
+            && _actual.changed_nanoseconds == _expected.changed_nanoseconds)
+            .to_string();
+        #[cfg(not(any(unix, windows)))]
+        let changed = "Unavailable";
+        #[cfg(windows)]
+        let digest = (_actual.digest == _expected.digest).to_string();
+        #[cfg(not(windows))]
+        let digest = "Unavailable";
+        eprintln!(
+            "NATIVE_VERSION site={_site} identity_equal={identity} size_equal={} modified_equal={} changed_equal={changed} digest_equal={digest}",
+            _actual.size == _expected.size,
+            _actual.modified == _expected.modified,
+        );
+    }
+    SaveError::Conflict
 }
 
 impl FileVersion {

@@ -42,8 +42,48 @@ NATIVE_IO_KINDS = frozenset({
     "Unsupported", "WouldBlock", "Interrupted", "UnexpectedEof", "Other",
 })
 
+DELETE_STAGES = frozenset({
+    "SelectedTarget", "RecoveryKey", "RecoveryRemove", "RewriteMetadata",
+    "RefreshScan", "RefreshFind", "RefreshOpen", "SecureBegin", "SecureFinish",
+})
+SAVE_STAGES = frozenset({
+    "OpenTarget", "Scan", "CreateTemp", "Write", "FileSync", "ConflictCheck",
+    "Replace", "SourceRemove", "ParentSync",
+})
+OPERATION_STAGES = frozenset({
+    "Validate", "CreateDirectory", "Write", "FileSync", "Publish", "SourceRemove",
+    "DirectorySync",
+})
+DELETE_ERRORS = frozenset({
+    "Workspace", "NoteUnavailable", "UnsavedChanges", "Secure", "Security",
+    "PasswordChange", "MasterPasswordRequired", "Clock", "Editor",
+    *("Recovery/" + kind for kind in (
+        "UnsupportedPlatform", "InvalidPath", "InvalidStore", "InvalidArtifact", "Io")),
+    *(prefix + kind for prefix in ("Save/", "Operation/Save/") for kind in (
+        "UnsupportedPlatform", "InvalidTarget", "Patch", "Conflict", "PreCommit",
+        "PostReplaceSync", "PartialCommit")),
+    *("Operation/" + kind for kind in (
+        "InvalidName", "InvalidTag", "InvalidWorkspace", "Collision", "Conflict",
+        "Failed", "PartialCommit")),
+})
+
 
 def native_line(line):
+    deletion = re.fullmatch(
+        r"NATIVE_DELETE stage=([A-Za-z]+) outcome=(Success|Failed) "
+        r"error=([A-Za-z/]+) error_stage=([A-Za-z]+)", line,
+    )
+    if deletion:
+        stage, outcome, error, error_stage = deletion.groups()
+        if stage not in DELETE_STAGES:
+            return None
+        if outcome == "Success":
+            return line if error == error_stage == "None" else None
+        if error not in DELETE_ERRORS:
+            return None
+        allowed = (SAVE_STAGES if error in {"Save/PreCommit", "Operation/Save/PreCommit"}
+                   else OPERATION_STAGES if error == "Operation/Failed" else {"None"})
+        return line if error_stage in allowed else None
     match = re.fullmatch(
         r"NATIVE_IO operation=([A-Za-z]+) stage=([A-Za-z]+) kind=([A-Za-z]+) os_error=(-?[0-9]{1,10})",
         line,
@@ -53,6 +93,8 @@ def native_line(line):
                         and match[3] in NATIVE_IO_KINDS
                         and -(2**31) <= int(match[4]) < 2**31) else None
     patterns = (
+        r"NATIVE_DELETE_TEST round=([1-9]|[12][0-9]|3[0-2]) deletion=[12] phase=(Begin|End)",
+        r"NATIVE_VERSION site=(MetadataOpened|OpenVersioned|RewriteTarget|RewriteOpened|RewriteBeforeReplace) identity_equal=(true|false|Unavailable) size_equal=(true|false) modified_equal=(true|false) changed_equal=(true|false|Unavailable) digest_equal=(true|false|Unavailable)",
         r"NATIVE_SAVE stage=(OpenTarget|Scan|CreateTemp|Write|FileSync|ConflictCheck|Replace|SourceRemove|ParentSync) outcome=PreCommit",
         r"NATIVE_OPERATION stage=(Validate|CreateDirectory|Write|FileSync|Publish|SourceRemove|DirectorySync) outcome=Failed",
         r"NATIVE_CLEANUP outcome=(Removed|Absent|Failed)",

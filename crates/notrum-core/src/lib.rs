@@ -5,6 +5,8 @@
 
 //! Platform-independent workspace, document-session and viewport orchestration.
 
+mod delete_diagnostics;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -2126,21 +2128,40 @@ impl WorkspaceSession {
         deleted: bool,
         timestamp: &str,
     ) -> Result<PathBuf, CoreError> {
-        let (note_index, path, version) = self.selected_operation_target()?;
+        let (note_index, path, version) =
+            delete_diagnostics::result(true, "SelectedTarget", self.selected_operation_target())?;
         let protection = self.notes[note_index].protection;
         if self.notes[note_index].deleted == deleted {
             return Ok(path);
         }
-        let key = self.recovery_store.key_for_note(&path)?;
-        match protection {
-            NoteProtection::Plain => self.recovery_store.remove(&key)?,
-            NoteProtection::Protected => self.recovery_store.remove_protected(&key)?,
-        };
+        let key = delete_diagnostics::result(
+            true,
+            "RecoveryKey",
+            self.recovery_store
+                .key_for_note(&path)
+                .map_err(CoreError::from),
+        )?;
+        delete_diagnostics::result(
+            true,
+            "RecoveryRemove",
+            match protection {
+                NoteProtection::Plain => self.recovery_store.remove(&key),
+                NoteProtection::Protected => self.recovery_store.remove_protected(&key),
+            }
+            .map_err(CoreError::from),
+        )?;
         if protection == NoteProtection::Protected {
-            let completion = self
-                .begin_set_deleted_protected_selected(deleted, timestamp)?
-                .execute();
-            return match self.finish_secure_operation(completion)? {
+            let completion = delete_diagnostics::result(
+                true,
+                "SecureBegin",
+                self.begin_set_deleted_protected_selected(deleted, timestamp),
+            )?
+            .execute();
+            return match delete_diagnostics::result(
+                true,
+                "SecureFinish",
+                self.finish_secure_operation(completion),
+            )? {
                 SecureOutcome::MetadataChanged => Ok(self
                     .selected_note
                     .and_then(|index| self.notes.get(index))
@@ -2151,16 +2172,21 @@ impl WorkspaceSession {
                 )),
             };
         }
-        rewrite_metadata_versioned(
-            &path,
-            &version,
-            &MetadataPatch {
-                deleted: Some(deleted),
-                modified: Some(timestamp.to_owned()),
-                ..MetadataPatch::default()
-            },
+        delete_diagnostics::result(
+            true,
+            "RewriteMetadata",
+            rewrite_metadata_versioned(
+                &path,
+                &version,
+                &MetadataPatch {
+                    deleted: Some(deleted),
+                    modified: Some(timestamp.to_owned()),
+                    ..MetadataPatch::default()
+                },
+            )
+            .map_err(CoreError::from),
         )?;
-        self.refresh_and_open(&path)?;
+        self.refresh_and_open_for_operation(&path, true)?;
         if deleted {
             self.document = None;
             self.selected_note = None;
@@ -3291,19 +3317,34 @@ impl WorkspaceSession {
     }
 
     fn refresh_and_open(&mut self, path: &Path) -> Result<usize, CoreError> {
-        self.refresh_notes()?;
-        let note_index = self
-            .notes
-            .iter()
-            .position(|note| note.path == path)
-            .ok_or_else(|| {
-                CoreError::NoteUnavailable(format!(
-                    "committed note {} was not found by workspace scan",
-                    path.display()
-                ))
-            })?;
+        self.refresh_and_open_for_operation(path, false)
+    }
+
+    fn refresh_and_open_for_operation(
+        &mut self,
+        path: &Path,
+        diagnose_delete: bool,
+    ) -> Result<usize, CoreError> {
+        delete_diagnostics::result(diagnose_delete, "RefreshScan", self.refresh_notes())?;
+        let note_index = delete_diagnostics::result(
+            diagnose_delete,
+            "RefreshFind",
+            self.notes
+                .iter()
+                .position(|note| note.path == path)
+                .ok_or_else(|| {
+                    CoreError::NoteUnavailable(format!(
+                        "committed note {} was not found by workspace scan",
+                        path.display()
+                    ))
+                }),
+        )?;
         let note = &self.notes[note_index];
-        self.document = Some(load_document(note_index, &note.title, &note.path)?);
+        self.document = Some(delete_diagnostics::result(
+            diagnose_delete,
+            "RefreshOpen",
+            load_document(note_index, &note.title, &note.path),
+        )?);
         self.selected_note = Some(note_index);
         self.selected_external = None;
         self.selected_rss = None;

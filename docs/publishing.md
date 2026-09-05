@@ -40,8 +40,11 @@ unset GITHUB_TOKEN
 
 Every external command is printed as `publish: run ...` before execution. Prompt
 contents and credentials are never included in that line. Publication prints the
-resolved Codex executable separately. It does not launch Codex merely to check
-`--help`; the first launch is the actual read-only release-notes request.
+resolved Codex executable separately. Codex runs in the repository root with a
+read-only sandbox and inspects Git history itself; Python does not send patches or
+file contents in the prompt. Codex's internal output is captured so that prompts,
+diffs and nonfatal diagnostics do not flood the terminal. It does not launch Codex
+merely to check `--help`; the first launch is the release-notes request.
 
 If macOS kills Codex or displays a security warning, do not bypass Gatekeeper.
 Install or update the native standalone CLI with OpenAI's official installer:
@@ -68,12 +71,11 @@ CODEX="$HOME/.local/bin/codex" make publish
    corresponding application entry in `Cargo.lock`; dependency versions stay
    unchanged. macOS and Windows package versions come from the app manifest.
 3. Finds the last first-parent commit that changed the application's version
-   value. For the first release, feeds the full committed history, patches and
-   net diff to local `codex exec`. It processes the input in bounded portions,
-   then combines the summaries. No notes workspace or ignored files are included.
-   Codex writes English `Improvements` and `Bug fixes` sections; an empty category
-   is `None.`. Its output is generated text and can still contain interpretation
-   errors.
+   value. It gives this boundary and the release commit to local `codex exec`.
+   Codex inspects the repository and committed Git history itself. For the first
+   release it analyzes all history reachable from `HEAD`. Codex writes English
+   `Improvements` and `Bug fixes` sections; an empty category is `None.`. Its
+   output is generated text and can still contain interpretation errors.
 4. For releases after the initial one, creates `Release vX.Y.Z` with only the two
    version files, using `Evgeniy Udodov
    <1926460+flrnull@users.noreply.github.com>` as author and committer. The

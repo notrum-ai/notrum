@@ -77,17 +77,20 @@ class VersionTests(unittest.TestCase):
             self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
             self.assertIn('model_reasoning_effort="medium"', command)
             self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
-            self.assertIn("--skip-git-repo-check", command)
-            self.assertIn("evidence fixture", kwargs["input"])
+            self.assertEqual(command[command.index("--cd") + 1], str(publish.ROOT))
+            self.assertIn("Git range", kwargs["input"])
+            self.assertIn("b" * 40 + ".." + SHA, kwargs["input"])
+            self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["stderr"], subprocess.PIPE)
             output = Path(command[command.index("--output-last-message") + 1])
             output.write_text('{"improvements":["Faster search."],"bug_fixes":[]}', encoding="utf-8")
         with patch.object(publish.shutil, "which", return_value="/example/codex"), \
                 patch.object(publish, "run", side_effect=execute):
-            self.assertEqual(publish.codex_notes("evidence fixture")["improvements"], ["Faster search."])
+            self.assertEqual(publish.codex_notes("b" * 40, SHA)["improvements"], ["Faster search."])
         with patch.object(publish.shutil, "which", return_value="/example/codex"), \
                 patch.object(publish, "run", side_effect=subprocess.CalledProcessError(1, ["codex"])):
-            with self.assertRaises(subprocess.CalledProcessError):
-                publish.codex_notes("evidence fixture")
+            with self.assertRaisesRegex(ValueError, "exit status 1"):
+                publish.codex_notes(None, SHA)
         for value in ({}, {"improvements": [""], "bug_fixes": []},
                       {"improvements": "bad", "bug_fixes": []}):
             with self.assertRaises(ValueError):

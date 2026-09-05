@@ -96,7 +96,8 @@ checksums. The Windows job rejects a different revision, changed bytes, unexpect
 archive members, links and escaping paths before running any supplied executable.
 
 Reports record the source SHA, platform, exit status, known check names and Rust
-diagnostic source locations. The diagnostic filter excludes arbitrary test output,
+diagnostic source locations. Python failures retain test names, tool source
+locations and exception types. The diagnostic filter excludes arbitrary test output,
 panic payloads, thread names, editor text and temporary paths. Neither whole
 workspaces nor screenshots, raw application logs, recovery files or caches are
 uploaded. Native Windows CI reports omit temporary workspace/log paths and

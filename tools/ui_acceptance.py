@@ -1574,16 +1574,13 @@ def assert_transient_sidebar_scrollbar(
         delay_ms=20,
     )
     driver.move_to("editor")
-    driver.wait_for_visual_change(
+    # Use the frame that already proves movement. Taking several more frames
+    # for stability can consume the entire 500ms visibility interval under load.
+    visible = driver.wait_for_visual_change(
         f"{description} repeated viewport movement",
         before_second_scroll,
         crop=SIDEBAR_SCROLL_CONTENT_CROP,
         minimum_pixels=50,
-    )
-    visible = driver.wait_for_stable_frame(
-        f"{description} repeated viewport settles",
-        crop=SIDEBAR_SCROLL_CONTENT_CROP,
-        timeout=0.3,
     )
 
     time.sleep(SIDEBAR_SCROLLBAR_HIDE_SECONDS + 0.05)
@@ -5943,6 +5940,19 @@ def secure_integrity_scenario(driver: WindowDriver, workspace: Path) -> None:
         tag="secureintegritytag0024",
     )
 
+    def wait_for_integrity_buttons() -> None:
+        # The worker writes its journal before the UI receives the completion
+        # and paints the modal. A journal alone is not a clickable button.
+        def painted() -> bool:
+            frame = driver.capture("integrity-buttons")
+            try:
+                return near_color_pixel_count(
+                    frame, (54, 94, 130), crop=(755, 432, 60, 32), tolerance=16
+                ) >= 100
+            finally:
+                frame.unlink(missing_ok=True)
+        wait_until("painted integrity actions", painted, timeout=8.0, interval=0.05)
+
     driver.start_app(secure_workspace, "protect")
     protected = protect_selected_note(driver, secure_workspace, plaintext, password)
     driver.close_app()
@@ -5967,6 +5977,7 @@ def secure_integrity_scenario(driver: WindowDriver, workspace: Path) -> None:
         timeout=8.0,
         interval=0.02,
     )
+    wait_for_integrity_buttons()
     driver.key("Escape")
     driver.click_point(30, 760)
     if not integrity_incident_pending(secure_workspace):
@@ -5997,6 +6008,7 @@ def secure_integrity_scenario(driver: WindowDriver, workspace: Path) -> None:
         timeout=8.0,
         interval=0.02,
     )
+    wait_for_integrity_buttons()
     driver.click("integrity_restore")
     wait_until(
         "verified backup restore resolving integrity journal",

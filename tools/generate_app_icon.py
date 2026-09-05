@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
-"""Generate the deterministic Notrum.icns resource from its vector source."""
+"""Generate Notrum.icns from its vector source using the toolchain renderer."""
 
 from __future__ import annotations
 

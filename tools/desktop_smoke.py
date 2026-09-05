@@ -132,10 +132,16 @@ def concurrent(root, env):
         # the artifact. A subsequent edit can persist after its checked save.
         edit(second, "_RECOVERY_RETRY")
         recovery = workspace / ".notrum/recovery"
-        records = wait_for(lambda: list(recovery.glob("*.nrrec")))
-        time.sleep(1)
+        def retry_persisted():
+            try:
+                return any(b"SECOND_PROCESS_UNSAVED_RECOVERY_RETRY" in record.read_bytes()
+                           for record in recovery.glob("*.nrrec"))
+            except FileNotFoundError:
+                # Another process can finish its checked cleanup between listing
+                # and reading. Wait for the completed replacement, not any record.
+                return False
+        wait_for(retry_persisted)
         assert path.read_bytes() == committed, "stale window overwrote the saved file"
-        assert any(b"SECOND_PROCESS_UNSAVED_RECOVERY_RETRY" in record.read_bytes() for record in records)
     finally:
         # Simulate independent crashes; never let a close prompt discard work.
         for process in processes:

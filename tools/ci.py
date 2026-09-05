@@ -59,6 +59,15 @@ def safe_line(line):
         return line
     if re.fullmatch(r"test result: (ok|FAILED)\. [0-9a-z ;.]+", line):
         return line
+    match = re.fullmatch(r"(FAIL|ERROR): (test_[a-zA-Z0-9_]+) \(([a-zA-Z0-9_.]+)\)", line)
+    if match:
+        return f"Python test {match[1]}: {match[3]}"
+    match = re.fullmatch(r'File "(?:[^"\n]*/)?(tools/[a-zA-Z0-9_]+\.py)", line ([0-9]+), in [a-zA-Z0-9_<>]+', line)
+    if match:
+        return f"Python diagnostic location: {match[1]}:{match[2]}"
+    match = re.match(r"(?:subprocess\.)?(AssertionError|ValueError|OSError|FileNotFoundError|PermissionError|CalledProcessError|TimeoutExpired)(?::|$)", line)
+    if match:
+        return f"Python exception: {match[1]} (details omitted)"
     match = re.match(r"UI_ACCEPTANCE_(PASS|FAIL) scenario=([a-z_]+)(?:\s|:|$)", line)
     if match:
         return f"UI_ACCEPTANCE_{match[1]} scenario={match[2]}"

@@ -9,6 +9,7 @@ import json
 import plistlib
 import stat
 import struct
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,35 @@ def universal_macho() -> bytes:
         )
         + b"xa"
     )
+
+
+def icon_pixels(path: Path) -> bytes:
+    """Decode every validated representation, independent of PNG compression."""
+    package_macos.inspect_icns(path)
+    data = path.read_bytes()
+    pixels = []
+    offset = 8
+    while offset < len(data):
+        size = int.from_bytes(data[offset + 4 : offset + 8], "big")
+        decoded = subprocess.run(
+            ["convert", "png:-", "-depth", "8", "rgba:-"],
+            input=data[offset + 8 : offset + size],
+            capture_output=True,
+            check=True,
+        )
+        pixels.append(decoded.stdout)
+        offset += size
+    return b"".join(pixels)
+
+
+def assert_icon_pixels_match(case: unittest.TestCase, expected: bytes, actual: bytes) -> None:
+    case.assertEqual(len(actual), len(expected))
+    differences = [abs(left - right) for left, right in zip(expected, actual) if left != right]
+    # ImageMagick Q16 resizing on arm64/x64 differs by one 8-bit level in three
+    # channels across the 512/1024 representations. Bound that rounding error
+    # across the entire icon; larger color changes and accumulated changes fail.
+    case.assertLessEqual(max(differences, default=0), 1, "icon channel changed beyond rounding")
+    case.assertLessEqual(len(differences), 4, "icon changed beyond isolated rounding")
 
 
 class PackageMacosTests(unittest.TestCase):
@@ -104,7 +134,16 @@ class PackageMacosTests(unittest.TestCase):
 
             generate_app_icon.build_icns(source, generated)
 
-            self.assertEqual(generated.read_bytes(), package_macos.ICON_SOURCE.read_bytes())
+            assert_icon_pixels_match(
+                self, icon_pixels(package_macos.ICON_SOURCE), icon_pixels(generated)
+            )
+
+    def test_icon_comparison_rejects_color_damage_and_accumulated_differences(self) -> None:
+        reference = bytes([100] * 32)
+        for changed in (bytes([102]) + reference[1:], bytes([101] * 5) + reference[5:]):
+            with self.subTest(changed_channels=sum(a != b for a, b in zip(reference, changed))):
+                with self.assertRaises(AssertionError):
+                    assert_icon_pixels_match(self, reference, changed)
 
     def test_rejects_malformed_icns_resource(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

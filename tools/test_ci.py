@@ -2,6 +2,8 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -33,14 +35,28 @@ class CITests(unittest.TestCase):
                          "Rust diagnostic location: crates/core/src/lib.rs:12:3")
         self.assertEqual(ci.safe_line(f"UI_ACCEPTANCE_FAIL scenario=secure: {secret}"),
                          "UI_ACCEPTANCE_FAIL scenario=secure")
+        self.assertEqual(ci.safe_line("FAIL: test_icon (__main__.PackageMacosTests.test_icon)"),
+                         "Python test FAIL: __main__.PackageMacosTests.test_icon")
+        self.assertEqual(ci.safe_line('File "/workspace/tools/test_package_macos.py", line 111, in test_icon'),
+                         "Python diagnostic location: tools/test_package_macos.py:111")
+        self.assertEqual(ci.safe_line(f"AssertionError: {secret}"),
+                         "Python exception: AssertionError (details omitted)")
+        self.assertEqual(ci.safe_line("AssertionError"),
+                         "Python exception: AssertionError (details omitted)")
+        self.assertEqual(ci.safe_line(f"subprocess.CalledProcessError: {secret}"),
+                         "Python exception: CalledProcessError (details omitted)")
+        self.assertIsNone(ci.safe_line(f"FAIL: test_icon (__main__.PackageMacosTests.test_icon) {secret}"))
 
     def test_failed_command_retains_only_safe_report(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, SOURCE_REVISION=SHA):
             root = Path(temporary)
-            with patch.object(ci, "ROOT", root), patch.object(ci, "REPORTS", root / "reports"):
+            console = io.StringIO()
+            with patch.object(ci, "ROOT", root), patch.object(ci, "REPORTS", root / "reports"), \
+                    contextlib.redirect_stdout(console):
                 code = ci.run("linux", [sys.executable, "-c",
                                        "print('SYNTHETIC_SECRET'); print('test tests::example ... FAILED'); exit(7)"])
             self.assertEqual(code, 7)
+            self.assertNotIn("SYNTHETIC_SECRET", console.getvalue())
             report = json.loads((root / "reports/linux/status.json").read_text())
             self.assertEqual(report["status"], "failed")
             self.assertEqual(report["source_revision"], SHA)

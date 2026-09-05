@@ -4112,6 +4112,9 @@ fn search_worker(
 }
 
 fn schedule_autosave(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>) {
+    if revision.try_get_untracked().is_none() {
+        return;
+    }
     let schedule = {
         let mut model = model.borrow_mut();
         let now_ms = model.now_ms();
@@ -4145,6 +4148,11 @@ fn schedule_autosave(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>) {
 }
 
 fn autosave_tick(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>, generation: u64) {
+    // Timers can outlive the window scope. Do not consume worker completions,
+    // access disposed UI state, or start another save after the window closes.
+    if revision.try_get_untracked().is_none() {
+        return;
+    }
     let mut job = None;
     let mut changed = false;
     {
@@ -4276,6 +4284,9 @@ fn autosave_tick(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>, generati
 
 fn schedule_external_poll(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>) {
     exec_after(Duration::from_millis(EXTERNAL_POLL_MS), move |_| {
+        if revision.try_get_untracked().is_none() {
+            return;
+        }
         let password_change_busy = {
             let model = model.borrow();
             model.pending_password_change.is_some()
@@ -4327,6 +4338,9 @@ fn schedule_external_poll(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>)
 
 fn schedule_rss_poll(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>) {
     exec_after(Duration::from_millis(RSS_POLL_MS), move |_| {
+        if revision.try_get_untracked().is_none() {
+            return;
+        }
         if model.borrow_mut().poll_rss() {
             revision.update(|value| *value = value.saturating_add(1));
         }
@@ -4343,6 +4357,9 @@ fn schedule_open_requests(
     pending: Rc<RefCell<Vec<PathBuf>>>,
 ) {
     exec_after(Duration::from_millis(SYSTEM_OPEN_POLL_MS), move |_| {
+        if revision.try_get_untracked().is_none() {
+            return;
+        }
         #[cfg(target_os = "macos")]
         pending
             .borrow_mut()
@@ -16581,6 +16598,62 @@ mod tests {
             late_scope.dispose();
         }
         root.dispose();
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[test]
+    fn autosave_ignores_secure_completion_after_window_disposal() {
+        use floem::reactive::{Scope, with_scope};
+        use std::{cell::RefCell, rc::Rc};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "notrum-disposed-window-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("notes")).unwrap();
+        let note_path = root.join("notes/Private.md");
+        fs::write(&note_path, "late completion fixture\n").unwrap();
+        let scope = Scope::new();
+        let revision = scope.create_rw_signal(0_u64);
+        let mut model = AppModel::unloaded();
+        model.workspace = Some(WorkspaceSession::open(&root).unwrap());
+        model.workspace.as_mut().unwrap().open_note(0).unwrap();
+        model.security_ui = Some(with_scope(scope, SecurityUi::new));
+        let job = model
+            .workspace
+            .as_mut()
+            .unwrap()
+            .begin_protect_selected(Some(MasterPassword::new("test password".to_owned())))
+            .unwrap();
+        model.secure_operation_id = Some(job.operation_id());
+        model.secure_worker_active = true;
+        model.secure_ui_operation = Some(SecureUiOperation::Protect {
+            action: PendingSecurityAction::Protect {
+                note_path: note_path.clone(),
+                password: None,
+            },
+            note_path: note_path.clone(),
+        });
+        model
+            .secure_sender
+            .send(SecureWorkerEvent::Completed(Box::new(job.execute())))
+            .unwrap();
+        let committed = fs::read(&note_path).unwrap();
+        let generation = model.autosave_generation;
+        let model = Rc::new(RefCell::new(model));
+
+        scope.dispose();
+        super::autosave_tick(model.clone(), revision, generation);
+
+        assert!(model.borrow().secure_receiver.try_recv().is_ok());
+        assert!(!model.borrow().save_worker_active);
+        assert_eq!(fs::read(&note_path).unwrap(), committed);
+        drop(model);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

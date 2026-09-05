@@ -128,9 +128,12 @@ docker compose run --rm toolchain python3 -B tools/generate_app_icon.py \
 ```
 
 Generate the ICNS in the Docker toolchain and commit it alongside the SVG.
-`make package-macos-smoke` verifies that regeneration matches the committed
-resource byte for byte. PNG encoding can differ between rendering toolchains
-even when the displayed pixels are identical.
+`make package-macos-smoke` compares all decoded RGBA pixels, allowing at most four
+single-level channel differences across the entire icon for ImageMagick's
+arm64/x64 resize rounding. Dimensions and ICNS representations remain exact;
+larger color changes or accumulated differences fail the check.
+PNG encoding can differ between rendering toolchains even when the displayed
+pixels are identical.
 
 ## Packaging and release limitations
 

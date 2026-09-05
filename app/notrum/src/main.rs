@@ -14856,7 +14856,11 @@ fn settings_secret_style(style: Style, palette: Palette, empty: bool, active: bo
         .cursor(CursorStyle::Text)
         .font_size(13.5)
         .color(if empty { palette.muted } else { palette.ink })
-        .border_color(if active { palette.accent } else { palette.divider })
+        .border_color(if active {
+            palette.accent
+        } else {
+            palette.divider
+        })
 }
 
 /// The disabled affordance shared by every settings control: a control that

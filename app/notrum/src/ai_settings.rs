@@ -425,20 +425,25 @@ fn connection_summary(controller: Controller, palette: Palette) -> impl IntoView
                     .color(palette.ink)
                     .selectable(false)
             }),
-            label(move || tr!(AiKeySaved))
-                .style(move |style| style.font_size(12.5).color(palette.accent).selectable(false)),
+            label(move || tr!(AiKeySaved)).style(move |style| {
+                style
+                    .font_size(12.5)
+                    .color(palette.accent)
+                    .selectable(false)
+            }),
             label(move || {
                 settings
                     .get()
                     .connection
                     .map(|connection| {
-                        let date = chrono::DateTime::from_timestamp(connection.checked_at as i64, 0)
-                            .map(|time| {
-                                time.with_timezone(&chrono::Local)
-                                    .format("%Y-%m-%d %H:%M")
-                                    .to_string()
-                            })
-                            .unwrap_or_default();
+                        let date =
+                            chrono::DateTime::from_timestamp(connection.checked_at as i64, 0)
+                                .map(|time| {
+                                    time.with_timezone(&chrono::Local)
+                                        .format("%Y-%m-%d %H:%M")
+                                        .to_string()
+                                })
+                                .unwrap_or_default();
                         msg!(AiLastChecked, "value" => date).render()
                     })
                     .unwrap_or_default()
@@ -663,9 +668,10 @@ fn secret_input(controller: Controller, palette: Palette) -> impl IntoView {
     .style(move |style| {
         revision.get();
         let empty = empty_key.borrow().is_empty();
-        settings_secret_style(style, palette, empty, false).apply_if(selected_style.get(), |style| {
-            style.background(palette.accent_soft)
-        })
+        settings_secret_style(style, palette, empty, false)
+            .apply_if(selected_style.get(), |style| {
+                style.background(palette.accent_soft)
+            })
     })
     .style(move |style| style.focus(move |style| style.border_color(palette.accent)))
     .keyboard_navigable();
@@ -766,17 +772,15 @@ fn profile_card(size: AiTaskSize, controller: Controller, palette: Palette) -> i
                     })
                     .style(move |style| {
                         let settings = settings.get();
-                        style
-                            .width_full()
-                            .font_size(12.0)
-                            .selectable(false)
-                            .color(if settings.profile(size).is_ok() {
+                        style.width_full().font_size(12.0).selectable(false).color(
+                            if settings.profile(size).is_ok() {
                                 palette.muted
                             } else if settings.profiles.contains_key(&size) {
                                 palette.danger
                             } else {
                                 palette.muted
-                            })
+                            },
+                        )
                     }),
                 ))
                 .style(|style| rtl_column(style).min_width(0.0).flex_grow(1.0).gap(4.0)),
@@ -787,7 +791,12 @@ fn profile_card(size: AiTaskSize, controller: Controller, palette: Palette) -> i
                         tr!(AiEdit)
                     }
                 })
-                .style(move |style| style.font_size(12.5).color(palette.accent).selectable(false)),
+                .style(move |style| {
+                    style
+                        .font_size(12.5)
+                        .color(palette.accent)
+                        .selectable(false)
+                }),
             ))
             .style(|style| {
                 rtl_row(style)
@@ -973,7 +982,11 @@ fn profile_form(size: AiTaskSize, controller: Controller, palette: Palette) -> i
                     .cursor(CursorStyle::Pointer)
                     .border_radius(5.0)
                     .border(1.0)
-                    .border_color(if chosen { palette.accent } else { palette.divider })
+                    .border_color(if chosen {
+                        palette.accent
+                    } else {
+                        palette.divider
+                    })
                     .color(if chosen { palette.accent } else { palette.ink })
                     .background(if chosen {
                         palette.accent_soft

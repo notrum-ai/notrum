@@ -15353,6 +15353,7 @@ mod tests {
         assert_eq!(workspace.external_files().len(), 2);
         assert_eq!(fs::read_to_string(&first).unwrap(), "First\n");
         assert_eq!(fs::read_to_string(&second).unwrap(), "Second\n");
+        model.shutdown_search_worker();
         drop(model);
         fs::remove_dir_all(root).unwrap();
     }

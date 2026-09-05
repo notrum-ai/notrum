@@ -36,11 +36,7 @@ impl OperationLock {
             }
             let path = directory.join(".notrum-operation.lock");
             // Publish an empty restricted marker before opening a shared handle.
-            match super::create_private_file(&path) {
-                Ok(file) => drop(file),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(error) => return io_result(Operation::Lock, Stage::Create, Err(error)),
-            }
+            io_result(Operation::Lock, Stage::Create, prepare_marker(&path))?;
             io_result(
                 Operation::Lock,
                 Stage::Validate,
@@ -87,6 +83,58 @@ impl OperationLock {
     }
 }
 
+#[cfg(unix)]
+fn prepare_marker(path: &Path) -> io::Result<()> {
+    match super::create_private_file(path) {
+        Ok(file) => {
+            drop(file);
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+fn prepare_marker(path: &Path) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    // Existing markers are validated by the caller, never repaired or replaced.
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    for _ in 0..32 {
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let temporary =
+            path.with_file_name(format!(".notrum-operation-{}-{id}.tmp", std::process::id()));
+        let file = match super::create_private_file(&temporary) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        // ACL construction changes several rules. Only publish the final name
+        // once the private ACL is complete and the exclusive handle is closed.
+        drop(file);
+        if let Err(error) = super::publish(&temporary, path) {
+            // We own only this temporary, not the winning marker. Preserve a
+            // publication error, but report failed cleanup after a lost race.
+            let cleanup = std::fs::remove_file(&temporary);
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                return cleanup;
+            }
+            return Err(error);
+        }
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "cannot allocate operation lock temporary",
+    ))
+}
+
 impl Drop for OperationLock {
     fn drop(&mut self) {
         HELD.with(|held| {
@@ -109,12 +157,20 @@ mod tests {
 
     #[test]
     fn simultaneous_first_users_serialize_on_one_marker() {
-        let root =
-            std::env::temp_dir().join(format!("notrum-operation-first-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        for round in 0..16 {
+            simultaneous_first_users_round(round);
+        }
+    }
+
+    fn simultaneous_first_users_round(round: usize) {
+        let root = std::env::temp_dir().join(format!(
+            "notrum-operation-first-{}-{round}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(4));
         let entered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let workers = (0..2)
+        let workers = (0..4)
             .map(|_| {
                 let root = root.clone();
                 let start = start.clone();
@@ -141,7 +197,41 @@ mod tests {
             "NATIVE_ASSERT operation=ConcurrentLock success={}",
             results.iter().all(Result::is_ok)
         );
-        assert_eq!(results[0].as_ref().unwrap(), results[1].as_ref().unwrap());
+        let identity = results[0].as_ref().unwrap();
+        for result in &results {
+            assert_eq!(identity, result.as_ref().unwrap());
+        }
+        let marker = root.join(".notrum-operation.lock");
+        super::super::validate_private(&marker).unwrap();
+        assert_eq!(std::fs::read(&marker).unwrap(), b"");
+        let entries = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(entries, vec![marker]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn existing_invalid_marker_is_rejected_without_replacement() {
+        let root =
+            std::env::temp_dir().join(format!("notrum-operation-invalid-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let marker = root.join(".notrum-operation.lock");
+        use std::io::Write;
+        let mut file = super::super::create_private_file(&marker).unwrap();
+        file.write_all(b"existing content").unwrap();
+        let identity = super::super::file_information(&file).unwrap().identity;
+        drop(file);
+        assert!(OperationLock::directory(&root).is_err());
+        assert_eq!(std::fs::read(&marker).unwrap(), b"existing content");
+        assert_eq!(
+            super::super::file_information(&File::open(&marker).unwrap())
+                .unwrap()
+                .identity,
+            identity
+        );
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
 

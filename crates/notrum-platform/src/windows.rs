@@ -196,12 +196,20 @@ pub(super) fn apply_permissions(
     })?;
     // Install the complete ordered ACL through the existing handle. windows-acl
     // applies PROTECTED_DACL at every add/remove, converting inherited entries
-    // and potentially replacing rules with the same SID. Only replace the DACL;
-    // do not request another inheritance transition on our private temporary.
+    // and potentially replacing rules with the same SID. A private temporary
+    // starts protected: leaving that state in place also strips INHERITED_ACE.
+    // Enable inheritance when the snapshot contains inherited rules. The exact
+    // comparison below rejects a different parent ACL instead of accepting new
+    // or missing access. Explicit-only private snapshots remain protected.
+    let inheritance = if permissions.rules.iter().any(|rule| rule.flags & 0x10 != 0) {
+        SecurityInformation::UnprotectedDacl
+    } else {
+        SecurityInformation::ProtectedDacl
+    };
     wrappers::SetSecurityInfo(
         &mut file.try_clone()?,
         SeObjectType::SE_FILE_OBJECT,
-        SecurityInformation::Dacl,
+        SecurityInformation::Dacl | inheritance,
         None,
         None,
         Some(dacl),

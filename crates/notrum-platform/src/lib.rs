@@ -412,6 +412,74 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn replacement_preserves_inherited_permissions_on_private_temporary() {
+        let directory = TestDirectory::new();
+        let source = directory.0.join("inherited.md");
+        let candidate = directory.0.join("private.tmp");
+        std_fs::write(&source, b"original").unwrap();
+        let expected = fs::metadata(&source).unwrap().permissions();
+        assert!(expected.rules.len() >= 3);
+        assert!(expected.rules.iter().all(|rule| rule.flags & 0x10 != 0));
+
+        let mut candidate_file = create_private_file(&candidate).unwrap();
+        windows::apply_permissions(&candidate_file, &expected).unwrap();
+        // The existing exclusive handle must still exclude other readers after
+        // inheritance changes, until the complete replacement is ready.
+        assert!(std_fs::read(&candidate).is_err());
+        candidate_file.write_all(b"replacement").unwrap();
+        candidate_file.sync_all().unwrap();
+        drop(candidate_file);
+        assert_eq!(fs::metadata(&candidate).unwrap().permissions(), expected);
+        replace(&candidate, &source).unwrap();
+        assert_eq!(std_fs::read(&source).unwrap(), b"replacement");
+        assert_eq!(fs::metadata(&source).unwrap().permissions(), expected);
+        assert!(!candidate.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inherited_permissions_reject_a_different_parent_acl() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        use windows_acl::acl::ACL;
+        use windows_acl::helper::string_to_sid;
+
+        let directory = TestDirectory::new();
+        let source = directory.0.join("source.md");
+        std_fs::write(&source, b"original").unwrap();
+        let expected = fs::metadata(&source).unwrap().permissions();
+        let other_parent = directory.0.join("different parent");
+        create_private_directory(&other_parent).unwrap();
+        let parent = OpenOptions::new()
+            .access_mode(0x0006_0000)
+            .custom_flags(0x0220_0000)
+            .open(&other_parent)
+            .unwrap();
+        let mut acl = ACL::from_file_handle(parent.as_raw_handle().cast(), false).unwrap();
+        let guests = string_to_sid("S-1-5-32-546").unwrap();
+        assert!(
+            acl.allow(guests.as_ptr().cast_mut().cast(), true, 0x0002_0000)
+                .unwrap()
+        );
+        drop(parent);
+
+        let candidate = other_parent.join("private.tmp");
+        let candidate_file = create_private_file(&candidate).unwrap();
+        assert_eq!(
+            windows::apply_permissions(&candidate_file, &expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Unsupported
+        );
+        assert_eq!(candidate_file.metadata().unwrap().len(), 0);
+        drop(candidate_file);
+        std_fs::remove_file(candidate).unwrap();
+        assert_eq!(std_fs::read(&source).unwrap(), b"original");
+        assert_eq!(fs::metadata(&source).unwrap().permissions(), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn replacement_preserves_mixed_and_noncanonical_acl_order() {
         use std::os::windows::fs::OpenOptionsExt;
         use windows_permissions::constants::{SeObjectType, SecurityInformation};

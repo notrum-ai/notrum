@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = Assistente de IA
+AiDescription = Uma conexão e três perfis compartilhados por todos os espaços de trabalho e mecanismos.
+AiConnect = Conecte um provedor
+AiModels = Escolha modelos para as tarefas
+AiConnectFirst = Conecte um provedor primeiro para configurar os modelos.
+AiKeyLabel = Chave de API
+AiPasteCredential = Cole sua chave de API
+AiDetectHint = OpenAI ou Anthropic é detectado pela chave.
+AiKeyStorage = A chave fica no armazenamento de credenciais do sistema. A verificação consulta apenas o catálogo de modelos.
+AiVerify = Verificar e salvar
+AiKeySaved = Chave salva
+AiEdit = Editar
+AiCollapse = Recolher
+AiDisconnect = Remover chave e perfis
+AiRefreshModels = Atualizar modelos
+AiLastChecked = Catálogo verificado: { $value }
+AiRevealCredential = Mostrar chave
+AiConcealCredential = Ocultar chave
+AiPaste = Colar
+AiSmall = Tarefas simples
+AiMedium = Tarefas comuns
+AiLarge = Tarefas complexas
+AiNotConfigured = Não configurado
+AiProgress = { $count } de 3 configurados
+AiModelLabel = Modelo
+AiChooseModel = Escolha um modelo
+AiSearchModels = Buscar modelos
+AiEffortLabel = Profundidade de raciocínio · Effort
+AiChooseEffort = Escolha o esforço
+AiManaged = Gerenciado pelo modelo
+AiEffortHint = Um esforço maior pode melhorar o raciocínio, mas exige mais tempo e tokens.
+AiEffortReset = O esforço anterior não está disponível neste modelo. Escolha outro nível.
+AiProviderChange = Salvar outro provedor limpará os três perfis.
+AiWorking = Processando…
+AiKeyFormat = Formato de chave desconhecido. Use uma chave de API da OpenAI ou Anthropic.
+AiUnauthorized = O provedor rejeitou a chave. Confira e tente novamente.
+AiForbidden = A chave não tem acesso ao catálogo. Confira suas permissões.
+AiRateLimited = O provedor está limitando solicitações. Tente mais tarde.
+AiNetworkError = Não foi possível contatar o provedor. Confira a conexão e tente novamente.
+AiResponseError = A resposta do catálogo é inválida ou excede os limites suportados.
+AiNoModels = Não há modelos de texto compatíveis disponíveis para esta chave.
+AiUnavailable = Modelo indisponível: edite o perfil
+AiCredentialsError = Não foi possível acessar as credenciais do sistema. Desbloqueie e tente novamente; a chave não foi salva em arquivo.
+AiSettingsError = Não foi possível salvar, ou as configurações mudaram em outra janela. Reabra esta seção.
+AiCleanupError = Não foi possível remover algumas chaves antigas. Tente novamente.
+AiRetryCleanup = Tentar remover as chaves novamente
+
 CreateOpen = Criar e abrir
 Open = Abrir
 WorkspaceReady = A área de trabalho está pronta para ser aberta.

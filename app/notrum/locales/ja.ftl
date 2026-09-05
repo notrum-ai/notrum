@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AIアシスタント
+AiDescription = すべてのワークスペースとエンジンで接続と3つのタスク設定を共有します。
+AiConnect = プロバイダーに接続
+AiModels = タスク用のモデルを選択
+AiConnectFirst = モデルを設定するには、先にプロバイダーに接続してください。
+AiKeyLabel = APIキー
+AiPasteCredential = APIキーを貼り付け
+AiDetectHint = キーからOpenAIまたはAnthropicを自動判別します。
+AiKeyStorage = キーはシステムの資格情報ストアに保存されます。確認時はモデル一覧のみを取得します。
+AiVerify = 確認して保存
+AiKeySaved = キーを保存済み
+AiEdit = 変更
+AiCollapse = 折りたたむ
+AiDisconnect = キーと設定を削除
+AiRefreshModels = モデルを更新
+AiLastChecked = 一覧の確認日時：{ $value }
+AiRevealCredential = キーを表示
+AiConcealCredential = キーを隠す
+AiPaste = 貼り付け
+AiSmall = 簡単なタスク
+AiMedium = 日常のタスク
+AiLarge = 複雑なタスク
+AiNotConfigured = 未設定
+AiProgress = { $count } / 3 設定済み
+AiModelLabel = モデル
+AiChooseModel = モデルを選択
+AiSearchModels = モデルを検索
+AiEffortLabel = 推論の深さ · Effort
+AiChooseEffort = 推論強度を選択
+AiManaged = モデルが管理
+AiEffortHint = 推論強度を上げると推論が改善する場合がありますが、時間とトークンが増えます。
+AiEffortReset = 以前の推論強度はこのモデルでは使えません。別のレベルを選択してください。
+AiProviderChange = 別のプロバイダーを保存すると、3つの設定がすべて消去されます。
+AiWorking = 処理中…
+AiKeyFormat = キーの形式を認識できません。OpenAIまたはAnthropicのAPIキーを使用してください。
+AiUnauthorized = プロバイダーがキーを拒否しました。確認して再試行してください。
+AiForbidden = このキーではモデル一覧にアクセスできません。権限を確認してください。
+AiRateLimited = プロバイダーがリクエストを制限しています。後で再試行してください。
+AiNetworkError = プロバイダーに接続できません。接続を確認して再試行してください。
+AiResponseError = モデル一覧の応答が無効か、対応する制限を超えています。
+AiNoModels = このキーで利用できる対応テキストモデルがありません。
+AiUnavailable = モデルが利用できません。設定を変更してください
+AiCredentialsError = システムの資格情報ストアにアクセスできません。ロックを解除して再試行してください。キーはファイルに保存されていません。
+AiSettingsError = AI設定を保存できないか、別のウィンドウで変更されています。この画面を開き直してください。
+AiCleanupError = 一部の古いキーを削除できませんでした。削除を再試行してください。
+AiRetryCleanup = キーの削除を再試行
+
 CreateOpen = 作成して開く
 Open = 開く
 WorkspaceReady = ワークスペースを開く準備ができました。

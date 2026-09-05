@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AI-ассистент
+AiDescription = Одно подключение и три профиля задач для всех рабочих пространств и движков.
+AiConnect = Подключите провайдера
+AiModels = Выберите модели для задач
+AiConnectFirst = Сначала подключите провайдера, чтобы настроить модели.
+AiKeyLabel = API-ключ
+AiPasteCredential = Вставьте API-ключ
+AiDetectHint = OpenAI или Anthropic определяется по ключу.
+AiKeyStorage = Ключ хранится в системном хранилище секретов. Проверка запрашивает только каталог моделей.
+AiVerify = Проверить и сохранить
+AiKeySaved = Ключ сохранён
+AiEdit = Изменить
+AiCollapse = Свернуть
+AiDisconnect = Удалить ключ и профили
+AiRefreshModels = Обновить модели
+AiLastChecked = Каталог проверен: { $value }
+AiRevealCredential = Показать ключ
+AiConcealCredential = Скрыть ключ
+AiPaste = Вставить
+AiSmall = Простые задачи
+AiMedium = Обычные задачи
+AiLarge = Сложные задачи
+AiNotConfigured = Не настроено
+AiProgress = Настроено { $count } из 3
+AiModelLabel = Модель
+AiChooseModel = Выберите модель
+AiSearchModels = Поиск моделей
+AiEffortLabel = Глубина рассуждений · Effort
+AiChooseEffort = Выберите effort
+AiManaged = Управляется моделью
+AiEffortHint = Более высокий effort может улучшить рассуждения, но требует больше времени и токенов.
+AiEffortReset = Предыдущий effort недоступен для этой модели. Выберите новый уровень.
+AiProviderChange = При сохранении другого провайдера все три профиля будут очищены.
+AiWorking = Выполняется…
+AiKeyFormat = Формат ключа не распознан. Используйте API-ключ OpenAI или Anthropic.
+AiUnauthorized = Провайдер отклонил ключ. Проверьте его и повторите попытку.
+AiForbidden = У ключа нет доступа к каталогу моделей. Проверьте его разрешения.
+AiRateLimited = Провайдер ограничил запросы. Повторите позже.
+AiNetworkError = Не удалось связаться с провайдером. Проверьте подключение и повторите.
+AiResponseError = Ответ каталога моделей некорректен или превышает допустимые ограничения.
+AiNoModels = Для этого ключа нет доступных поддерживаемых текстовых моделей.
+AiUnavailable = Модель недоступна — измените профиль
+AiCredentialsError = Нет доступа к системному хранилищу секретов. Разблокируйте его и повторите; ключ не записан в файл.
+AiSettingsError = Не удалось сохранить AI-настройки или они изменились в другом окне. Откройте раздел заново и повторите.
+AiCleanupError = Не удалось удалить некоторые старые ключи из системного хранилища. Повторите удаление.
+AiRetryCleanup = Повторить удаление ключей
+
 CreateOpen = Создать и открыть
 Open = Открыть
 WorkspaceReady = Рабочая папка готова к открытию.

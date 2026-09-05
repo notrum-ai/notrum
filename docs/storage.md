@@ -59,6 +59,33 @@ separate backup.
 
 ## Protected notes and secrets
 
+### Global AI credentials
+
+AI settings are shared by all workspaces in `~/.notrum.cfg` (the usual profile
+directory on Windows). The `ai` object contains a provider, an opaque credential
+reference, the last verified model catalog, and explicit Small/Medium/Large
+profiles. It never contains the API key. Reading settings does not rewrite them.
+Catalog refresh failures retain the previous catalog and profiles; unavailable
+selections remain visible but cannot be resolved for use by an engine.
+
+Keys are stored through `notrum-platform` in macOS Keychain, Windows Credential
+Manager, or Linux Secret Service under service `notrum/ai`. Linux requires an
+unlocked Secret Service in the desktop session. There is no plaintext fallback.
+This storage is independent of workspace master passwords and is not transferred
+by copying a workspace or the global config to another computer.
+
+Replacement first verifies and stores a new key, then atomically switches the
+config reference. Old keys are deleted afterward; failed removals retain their
+references in `pending_deletions` for the settings page's retry action. Config
+conflicts reject the operation without replacing the previous connection.
+
+Checking and refreshing use only the fixed HTTPS model catalog endpoints at
+`api.openai.com` and `api.anthropic.com`. Redirects and environment proxies are
+disabled; requests have time, page, model-count, and response-size limits.
+These operations never read or transmit notes, protected bodies, or RSS articles.
+
+### Workspace encryption
+
 A protected note keeps its YAML front matter and title-derived filename in
 plaintext. Its Markdown body is an authenticated, ASCII-armored age envelope.
 Encryption therefore does not conceal titles, tags, filenames, or other YAML

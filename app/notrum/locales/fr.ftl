@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = Assistant IA
+AiDescription = Une connexion et trois profils partagés par tous les espaces de travail et moteurs.
+AiConnect = Connectez un fournisseur
+AiModels = Choisissez les modèles par tâche
+AiConnectFirst = Connectez d’abord un fournisseur pour configurer les modèles.
+AiKeyLabel = Clé API
+AiPasteCredential = Collez votre clé API
+AiDetectHint = OpenAI ou Anthropic est détecté à partir de la clé.
+AiKeyStorage = La clé est conservée dans le gestionnaire d’identifiants du système. La vérification consulte uniquement le catalogue des modèles.
+AiVerify = Vérifier et enregistrer
+AiKeySaved = Clé enregistrée
+AiEdit = Modifier
+AiCollapse = Réduire
+AiDisconnect = Supprimer la clé et les profils
+AiRefreshModels = Actualiser les modèles
+AiLastChecked = Catalogue vérifié : { $value }
+AiRevealCredential = Afficher la clé
+AiConcealCredential = Masquer la clé
+AiPaste = Coller
+AiSmall = Tâches simples
+AiMedium = Tâches courantes
+AiLarge = Tâches complexes
+AiNotConfigured = Non configuré
+AiProgress = { $count } sur 3 configurés
+AiModelLabel = Modèle
+AiChooseModel = Choisissez un modèle
+AiSearchModels = Rechercher des modèles
+AiEffortLabel = Profondeur de raisonnement · Effort
+AiChooseEffort = Choisissez l’effort
+AiManaged = Géré par le modèle
+AiEffortHint = Un effort accru peut améliorer le raisonnement, mais demande plus de temps et de tokens.
+AiEffortReset = L’effort précédent est indisponible pour ce modèle. Choisissez un autre niveau.
+AiProviderChange = Enregistrer un autre fournisseur effacera les trois profils.
+AiWorking = Traitement…
+AiKeyFormat = Format de clé inconnu. Utilisez une clé API OpenAI ou Anthropic.
+AiUnauthorized = Le fournisseur a refusé cette clé. Vérifiez-la et réessayez.
+AiForbidden = Cette clé ne peut pas accéder au catalogue. Vérifiez ses autorisations.
+AiRateLimited = Le fournisseur limite les requêtes. Réessayez plus tard.
+AiNetworkError = Impossible de joindre le fournisseur. Vérifiez la connexion et réessayez.
+AiResponseError = La réponse du catalogue est invalide ou dépasse les limites prises en charge.
+AiNoModels = Aucun modèle de texte compatible n’est disponible pour cette clé.
+AiUnavailable = Modèle indisponible : modifiez ce profil
+AiCredentialsError = Impossible d’accéder au gestionnaire d’identifiants. Déverrouillez-le et réessayez ; la clé n’a pas été enregistrée dans un fichier.
+AiSettingsError = Impossible d’enregistrer les réglages, ou ils ont changé dans une autre fenêtre. Rouvrez cette section.
+AiCleanupError = Certaines anciennes clés n’ont pas pu être supprimées. Réessayez.
+AiRetryCleanup = Réessayer la suppression des clés
+
 CreateOpen = Créer et ouvrir
 Open = Ouvrir
 WorkspaceReady = L'espace de travail est prêt à s'ouvrir.

@@ -63,8 +63,10 @@ def main() -> int:
                 line_number = text.count("\n", 0, match.start()) + 1
                 fail(f"{relative}:{line_number}: forbidden {label}")
                 errors += 1
-        if re.search(r"\bureq::", text) and relative.parts[:2] != ("crates", "notrum-rss"):
-            fail(f"{relative}: ureq is restricted to crates/notrum-rss")
+        if re.search(r"\bureq::", text) and relative.parts[:2] not in (
+            ("crates", "notrum-rss"), ("crates", "notrum-ai")
+        ):
+            fail(f"{relative}: ureq is restricted to RSS and AI transport crates")
             errors += 1
         if re.search(r"\bwebbrowser::", text) and relative.parts[:2] != ("crates", "notrum-rss"):
             fail(f"{relative}: browser handoff is restricted to crates/notrum-rss")
@@ -78,10 +80,16 @@ def main() -> int:
             line_number = text.count("\n", 0, match.start()) + 1
             fail(f"{relative}:{line_number}: forbidden direct dependency")
             errors += 1
-        if re.search(r"^\s*(?:ureq|webbrowser)\s*=", text, re.MULTILINE) and relative != Path(
-            "crates/notrum-rss/Cargo.toml"
+        if re.search(r"^\s*ureq\s*=", text, re.MULTILINE) and relative not in (
+            Path("crates/notrum-rss/Cargo.toml"), Path("crates/notrum-ai/Cargo.toml")
         ):
-            fail(f"{relative}: RSS transport/opener dependency crosses its engine boundary")
+            fail(f"{relative}: HTTP dependency crosses the RSS/AI transport boundary")
+            errors += 1
+        if re.search(r"^\s*webbrowser\s*=", text, re.MULTILINE) and relative != Path("crates/notrum-rss/Cargo.toml"):
+            fail(f"{relative}: browser handoff crosses the RSS boundary")
+            errors += 1
+        if re.search(r"^\s*keyring\s*=", text, re.MULTILINE) and relative != Path("crates/notrum-platform/Cargo.toml"):
+            fail(f"{relative}: credential dependency crosses the platform boundary")
             errors += 1
         if relative.parts[0] == "crates" and re.search(r"^\s*floem\s*=", text, re.MULTILINE):
             fail(f"{relative}: UI dependency crosses a core crate boundary")
@@ -92,7 +100,7 @@ def main() -> int:
     print(
         "SOURCE_AUDIT "
         f"rust_files={len(rust_files)} manifests={len(manifests)} "
-        "project_unsafe=0 rss_https_boundary=1 process_spawn=0 database=0 web_js=0"
+        "project_unsafe=0 rss_https_boundary=1 ai_https_boundary=1 process_spawn=0 database=0 web_js=0"
     )
     return 0
 

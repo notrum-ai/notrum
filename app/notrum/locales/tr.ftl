@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AI asistanı
+AiDescription = Tüm çalışma alanları ve motorlar için ortak bir bağlantı ve üç görev profili.
+AiConnect = Sağlayıcı bağlayın
+AiModels = Görevler için model seçin
+AiConnectFirst = Modelleri ayarlamak için önce bir sağlayıcı bağlayın.
+AiKeyLabel = API anahtarı
+AiPasteCredential = API anahtarınızı yapıştırın
+AiDetectHint = OpenAI veya Anthropic anahtardan algılanır.
+AiKeyStorage = Anahtar sistem kimlik bilgisi deposunda saklanır. Kontrol yalnızca model kataloğunu ister.
+AiVerify = Doğrula ve kaydet
+AiKeySaved = Anahtar kaydedildi
+AiEdit = Düzenle
+AiCollapse = Daralt
+AiDisconnect = Anahtarı ve profilleri sil
+AiRefreshModels = Modelleri yenile
+AiLastChecked = Katalog kontrolü: { $value }
+AiRevealCredential = Anahtarı göster
+AiConcealCredential = Anahtarı gizle
+AiPaste = Yapıştır
+AiSmall = Basit görevler
+AiMedium = Günlük görevler
+AiLarge = Karmaşık görevler
+AiNotConfigured = Ayarlanmadı
+AiProgress = 3 profilden { $count } tanesi ayarlandı
+AiModelLabel = Model
+AiChooseModel = Model seçin
+AiSearchModels = Model ara
+AiEffortLabel = Akıl yürütme derinliği · Effort
+AiChooseEffort = Effort seçin
+AiManaged = Model tarafından yönetilir
+AiEffortHint = Daha yüksek effort akıl yürütmeyi iyileştirebilir, ancak daha fazla zaman ve token gerektirir.
+AiEffortReset = Önceki effort bu modelde kullanılamıyor. Yeni bir düzey seçin.
+AiProviderChange = Farklı bir sağlayıcı kaydedilince üç profil de temizlenir.
+AiWorking = İşleniyor…
+AiKeyFormat = Anahtar biçimi tanınmıyor. OpenAI veya Anthropic API anahtarı kullanın.
+AiUnauthorized = Sağlayıcı anahtarı reddetti. Kontrol edip yeniden deneyin.
+AiForbidden = Anahtar model kataloğuna erişemiyor. İzinlerini kontrol edin.
+AiRateLimited = Sağlayıcı istekleri sınırlıyor. Daha sonra deneyin.
+AiNetworkError = Sağlayıcıya ulaşılamadı. Bağlantıyı kontrol edip yeniden deneyin.
+AiResponseError = Katalog yanıtı geçersiz veya desteklenen sınırları aşıyor.
+AiNoModels = Bu anahtar için desteklenen metin modeli bulunamadı.
+AiUnavailable = Model kullanılamıyor: profili düzenleyin
+AiCredentialsError = Sistem kimlik bilgisi deposuna erişilemedi. Kilidini açıp yeniden deneyin; anahtar dosyaya kaydedilmedi.
+AiSettingsError = AI ayarları kaydedilemedi veya başka pencerede değiştirildi. Bu bölümü yeniden açın.
+AiCleanupError = Bazı eski anahtarlar silinemedi. Silmeyi yeniden deneyin.
+AiRetryCleanup = Anahtar silmeyi yeniden dene
+
 CreateOpen = Oluştur ve aç
 Open = Aç
 WorkspaceReady = Çalışma alanı açılmaya hazır.

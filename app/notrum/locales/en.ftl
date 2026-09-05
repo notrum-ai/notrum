@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AI assistant
+AiDescription = One connection and three task profiles, shared by all workspaces and engines.
+AiConnect = Connect a provider
+AiModels = Choose models for tasks
+AiConnectFirst = Connect a provider first to configure models.
+AiKeyLabel = API key
+AiPasteCredential = Paste your API key
+AiDetectHint = OpenAI or Anthropic is detected from your key.
+AiKeyStorage = The key is kept in your system credential store. Checking only requests the model catalog.
+AiVerify = Verify and save
+AiKeySaved = Key saved
+AiEdit = Edit
+AiCollapse = Collapse
+AiDisconnect = Remove key and profiles
+AiRefreshModels = Refresh models
+AiLastChecked = Catalog checked: { $value }
+AiRevealCredential = Show key
+AiConcealCredential = Hide key
+AiPaste = Paste
+AiSmall = Simple tasks
+AiMedium = Everyday tasks
+AiLarge = Complex tasks
+AiNotConfigured = Not configured
+AiProgress = Configured { $count } of 3
+AiModelLabel = Model
+AiChooseModel = Choose a model
+AiSearchModels = Search models
+AiEffortLabel = Reasoning depth · Effort
+AiChooseEffort = Choose effort
+AiManaged = Managed by the model
+AiEffortHint = Higher effort can improve reasoning, but takes more time and tokens.
+AiEffortReset = The previous effort is unavailable for this model. Choose a new level.
+AiProviderChange = Saving a different provider will clear all three profiles.
+AiWorking = Working…
+AiKeyFormat = The key format is not recognized. Use an OpenAI or Anthropic API key.
+AiUnauthorized = The provider rejected this key. Check it and try again.
+AiForbidden = This key cannot access the model catalog. Check its permissions.
+AiRateLimited = The provider is limiting requests. Try again later.
+AiNetworkError = Could not reach the provider. Check your connection and retry.
+AiResponseError = The model catalog response is invalid or exceeds the supported limits.
+AiNoModels = No supported text models are available for this key.
+AiUnavailable = Model unavailable — edit this profile
+AiCredentialsError = Could not access the system credential store. Unlock it and retry; the key was not saved to a file.
+AiSettingsError = Could not save AI settings or they changed in another window. Reopen this section and retry.
+AiCleanupError = Some old keys could not be removed from the system credential store. Retry removal.
+AiRetryCleanup = Retry key removal
+
 CreateOpen = Create and open
 Open = Open
 WorkspaceReady = The workspace is ready to open.

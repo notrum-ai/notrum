@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = KI-Assistent
+AiDescription = Eine Verbindung und drei Aufgabenprofile für alle Arbeitsbereiche und Engines.
+AiConnect = Anbieter verbinden
+AiModels = Modelle für Aufgaben auswählen
+AiConnectFirst = Verbinden Sie zuerst einen Anbieter, um Modelle einzurichten.
+AiKeyLabel = API-Schlüssel
+AiPasteCredential = API-Schlüssel einfügen
+AiDetectHint = OpenAI oder Anthropic wird anhand des Schlüssels erkannt.
+AiKeyStorage = Der Schlüssel liegt im Anmeldedatenspeicher des Systems. Die Prüfung ruft nur den Modellkatalog ab.
+AiVerify = Prüfen und speichern
+AiKeySaved = Schlüssel gespeichert
+AiEdit = Bearbeiten
+AiCollapse = Einklappen
+AiDisconnect = Schlüssel und Profile entfernen
+AiRefreshModels = Modelle aktualisieren
+AiLastChecked = Katalog geprüft: { $value }
+AiRevealCredential = Schlüssel anzeigen
+AiConcealCredential = Schlüssel verbergen
+AiPaste = Einfügen
+AiSmall = Einfache Aufgaben
+AiMedium = Alltägliche Aufgaben
+AiLarge = Komplexe Aufgaben
+AiNotConfigured = Nicht eingerichtet
+AiProgress = { $count } von 3 eingerichtet
+AiModelLabel = Modell
+AiChooseModel = Modell auswählen
+AiSearchModels = Modelle suchen
+AiEffortLabel = Denktiefe · Effort
+AiChooseEffort = Effort auswählen
+AiManaged = Vom Modell gesteuert
+AiEffortHint = Höherer Effort kann das Denken verbessern, benötigt aber mehr Zeit und Tokens.
+AiEffortReset = Der bisherige Effort ist für dieses Modell nicht verfügbar. Wählen Sie eine neue Stufe.
+AiProviderChange = Das Speichern eines anderen Anbieters setzt alle drei Profile zurück.
+AiWorking = Wird bearbeitet…
+AiKeyFormat = Unbekanntes Schlüsselformat. Verwenden Sie einen API-Schlüssel von OpenAI oder Anthropic.
+AiUnauthorized = Der Anbieter hat den Schlüssel abgelehnt. Prüfen Sie ihn und versuchen Sie es erneut.
+AiForbidden = Dieser Schlüssel hat keinen Katalogzugriff. Prüfen Sie seine Berechtigungen.
+AiRateLimited = Der Anbieter begrenzt Anfragen. Versuchen Sie es später erneut.
+AiNetworkError = Anbieter nicht erreichbar. Prüfen Sie die Verbindung und versuchen Sie es erneut.
+AiResponseError = Die Katalogantwort ist ungültig oder überschreitet die unterstützten Grenzen.
+AiNoModels = Für diesen Schlüssel sind keine unterstützten Textmodelle verfügbar.
+AiUnavailable = Modell nicht verfügbar: Profil bearbeiten
+AiCredentialsError = Kein Zugriff auf den Anmeldedatenspeicher. Entsperren Sie ihn und versuchen Sie es erneut; der Schlüssel wurde nicht in einer Datei gespeichert.
+AiSettingsError = Einstellungen konnten nicht gespeichert werden oder wurden in einem anderen Fenster geändert. Öffnen Sie diesen Bereich erneut.
+AiCleanupError = Einige alte Schlüssel konnten nicht entfernt werden. Wiederholen Sie den Vorgang.
+AiRetryCleanup = Schlüsselentfernung wiederholen
+
 CreateOpen = Erstellen und öffnen
 Open = Öffnen
 WorkspaceReady = Der Arbeitsbereich kann nun geöffnet werden.

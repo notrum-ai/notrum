@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = Asisten AI
+AiDescription = Satu koneksi dan tiga profil tugas untuk semua ruang kerja dan mesin.
+AiConnect = Hubungkan penyedia
+AiModels = Pilih model untuk tugas
+AiConnectFirst = Hubungkan penyedia terlebih dahulu untuk mengatur model.
+AiKeyLabel = Kunci API
+AiPasteCredential = Tempel kunci API
+AiDetectHint = OpenAI atau Anthropic dideteksi dari kunci.
+AiKeyStorage = Kunci disimpan di penyimpanan kredensial sistem. Pemeriksaan hanya meminta katalog model.
+AiVerify = Periksa dan simpan
+AiKeySaved = Kunci tersimpan
+AiEdit = Ubah
+AiCollapse = Ciutkan
+AiDisconnect = Hapus kunci dan profil
+AiRefreshModels = Perbarui model
+AiLastChecked = Katalog diperiksa: { $value }
+AiRevealCredential = Tampilkan kunci
+AiConcealCredential = Sembunyikan kunci
+AiPaste = Tempel
+AiSmall = Tugas sederhana
+AiMedium = Tugas sehari-hari
+AiLarge = Tugas kompleks
+AiNotConfigured = Belum diatur
+AiProgress = { $count } dari 3 diatur
+AiModelLabel = Model
+AiChooseModel = Pilih model
+AiSearchModels = Cari model
+AiEffortLabel = Kedalaman penalaran · Effort
+AiChooseEffort = Pilih effort
+AiManaged = Dikelola oleh model
+AiEffortHint = Effort lebih tinggi dapat meningkatkan penalaran, tetapi membutuhkan lebih banyak waktu dan token.
+AiEffortReset = Effort sebelumnya tidak tersedia untuk model ini. Pilih tingkat baru.
+AiProviderChange = Menyimpan penyedia lain akan mengosongkan ketiga profil.
+AiWorking = Memproses…
+AiKeyFormat = Format kunci tidak dikenali. Gunakan kunci API OpenAI atau Anthropic.
+AiUnauthorized = Penyedia menolak kunci ini. Periksa dan coba lagi.
+AiForbidden = Kunci ini tidak dapat mengakses katalog. Periksa izinnya.
+AiRateLimited = Penyedia membatasi permintaan. Coba lagi nanti.
+AiNetworkError = Tidak dapat menghubungi penyedia. Periksa koneksi dan coba lagi.
+AiResponseError = Respons katalog tidak valid atau melebihi batas yang didukung.
+AiNoModels = Tidak ada model teks yang didukung untuk kunci ini.
+AiUnavailable = Model tidak tersedia: ubah profil
+AiCredentialsError = Tidak dapat mengakses kredensial sistem. Buka kuncinya dan coba lagi; kunci API tidak disimpan ke berkas.
+AiSettingsError = Pengaturan AI gagal disimpan atau berubah di jendela lain. Buka ulang bagian ini.
+AiCleanupError = Beberapa kunci lama gagal dihapus dari penyimpanan sistem. Coba lagi.
+AiRetryCleanup = Coba hapus kunci lagi
+
 CreateOpen = Buat dan buka
 Open = Buka
 WorkspaceReady = Ruang kerja siap dibuka.

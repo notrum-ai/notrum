@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AI सहायक
+AiDescription = सभी कार्यस्थानों और इंजन के लिए एक कनेक्शन और तीन साझा कार्य प्रोफ़ाइल।
+AiConnect = प्रदाता जोड़ें
+AiModels = कार्यों के लिए मॉडल चुनें
+AiConnectFirst = मॉडल सेट करने के लिए पहले प्रदाता जोड़ें।
+AiKeyLabel = API कुंजी
+AiPasteCredential = API कुंजी पेस्ट करें
+AiDetectHint = कुंजी से OpenAI या Anthropic की पहचान होती है।
+AiKeyStorage = कुंजी सिस्टम के क्रेडेंशियल भंडार में रहती है। जाँच केवल मॉडल सूची माँगती है।
+AiVerify = जाँचें और सहेजें
+AiKeySaved = कुंजी सहेजी गई
+AiEdit = बदलें
+AiCollapse = समेटें
+AiDisconnect = कुंजी और प्रोफ़ाइल हटाएँ
+AiRefreshModels = मॉडल ताज़ा करें
+AiLastChecked = सूची की जाँच: { $value }
+AiRevealCredential = कुंजी दिखाएँ
+AiConcealCredential = कुंजी छिपाएँ
+AiPaste = पेस्ट करें
+AiSmall = सरल कार्य
+AiMedium = रोज़मर्रा के कार्य
+AiLarge = जटिल कार्य
+AiNotConfigured = सेट नहीं है
+AiProgress = 3 में से { $count } सेट हैं
+AiModelLabel = मॉडल
+AiChooseModel = मॉडल चुनें
+AiSearchModels = मॉडल खोजें
+AiEffortLabel = तर्क की गहराई · Effort
+AiChooseEffort = प्रयास स्तर चुनें
+AiManaged = मॉडल द्वारा नियंत्रित
+AiEffortHint = अधिक प्रयास तर्क में सुधार कर सकता है, लेकिन अधिक समय और टोकन लेता है।
+AiEffortReset = पिछला प्रयास स्तर इस मॉडल के लिए उपलब्ध नहीं है। नया स्तर चुनें।
+AiProviderChange = दूसरा प्रदाता सहेजने पर तीनों प्रोफ़ाइल खाली हो जाएँगी।
+AiWorking = काम जारी है…
+AiKeyFormat = कुंजी का प्रारूप पहचाना नहीं गया। OpenAI या Anthropic की API कुंजी इस्तेमाल करें।
+AiUnauthorized = प्रदाता ने कुंजी अस्वीकार की। जाँचकर फिर कोशिश करें।
+AiForbidden = इस कुंजी से मॉडल सूची नहीं मिल सकती। अनुमतियाँ जाँचें।
+AiRateLimited = प्रदाता अनुरोध सीमित कर रहा है। बाद में कोशिश करें।
+AiNetworkError = प्रदाता से संपर्क नहीं हो सका। कनेक्शन जाँचकर फिर कोशिश करें।
+AiResponseError = मॉडल सूची का उत्तर अमान्य है या समर्थित सीमा से बड़ा है।
+AiNoModels = इस कुंजी के लिए कोई समर्थित टेक्स्ट मॉडल उपलब्ध नहीं है।
+AiUnavailable = मॉडल उपलब्ध नहीं है: प्रोफ़ाइल बदलें
+AiCredentialsError = सिस्टम क्रेडेंशियल भंडार नहीं खुल सका। अनलॉक करके फिर कोशिश करें; कुंजी फ़ाइल में नहीं सहेजी गई।
+AiSettingsError = AI सेटिंग सहेजी नहीं जा सकीं या दूसरी विंडो में बदल गईं। यह अनुभाग फिर खोलें।
+AiCleanupError = कुछ पुरानी कुंजियाँ हटाई नहीं जा सकीं। फिर कोशिश करें।
+AiRetryCleanup = कुंजियाँ हटाने का फिर प्रयास करें
+
 CreateOpen = बनाएं और खोलें
 Open = खोलें
 WorkspaceReady = कार्यक्षेत्र खुलने के लिए तैयार है.

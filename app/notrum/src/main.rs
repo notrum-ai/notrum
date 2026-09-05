@@ -4,6 +4,8 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]
 
+mod ai_service;
+mod ai_settings;
 mod crash_dialog;
 mod editor_geometry;
 mod i18n;
@@ -5201,6 +5203,7 @@ fn settings_page_view(
     close_settings: Rc<dyn Fn()>,
     palette: Palette,
 ) -> impl IntoView {
+    let ai_content = ai_settings::page(signals, global_settings_store.clone(), palette);
     let language_feedback = create_rw_signal(None::<i18n::Message>);
     let language_picker =
         floem::views::dropdown::Dropdown::new(i18n::current, Locale::ALL.iter().copied())
@@ -5294,6 +5297,7 @@ fn settings_page_view(
     let close_action = close_settings.clone();
     let general_navigation_model = model.clone();
     let encryption_navigation_model = model.clone();
+    let ai_navigation_model = model.clone();
     let navigation = v_stack((
         h_stack((
             icon_button(
@@ -5372,6 +5376,30 @@ fn settings_page_view(
                 })
                 .color(palette.sidebar_ink)
                 .border_radius(6.0)
+        }),
+        reliable_button(h_stack((
+            svg(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></svg>"#).style(|style| style.size(16.0,16.0)),
+            label(move || tr!(AiAssistant)).style(|style| style.selectable(false)),
+        )).style(|style| rtl_row(style).items_center().gap(10.0)), move || {
+            if !password_change_busy(&ai_navigation_model.borrow()) {
+                signals.section.set(SettingsSection::Ai);
+            }
+        })
+        .style(move |style| {
+            rtl_row(style)
+                .width_full()
+                .height(38.0)
+                .items_center()
+                .padding_horiz(11.0)
+                .font_size(13.5)
+                .border_radius(6.0)
+                .color(palette.sidebar_ink)
+                .background(if signals.section.get() == SettingsSection::Ai {
+                    palette.sidebar_active
+                } else {
+                    Color::TRANSPARENT
+                })
+                .focus(|style| style.border(1.0).border_color(palette.accent))
         }),
         empty().style(|style| style.flex_grow(1.0)),
     ))
@@ -5541,6 +5569,13 @@ fn settings_page_view(
 
     let encryption_content = encryption_settings_view(signals, model, revision, palette);
     let content = stack((
+        ai_content.style(move |style| {
+            if signals.section.get() == SettingsSection::Ai {
+                style
+            } else {
+                style.hide()
+            }
+        }),
         general_content.style(move |style| {
             if signals.section.get() == SettingsSection::General {
                 style
@@ -10311,6 +10346,7 @@ struct SettingsFeedback {
 enum SettingsSection {
     General,
     Encryption,
+    Ai,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

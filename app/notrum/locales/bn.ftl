@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AI সহকারী
+AiDescription = সব কর্মক্ষেত্র ও ইঞ্জিনের জন্য একটি সংযোগ ও তিনটি ভাগ করা কাজের প্রোফাইল।
+AiConnect = প্রদানকারী যুক্ত করুন
+AiModels = কাজের জন্য মডেল বাছুন
+AiConnectFirst = মডেল সেট করতে আগে প্রদানকারী যুক্ত করুন।
+AiKeyLabel = API কী
+AiPasteCredential = API কী পেস্ট করুন
+AiDetectHint = কী থেকে OpenAI বা Anthropic শনাক্ত হয়।
+AiKeyStorage = কী সিস্টেমের পরিচয়পত্র ভান্ডারে থাকে। যাচাই শুধু মডেল তালিকা চায়।
+AiVerify = যাচাই ও সংরক্ষণ
+AiKeySaved = কী সংরক্ষিত
+AiEdit = সম্পাদনা
+AiCollapse = গুটিয়ে নিন
+AiDisconnect = কী ও প্রোফাইল মুছুন
+AiRefreshModels = মডেল হালনাগাদ করুন
+AiLastChecked = তালিকা যাচাই: { $value }
+AiRevealCredential = কী দেখান
+AiConcealCredential = কী লুকান
+AiPaste = পেস্ট
+AiSmall = সহজ কাজ
+AiMedium = দৈনন্দিন কাজ
+AiLarge = জটিল কাজ
+AiNotConfigured = সেট করা হয়নি
+AiProgress = ৩টির মধ্যে { $count }টি সেট হয়েছে
+AiModelLabel = মডেল
+AiChooseModel = মডেল বাছুন
+AiSearchModels = মডেল খুঁজুন
+AiEffortLabel = যুক্তির গভীরতা · Effort
+AiChooseEffort = প্রচেষ্টার স্তর বাছুন
+AiManaged = মডেল নিয়ন্ত্রণ করে
+AiEffortHint = বেশি প্রচেষ্টা যুক্তি উন্নত করতে পারে, তবে বেশি সময় ও টোকেন লাগে।
+AiEffortReset = আগের প্রচেষ্টার স্তর এই মডেলে নেই। নতুন স্তর বাছুন।
+AiProviderChange = অন্য প্রদানকারী সংরক্ষণ করলে তিনটি প্রোফাইলই খালি হবে।
+AiWorking = কাজ চলছে…
+AiKeyFormat = কী-এর ধরন অজানা। OpenAI বা Anthropic-এর API কী ব্যবহার করুন।
+AiUnauthorized = প্রদানকারী কী প্রত্যাখ্যান করেছে। যাচাই করে আবার চেষ্টা করুন।
+AiForbidden = এই কী দিয়ে মডেল তালিকা দেখা যায় না। অনুমতি যাচাই করুন।
+AiRateLimited = প্রদানকারী অনুরোধ সীমিত করছে। পরে চেষ্টা করুন।
+AiNetworkError = প্রদানকারীর সঙ্গে সংযোগ হয়নি। সংযোগ যাচাই করে আবার চেষ্টা করুন।
+AiResponseError = মডেল তালিকার উত্তর অবৈধ বা সমর্থিত সীমার বেশি।
+AiNoModels = এই কী-এর জন্য কোনো সমর্থিত টেক্সট মডেল নেই।
+AiUnavailable = মডেল অনুপলব্ধ: প্রোফাইল সম্পাদনা করুন
+AiCredentialsError = সিস্টেমের পরিচয়পত্র ভান্ডার খোলা যায়নি। আনলক করে আবার চেষ্টা করুন; কী ফাইলে রাখা হয়নি।
+AiSettingsError = AI সেটিং সংরক্ষণ হয়নি বা অন্য উইন্ডোতে বদলেছে। এই বিভাগ আবার খুলুন।
+AiCleanupError = কিছু পুরোনো কী মুছে ফেলা যায়নি। আবার চেষ্টা করুন।
+AiRetryCleanup = কী মুছতে আবার চেষ্টা করুন
+
 CreateOpen = তৈরি করুন এবং খুলুন
 Open = খুলুন
 WorkspaceReady = ওয়ার্কস্পেস খোলার জন্য প্রস্তুত।

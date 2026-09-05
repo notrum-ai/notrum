@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AI 助理
+AiDescription = 所有工作區與引擎共用一個連線及三個任務設定。
+AiConnect = 連接服務商
+AiModels = 為任務選擇模型
+AiConnectFirst = 請先連接服務商，再設定模型。
+AiKeyLabel = API 金鑰
+AiPasteCredential = 貼上 API 金鑰
+AiDetectHint = 根據金鑰自動識別 OpenAI 或 Anthropic。
+AiKeyStorage = 金鑰儲存在系統認證儲存庫中。驗證僅請求模型目錄。
+AiVerify = 驗證並儲存
+AiKeySaved = 金鑰已儲存
+AiEdit = 修改
+AiCollapse = 收合
+AiDisconnect = 刪除金鑰與設定
+AiRefreshModels = 重新整理模型
+AiLastChecked = 目錄驗證時間：{ $value }
+AiRevealCredential = 顯示金鑰
+AiConcealCredential = 隱藏金鑰
+AiPaste = 貼上
+AiSmall = 簡單任務
+AiMedium = 日常任務
+AiLarge = 複雜任務
+AiNotConfigured = 未設定
+AiProgress = 已設定 { $count } / 3
+AiModelLabel = 模型
+AiChooseModel = 選擇模型
+AiSearchModels = 搜尋模型
+AiEffortLabel = 推理深度 · Effort
+AiChooseEffort = 選擇推理強度
+AiManaged = 由模型管理
+AiEffortHint = 提高推理強度可能改善推理，但需要更多時間與 Token。
+AiEffortReset = 此模型不支援之前的推理強度，請重新選擇。
+AiProviderChange = 儲存其他服務商將清空全部三個設定。
+AiWorking = 處理中…
+AiKeyFormat = 無法識別金鑰格式，請使用 OpenAI 或 Anthropic 的 API 金鑰。
+AiUnauthorized = 服務商拒絕了此金鑰，請檢查後重試。
+AiForbidden = 此金鑰無法存取模型目錄，請檢查權限。
+AiRateLimited = 服務商正在限制請求，請稍後重試。
+AiNetworkError = 無法連接服務商，請檢查網路後重試。
+AiResponseError = 模型目錄回應無效或超出支援的限制。
+AiNoModels = 此金鑰沒有可用的受支援文字模型。
+AiUnavailable = 模型無法使用，請修改設定
+AiCredentialsError = 無法存取系統認證儲存庫，請解鎖後重試；金鑰未寫入檔案。
+AiSettingsError = 無法儲存 AI 設定，或設定已在其他視窗中變更。請重新開啟此頁面。
+AiCleanupError = 部分舊金鑰無法從系統認證儲存庫刪除，請重試。
+AiRetryCleanup = 重試刪除金鑰
+
 CreateOpen = 創建並打開
 Open = 打開
 WorkspaceReady = 工作區已準備好開啟。

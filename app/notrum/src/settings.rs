@@ -30,6 +30,8 @@ pub(crate) struct GlobalSettings {
     #[serde(default)]
     pub(crate) locale: Locale,
     pub(crate) last_workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "notrum_ai::AiSettings::is_empty")]
+    pub(crate) ai: notrum_ai::AiSettings,
     #[serde(flatten)]
     pub(crate) additional: BTreeMap<String, serde_json::Value>,
 }
@@ -40,6 +42,7 @@ impl Default for GlobalSettings {
             version: SETTINGS_VERSION,
             locale: Locale::default(),
             last_workspace: None,
+            ai: notrum_ai::AiSettings::default(),
             additional: BTreeMap::new(),
         }
     }
@@ -66,6 +69,37 @@ pub(crate) struct GlobalSettingsStore {
 }
 
 impl GlobalSettingsStore {
+    pub(crate) fn ai(&self) -> notrum_ai::AiSettings {
+        self.settings.ai.clone()
+    }
+
+    pub(crate) fn home(&self) -> Option<PathBuf> {
+        self.home.clone()
+    }
+
+    pub(crate) fn set_ai(
+        &mut self,
+        expected: &notrum_ai::AiSettings,
+        wanted: notrum_ai::AiSettings,
+    ) -> Result<(), SettingsError> {
+        let home = self
+            .home
+            .as_deref()
+            .ok_or_else(|| SettingsError::UnsafePath("global settings unavailable".into()))?;
+        let _operation = notrum_platform::OperationLock::directory(home)?;
+        let loaded = Self::load(Some(home));
+        if loaded.diagnostic.is_some() || &loaded.settings.ai != expected {
+            return Err(SettingsError::UnsafePath(
+                "AI settings changed or could not be read; reopen settings".into(),
+            ));
+        }
+        let mut settings = loaded.settings;
+        settings.ai = wanted;
+        atomic_write_global_settings(home, &settings)?;
+        self.settings = settings;
+        Ok(())
+    }
+
     pub(crate) fn locale(&self) -> Locale {
         self.settings.locale
     }

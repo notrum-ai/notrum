@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/notrum-ai",
     "app/notrum",
     "crates/notrum-core",
     "crates/notrum-editor",

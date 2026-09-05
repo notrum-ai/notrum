@@ -24,7 +24,7 @@ endif
 UI_JOBS ?= 2
 
 UI_ACCEPTANCE_STANDARD := ui-click-external ui-click-localization ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
-UI_ACCEPTANCE_SECURE := ui-click-crash ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
+UI_ACCEPTANCE_SECURE := ui-click-ai ui-click-crash ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
 
 .PHONY: all help check clean build build-windows test-windows-build build-macos build-linux build-linux-smoke build-container native-smoke native-external-smoke demo-data test-demo-data check-macos test test-release lint fmt fmt-check lock tree audit audit-source audit-dependencies audit-vulnerabilities \
 	diff-check status log diff-stat diff image benchmark-generate \
@@ -222,19 +222,19 @@ ui-build-test-utils:
 	$(RUN) cargo build -q -p notrum-app --features test-utils
 
 ui-smoke: ui-build
-	$(RUN) sh -c 'set -eu; workspace=$$(mktemp -d); python3 -B tools/generate_demo_data.py "$$workspace"; runtime=/tmp/notrum-xdg; mkdir -p "$$runtime"; chmod 700 "$$runtime"; Xvfb :99 -screen 0 1240x800x24 >/tmp/notrum-xvfb.log 2>&1 & server=$$!; trap "kill $$server 2>/dev/null || true" EXIT; attempt=0; until [ -S /tmp/.X11-unix/X99 ]; do attempt=$$((attempt + 1)); if ! kill -0 "$$server" 2>/dev/null || [ "$$attempt" -ge 50 ]; then cat /tmp/notrum-xvfb.log; exit 1; fi; sleep 0.1; done; export DISPLAY=:99 XDG_RUNTIME_DIR="$$runtime" FLOEM_FORCE_TINY_SKIA=1; /var/cache/notrum/target/debug/notrum-app "$$workspace" --smoke-exit-ms 1800'
+	$(RUN) python3 -B tools/desktop_smoke.py launch
 
 ui-autosave-smoke: ui-build
-	$(RUN) sh -c 'set -eu; workspace=$$(mktemp -d); python3 -B tools/generate_demo_data.py "$$workspace"; runtime=/tmp/notrum-xdg; mkdir -p "$$runtime"; chmod 700 "$$runtime"; Xvfb :99 -screen 0 1240x800x24 >/tmp/notrum-xvfb.log 2>&1 & server=$$!; trap "kill $$server 2>/dev/null || true" EXIT; attempt=0; until [ -S /tmp/.X11-unix/X99 ]; do attempt=$$((attempt + 1)); if ! kill -0 "$$server" 2>/dev/null || [ "$$attempt" -ge 50 ]; then cat /tmp/notrum-xvfb.log; exit 1; fi; sleep 0.1; done; export DISPLAY=:99 XDG_RUNTIME_DIR="$$runtime" FLOEM_FORCE_TINY_SKIA=1; /var/cache/notrum/target/debug/notrum-app "$$workspace" --smoke-autosave --smoke-exit-ms 2500; saved="$$workspace/notes/[notrum autosave smoke].md"; test ! -e "$$workspace/notes/Project Alpha.md"; grep -F "[notrum autosave smoke]" "$$saved"'
+	$(RUN) python3 -B tools/desktop_smoke.py autosave
 
 ui-recovery-smoke: ui-build
-	$(RUN) sh -c 'set -eu; workspace=$$(mktemp -d); python3 -B tools/generate_demo_data.py "$$workspace"; runtime=/tmp/notrum-xdg; mkdir -p "$$runtime"; chmod 700 "$$runtime"; Xvfb :99 -screen 0 1240x800x24 >/tmp/notrum-xvfb.log 2>&1 & server=$$!; trap "kill $$server 2>/dev/null || true" EXIT; attempt=0; until [ -S /tmp/.X11-unix/X99 ]; do attempt=$$((attempt + 1)); if ! kill -0 "$$server" 2>/dev/null || [ "$$attempt" -ge 50 ]; then cat /tmp/notrum-xvfb.log; exit 1; fi; sleep 0.1; done; export DISPLAY=:99 XDG_RUNTIME_DIR="$$runtime" FLOEM_FORCE_TINY_SKIA=1; /var/cache/notrum/target/debug/notrum-app "$$workspace" --smoke-autosave --smoke-exit-ms 500; if grep -F "[notrum autosave smoke]" "$$workspace/notes/Project Alpha.md"; then exit 1; fi; test -n "$$(find "$$workspace/.notrum/recovery" -name "*.nrrec" -type f -print -quit)"; /var/cache/notrum/target/debug/notrum-app "$$workspace" --smoke-restore --smoke-exit-ms 2500; grep -F "[notrum autosave smoke]" "$$workspace/notes/Project Alpha.md"; test -z "$$(find "$$workspace/.notrum/recovery" -name "*.nrrec" -type f -print -quit)"'
+	$(RUN) python3 -B tools/desktop_smoke.py recovery
 
 ui-conflict-smoke: ui-build
-	$(RUN) sh -c 'set -eu; workspace=$$(mktemp -d); python3 -B tools/generate_demo_data.py "$$workspace"; cp "$$workspace/notes/Reading List.md" "$$workspace/external.md"; runtime=/tmp/notrum-xdg; mkdir -p "$$runtime"; chmod 700 "$$runtime"; Xvfb :99 -screen 0 1240x800x24 >/tmp/notrum-xvfb.log 2>&1 & server=$$!; trap "kill $$server 2>/dev/null || true" EXIT; attempt=0; until [ -S /tmp/.X11-unix/X99 ]; do attempt=$$((attempt + 1)); if ! kill -0 "$$server" 2>/dev/null || [ "$$attempt" -ge 50 ]; then cat /tmp/notrum-xvfb.log; exit 1; fi; sleep 0.1; done; export DISPLAY=:99 XDG_RUNTIME_DIR="$$runtime" FLOEM_FORCE_TINY_SKIA=1; /var/cache/notrum/target/debug/notrum-app "$$workspace" --smoke-autosave --smoke-exit-ms 1800 & app=$$!; sleep 0.5; cp "$$workspace/external.md" "$$workspace/notes/Project Alpha.md"; wait $$app; cmp -s "$$workspace/external.md" "$$workspace/notes/Project Alpha.md"; test -n "$$(find "$$workspace/.notrum/recovery" -name "*.nrrec" -type f -print -quit)"'
+	$(RUN) python3 -B tools/desktop_smoke.py conflict
 
 ui-operations-smoke: ui-build
-	$(RUN) sh -c 'set -eu; workspace=$$(mktemp -d); python3 -B tools/generate_demo_data.py "$$workspace"; cp "$$workspace/notes/Project Alpha.md" "$$workspace/project-before.md"; runtime=/tmp/notrum-xdg; mkdir -p "$$runtime"; chmod 700 "$$runtime"; Xvfb :99 -screen 0 1240x800x24 >/tmp/notrum-xvfb.log 2>&1 & server=$$!; trap "kill $$server 2>/dev/null || true" EXIT; attempt=0; until [ -S /tmp/.X11-unix/X99 ]; do attempt=$$((attempt + 1)); if ! kill -0 "$$server" 2>/dev/null || [ "$$attempt" -ge 50 ]; then cat /tmp/notrum-xvfb.log; exit 1; fi; sleep 0.1; done; export DISPLAY=:99 XDG_RUNTIME_DIR="$$runtime" FLOEM_FORCE_TINY_SKIA=1; /var/cache/notrum/target/debug/notrum-app "$$workspace" --smoke-operations --smoke-exit-ms 1800; cmp -s "$$workspace/project-before.md" "$$workspace/notes/Project Alpha.md"; test ! -e "$$workspace/notes/Smoke Note.md"; deleted="$$workspace/notes/Smoke Renamed.md"; test -f "$$deleted"; grep -F "title: '\''Smoke Renamed'\''" "$$deleted"; grep -F "  - '\''Smoke'\''" "$$deleted"; grep -F "pinned: true" "$$deleted"; grep -F "favorited: true" "$$deleted"; grep -F "deleted: true" "$$deleted"; test ! -e "$$workspace/.notrum/trash"; test -z "$$(find "$$workspace/notes" -name "*.notrum-tmp-*" -print -quit)"'
+	$(RUN) python3 -B tools/desktop_smoke.py operations
 
 ui-click-creation: ui-build
 	$(RUN) python3 -B tools/ui_acceptance.py creation
@@ -259,6 +259,10 @@ ui-click-localization: ui-build
 
 ui-click-workspace: ui-build
 	$(RUN) python3 -B tools/ui_acceptance.py workspace
+
+.PHONY: ui-click-ai
+ui-click-ai: ui-build-test-utils
+	$(RUN) python3 -B tools/ui_acceptance.py ai
 
 ui-click-compatibility: ui-build
 	$(RUN) python3 -B tools/ui_acceptance.py compatibility

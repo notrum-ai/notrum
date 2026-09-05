@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "credentials")]
+pub mod credentials;
 mod operation_lock;
 pub use operation_lock::OperationLock;
 

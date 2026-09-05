@@ -1,5 +1,29 @@
 # User guide
 
+## AI settings
+
+Open Settings → AI assistant. Paste an OpenAI or Anthropic API key; the provider
+is detected locally. “Verify and save” fetches the model catalog and stores the
+key in the system credential store. This checks catalog access, not generation
+permissions or billing. The connection card then collapses; use Edit to replace
+or remove it, or Refresh models to update the available models.
+
+Configure Small (simple tasks), Medium (everyday tasks), and Large (complex tasks)
+individually. No model or effort is preselected. Search for a model, explicitly
+choose one of its supported effort levels, and Save. Models without an effort
+parameter display “Managed by the model”. Saving one profile never fills another.
+The counter reaches 3 of 3 only when all profiles are valid. Saved profiles
+collapse to a summary and can be edited again. A higher effort may require more
+time and tokens; size labels describe task categories, not effort levels.
+
+Settings apply across workspaces. Switching providers clears the profiles;
+replacing a key with one from the same provider retains the choices, marking
+models unavailable if the new catalog no longer includes them. Network errors
+retain the previous connection. On Linux, unlock the desktop Secret Service if
+key storage fails. No key is written to a settings file.
+
+Assistant commands and text generation will be added separately.
+
 [Back to README](../README.md)
 
 The interface defaults to English, independently of your operating system.

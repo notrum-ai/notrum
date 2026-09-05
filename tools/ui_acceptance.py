@@ -20,6 +20,7 @@ import time
 from typing import Callable
 
 from generate_demo_data import generate_demo_workspace
+from ui_ready import wait_for_first_paint
 
 
 DISPLAY = ":99"
@@ -1046,6 +1047,7 @@ class WindowDriver:
                 f"unexpected Notrum window size: {actual}, expected {expected_size}"
             )
         self.xdotool("windowfocus", "--sync", self.window_id)
+        wait_for_first_paint(self.window_id, self.environment)
 
     def window_size(self) -> tuple[int, int]:
         if self.window_id is None:
@@ -1117,6 +1119,8 @@ class WindowDriver:
         )
 
     def click(self, control: str) -> None:
+        if control.startswith("password_"):
+            self.wait_for_password_dialog()
         self.move_to(control)
         self.xdotool("click", "1")
         time.sleep(EVENT_SETTLE_SECONDS)
@@ -1255,6 +1259,26 @@ class WindowDriver:
         )
         self.click_point(x, y, settle=settle)
 
+    def wait_for_password_dialog(self) -> None:
+        if self.window_id is None:
+            raise AcceptanceFailure("cannot wait for a password dialog without a window")
+
+        def painted() -> bool:
+            # Sample only the modal's outer backdrop and blank left padding.
+            # Return two luminances in memory, never capture passwords/note text.
+            result = run_command(
+                [
+                    "import", "-display", DISPLAY, "-window", self.window_id,
+                    "-crop", "21x1+410+400", "+repage", "-colorspace", "Gray",
+                    "-format", "%[fx:p{0,0}.r] %[fx:p{20,0}.r]", "info:",
+                ],
+                environment=self.environment,
+            )
+            backdrop, padding = map(float, result.stdout.split())
+            return 0.1 < backdrop < 0.85 and padding > 0.95
+
+        wait_until("password dialog paint", painted, interval=0.03)
+
     def type_text(self, text: str) -> None:
         self.xdotool("type", "--clearmodifiers", "--delay", "12", text)
         time.sleep(EVENT_SETTLE_SECONDS)
@@ -1297,13 +1321,19 @@ class WindowDriver:
         if settle:
             time.sleep(EVENT_SETTLE_SECONDS)
 
-    def capture(self, name: str) -> Path:
+    def capture(
+        self, name: str, *, crop: tuple[int, int, int, int] | None = None
+    ) -> Path:
         self._capture_sequence += 1
         screenshot = self.temporary_root / (
             f"{self.scenario}-{self._capture_sequence:03d}-{name}.png"
         )
+        arguments = ["import", "-display", DISPLAY, "-window", "root"]
+        if crop is not None:
+            x, y, width, height = crop
+            arguments.extend(["-crop", f"{width}x{height}+{x}+{y}", "+repage"])
         run_command(
-            ["import", "-display", DISPLAY, "-window", "root", str(screenshot)],
+            [*arguments, str(screenshot)],
             environment=self.environment,
         )
         return screenshot
@@ -1415,14 +1445,19 @@ class WindowDriver:
         crop: tuple[int, int, int, int],
         minimum_pixels: int = 50,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        cropped_reference: bool = False,
     ) -> Path:
-        changed = self.capture("visual-change")
+        # Input-caret checks sample only their small field, avoiding full-window
+        # PNG encoding delays that can repeatedly sample the same blink phase.
+        capture_crop = crop if cropped_reference else None
+        compare_crop = None if cropped_reference else crop
+        changed = self.capture("visual-change", crop=capture_crop)
 
         def differs() -> bool:
             nonlocal changed
             changed.unlink(missing_ok=True)
-            changed = self.capture("visual-change")
-            return image_difference(reference, changed, crop=crop) >= minimum_pixels
+            changed = self.capture("visual-change", crop=capture_crop)
+            return image_difference(reference, changed, crop=compare_crop) >= minimum_pixels
 
         wait_until(description, differs, timeout=timeout, interval=0.05)
         return changed
@@ -1613,13 +1648,15 @@ def assert_focused_input_caret(
     placeholder_color: tuple[int, int, int],
 ) -> None:
     """An empty input must paint its muted placeholder and focused caret."""
-    reference = driver.capture(f"{description}-caret-reference")
+    reference = driver.capture(f"{description}-caret-reference", crop=crop)
 
     def placeholder_is_painted() -> bool:
         nonlocal reference
         reference.unlink(missing_ok=True)
-        reference = driver.capture(f"{description}-caret-reference")
-        return near_color_pixel_count(reference, placeholder_color, crop=crop) >= 8
+        reference = driver.capture(f"{description}-caret-reference", crop=crop)
+        return near_color_pixel_count(
+            reference, placeholder_color, crop=(0, 0, crop[2], crop[3])
+        ) >= 8
 
     wait_until(
         f"{description} muted placeholder paint",
@@ -1633,6 +1670,7 @@ def assert_focused_input_caret(
         crop=crop,
         minimum_pixels=4,
         timeout=2.0,
+        cropped_reference=True,
     )
     changed.unlink(missing_ok=True)
 
@@ -1647,14 +1685,15 @@ def assert_masked_password_caret(
 ) -> None:
     """A masked field must blink its caret on the expected side of its text."""
     crop = password_input_crop(control)
+    local_crop = (0, 0, crop[2], crop[3])
     time.sleep(EVENT_SETTLE_SECONDS * 2)
-    reference = driver.capture(f"{description}-caret-reference")
+    reference = driver.capture(f"{description}-caret-reference", crop=crop)
 
     def text_is_painted() -> bool:
         nonlocal reference
         reference.unlink(missing_ok=True)
-        reference = driver.capture(f"{description}-caret-reference")
-        return len(near_color_columns(reference, text_color, crop=crop)) >= 2
+        reference = driver.capture(f"{description}-caret-reference", crop=crop)
+        return len(near_color_columns(reference, text_color, crop=local_crop)) >= 2
 
     wait_until(
         f"{description} text paint",
@@ -1668,9 +1707,10 @@ def assert_masked_password_caret(
         crop=crop,
         minimum_pixels=4,
         timeout=2.0,
+        cropped_reference=True,
     )
-    text_columns = near_color_columns(reference, text_color, crop=crop)
-    caret_columns = changed_pixel_columns(reference, changed, crop=crop)
+    text_columns = near_color_columns(reference, text_color, crop=local_crop)
+    caret_columns = changed_pixel_columns(reference, changed, crop=local_crop)
     reference.unlink(missing_ok=True)
     changed.unlink(missing_ok=True)
     if not caret_columns:
@@ -2215,7 +2255,7 @@ def protect_selected_note(
     driver.wait_for_stable_frame("workspace toolbar before protection",
                                  crop=(256, 0, 984, 56), stable_for=0.2, timeout=10)
     driver.click("protection")
-    time.sleep(0.2)
+    driver.wait_for_password_dialog()
     if verify_password_caret:
         assert_masked_password_caret(
             driver,
@@ -2267,7 +2307,6 @@ def unlock_selected_note(
     # Its public tags still contribute category rows before All notes.
     counts = {"all": 1, "favorites": 0, **{category: 1 for category in categories}}
     driver.click_note(0, counts=counts, categories=categories)
-    time.sleep(0.2)
     driver.click("password_unlock_primary")
     driver.type_sensitive_text(password)
     driver.key("Return")
@@ -5240,6 +5279,7 @@ def secure_scenario(
 
     locked_counts = {"all": 1, "favorites": 0, tag: 1}
     driver.click_note(0, counts=locked_counts, categories=(tag,))
+    driver.wait_for_password_dialog()
     driver.key("Escape")
     assert_locked_editor_inaccessible(
         driver,
@@ -5256,6 +5296,8 @@ def secure_scenario(
             (105, 112, 121),
             before_text=True,
         )
+    else:
+        driver.click("password_unlock_primary")
     driver.type_sensitive_text(wrong_password)
     before_verification = (
         driver.capture("before-password-verification") if password_dialog_only else None
@@ -5554,6 +5596,8 @@ def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.start_app(secure_workspace, "verify-new-password")
     locked_counts = {"all": 1, "favorites": 0, tag: 1}
     driver.click_note(0, counts=locked_counts, categories=(tag,))
+    driver.wait_for_password_dialog()
+    driver.click_point(760, 385)
     driver.type_sensitive_text(old_password)
     driver.key("Return")
 
@@ -7119,7 +7163,146 @@ def localization_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.close_app()
 
 
+def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
+    """Real native controls with test-only catalog and credential adapters."""
+    original = {path: path.read_bytes() for path in (workspace / "notes").glob("*.md")}
+    config = driver.home / ".notrum.cfg"
+    fixture = {"NOTRUM_TEST_AI": "1"}
+
+    def state() -> dict:
+        return json.loads(config.read_text()).get("ai", {})
+
+    def settle() -> None:
+        driver.wait_for_stable_frame("AI controls", crop=(232, 0, 1008, 800), stable_for=0.6, timeout=10)
+
+    def open_ai() -> None:
+        driver.click("settings")
+        settle()
+        before = driver.capture("before-ai")
+        driver.click_point(90, 203)
+        driver.wait_for_visual_change("AI section", before, crop=(260, 30, 740, 550), timeout=10)
+        settle()
+
+    def primary(x: int = 900) -> None:
+        runs = shaded_row_runs(driver.capture("ai-primary"), x=x, y=0, height=800, max_luminance=150)
+        runs = [(start, end) for start, end in runs if end - start >= 20]
+        if not runs:
+            raise AcceptanceFailure("AI primary action is not enabled")
+        start, end = max(runs, key=lambda run: run[1] - run[0])
+        driver.click_point(x, (start + end) // 2)
+
+    def bounds() -> tuple[int, int]:
+        # Move focus off the search input so its blinking caret does not prevent
+        # exact frame stability. Clicking the current section retains the draft.
+        driver.click_point(90, 203)
+        driver.wheel("down", clicks=12, delay_ms=20)
+        settle()
+        runs = shaded_row_runs(driver.capture("ai-expanded"), x=276, y=0, height=800, max_luminance=150)
+        runs = [(start, end) for start, end in runs if end - start >= 80]
+        if len(runs) != 1:
+            raise AcceptanceFailure(f"expected one expanded AI profile, found {runs}")
+        start, end = runs[0]
+        return start - 7, end + 7
+
+    driver.start_app(workspace, "empty", environment_overrides=fixture)
+    open_ai()
+    if state().get("connection") or state().get("profiles"):
+        raise AcceptanceFailure("AI was configured without explicit input")
+    driver.click_point(460, 239)
+    driver.type_text("sk-proj-abcdefghijklmnopqrstuv")
+    settle()
+    primary()
+    wait_until("verified AI connection", lambda: state().get("connection") is not None)
+    settle()
+    if state().get("profiles"):
+        raise AcceptanceFailure("connecting a key populated AI profiles")
+
+    for index, (size, query, model, effort) in enumerate([
+        ("small", "Luna", "gpt-5.6-luna", "high"),
+        ("medium", "Sol", "gpt-5.6-sol", "max"),
+        ("large", "4.1", "gpt-4.1", None),
+    ]):
+        top, bottom = bounds()
+        # Save is disabled before choosing a model.
+        driver.click_point(324, bottom - 38)
+        settle()
+        if len(state().get("profiles", {})) != index:
+            raise AcceptanceFailure("an empty AI profile was saved")
+        driver.click_point(550, top + 123)
+        top, _ = bounds()
+        driver.click_point(500, top + 167)
+        driver.type_text(query)
+        top, _ = bounds()
+        driver.click_point(400, top + 207)
+        top, bottom = bounds()
+        if effort is not None:
+            driver.click_point(324, bottom - 38)
+            settle()
+            if len(state().get("profiles", {})) != index:
+                raise AcceptanceFailure("effort was selected implicitly")
+            driver.click_point(367, top + 192)
+            settle()
+        primary(345)
+        wait_until(f"explicit {size} profile", lambda: len(state().get("profiles", {})) == index + 1)
+        saved = state()["profiles"][size]
+        if saved != {"model": model, "effort": effort}:
+            raise AcceptanceFailure(f"wrong AI profile: {saved}")
+        settle()
+
+    saved = state()
+    driver.wheel("up", clicks=20, delay_ms=20)
+    settle()
+    complete = driver.capture("ai-complete")
+    if shaded_row_runs(complete, x=276, y=380, height=400, max_luminance=150):
+        raise AcceptanceFailure("completed AI profiles did not collapse")
+    driver.close_app()
+    driver.start_app(workspace, "restart", environment_overrides=fixture)
+    open_ai()
+    if state() != saved:
+        raise AcceptanceFailure("AI profiles changed on restart")
+    # Reopen/edit/cancel repeatedly: queued list updates must not outlive drafts.
+    for _ in range(2):
+        driver.click_point(955, 431)
+        settle()
+        _, bottom = bounds()
+        driver.click_point(390, bottom - 38)
+        settle()
+        driver.wheel("up", clicks=20, delay_ms=20)
+        settle()
+    if state() != saved:
+        raise AcceptanceFailure("cancelling AI edits changed saved profiles")
+
+    driver.resize_window(860, 560)
+    driver.wait_for_stable_frame("AI narrow", crop=(232, 0, 628, 560), stable_for=0.6)
+    driver.resize_window(SCREEN_WIDTH, SCREEN_HEIGHT)
+    driver.close_app()
+    global_settings = json.loads(config.read_text())
+    global_settings["locale"] = "ar"
+    config.write_text(json.dumps(global_settings))
+    driver.start_app(workspace, "rtl", environment_overrides=fixture)
+    driver.click_point(1010, 27)
+    driver.wait_for_stable_frame("RTL settings", stable_for=0.6)
+    driver.click_point(1110, 203)
+    driver.wait_for_stable_frame("RTL AI", stable_for=0.6)
+    driver.resize_window(860, 560)
+    # Window geometry changes before Floem finishes the mirrored layout pass.
+    wait_until("AI RTL sidebar after resize", lambda: near_color_pixel_count(
+        driver.capture("ai-rtl-direction"), (35, 42, 51), crop=(628, 0, 232, 540)
+    ) >= 50000, timeout=10)
+    frame = driver.wait_for_stable_frame("RTL AI narrow", crop=(0, 0, 860, 560), stable_for=0.6)
+    if near_color_pixel_count(frame, (35, 42, 51), crop=(628, 0, 232, 540)) < 50000:
+        raise AcceptanceFailure("AI settings did not preserve RTL navigation")
+    driver.close_app()
+    if any("sk-proj-abcdefghijklmnopqrstuv" in path.read_text(errors="replace") for path in driver.app_log_paths):
+        raise AcceptanceFailure("AI credential reached application diagnostics")
+    if "sk-proj-abcdefghijklmnopqrstuv" in config.read_text():
+        raise AcceptanceFailure("AI credential reached settings")
+    if {path: path.read_bytes() for path in original} != original:
+        raise AcceptanceFailure("AI configuration modified notes")
+
+
 SCENARIOS: dict[str, Callable[[WindowDriver, Path], None]] = {
+    "ai": ai_settings_scenario,
     "localization": localization_scenario,
     "rss_cards": rss_cards_scenario,
     "rss_keyboard": rss_keyboard_scenario,

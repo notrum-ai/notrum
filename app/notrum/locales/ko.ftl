@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AI 어시스턴트
+AiDescription = 모든 작업 공간과 엔진에서 연결 하나와 작업 프로필 세 개를 공유합니다.
+AiConnect = 제공업체 연결
+AiModels = 작업별 모델 선택
+AiConnectFirst = 모델을 설정하려면 먼저 제공업체를 연결하세요.
+AiKeyLabel = API 키
+AiPasteCredential = API 키 붙여넣기
+AiDetectHint = 키에서 OpenAI 또는 Anthropic을 자동으로 감지합니다.
+AiKeyStorage = 키는 시스템 자격 증명 저장소에 보관됩니다. 확인 시 모델 목록만 요청합니다.
+AiVerify = 확인 및 저장
+AiKeySaved = 키 저장됨
+AiEdit = 수정
+AiCollapse = 접기
+AiDisconnect = 키와 프로필 삭제
+AiRefreshModels = 모델 새로 고침
+AiLastChecked = 목록 확인: { $value }
+AiRevealCredential = 키 표시
+AiConcealCredential = 키 숨기기
+AiPaste = 붙여넣기
+AiSmall = 간단한 작업
+AiMedium = 일상 작업
+AiLarge = 복잡한 작업
+AiNotConfigured = 설정되지 않음
+AiProgress = 3개 중 { $count }개 설정됨
+AiModelLabel = 모델
+AiChooseModel = 모델 선택
+AiSearchModels = 모델 검색
+AiEffortLabel = 추론 깊이 · Effort
+AiChooseEffort = 추론 강도 선택
+AiManaged = 모델에서 관리
+AiEffortHint = 추론 강도를 높이면 추론이 개선될 수 있지만 시간과 토큰이 더 필요합니다.
+AiEffortReset = 이 모델에서는 이전 추론 강도를 사용할 수 없습니다. 다른 수준을 선택하세요.
+AiProviderChange = 다른 제공업체를 저장하면 프로필 세 개가 모두 초기화됩니다.
+AiWorking = 처리 중…
+AiKeyFormat = 키 형식을 인식할 수 없습니다. OpenAI 또는 Anthropic API 키를 사용하세요.
+AiUnauthorized = 제공업체가 키를 거부했습니다. 확인 후 다시 시도하세요.
+AiForbidden = 이 키로 모델 목록에 접근할 수 없습니다. 권한을 확인하세요.
+AiRateLimited = 제공업체가 요청을 제한하고 있습니다. 나중에 다시 시도하세요.
+AiNetworkError = 제공업체에 연결할 수 없습니다. 연결을 확인하고 다시 시도하세요.
+AiResponseError = 모델 목록 응답이 잘못되었거나 지원 한도를 초과합니다.
+AiNoModels = 이 키로 사용할 수 있는 지원 텍스트 모델이 없습니다.
+AiUnavailable = 모델을 사용할 수 없음: 프로필 수정 필요
+AiCredentialsError = 시스템 자격 증명 저장소에 접근할 수 없습니다. 잠금을 해제하고 다시 시도하세요. 키는 파일에 저장되지 않았습니다.
+AiSettingsError = AI 설정을 저장할 수 없거나 다른 창에서 변경되었습니다. 이 섹션을 다시 여세요.
+AiCleanupError = 일부 이전 키를 삭제하지 못했습니다. 삭제를 다시 시도하세요.
+AiRetryCleanup = 키 삭제 다시 시도
+
 CreateOpen = 생성 및 열기
 Open = 열기
 WorkspaceReady = 작업공간을 열 준비가 되었습니다.

@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = مساعد الذكاء الاصطناعي
+AiDescription = اتصال واحد وثلاثة ملفات للمهام مشتركة بين جميع مساحات العمل والمحركات.
+AiConnect = توصيل مزوّد
+AiModels = اختيار نماذج للمهام
+AiConnectFirst = وصّل مزوّدًا أولًا لإعداد النماذج.
+AiKeyLabel = مفتاح API
+AiPasteCredential = ألصق مفتاح API
+AiDetectHint = يُكتشف OpenAI أو Anthropic من المفتاح.
+AiKeyStorage = يُحفظ المفتاح في مخزن بيانات اعتماد النظام. يطلب التحقق كتالوج النماذج فقط.
+AiVerify = تحقق واحفظ
+AiKeySaved = تم حفظ المفتاح
+AiEdit = تعديل
+AiCollapse = طي
+AiDisconnect = حذف المفتاح والملفات
+AiRefreshModels = تحديث النماذج
+AiLastChecked = آخر تحقق من الكتالوج: { $value }
+AiRevealCredential = إظهار المفتاح
+AiConcealCredential = إخفاء المفتاح
+AiPaste = لصق
+AiSmall = مهام بسيطة
+AiMedium = مهام يومية
+AiLarge = مهام معقدة
+AiNotConfigured = غير مُعدّ
+AiProgress = تم إعداد { $count } من 3
+AiModelLabel = النموذج
+AiChooseModel = اختر نموذجًا
+AiSearchModels = البحث عن النماذج
+AiEffortLabel = عمق الاستدلال · Effort
+AiChooseEffort = اختر مستوى الجهد
+AiManaged = يتحكم به النموذج
+AiEffortHint = قد يحسّن الجهد الأعلى الاستدلال لكنه يحتاج إلى وقت ورموز أكثر.
+AiEffortReset = الجهد السابق غير متاح لهذا النموذج. اختر مستوى جديدًا.
+AiProviderChange = حفظ مزوّد مختلف يمسح ملفات المهام الثلاثة.
+AiWorking = جارٍ التنفيذ…
+AiKeyFormat = صيغة المفتاح غير معروفة. استخدم مفتاح API من OpenAI أو Anthropic.
+AiUnauthorized = رفض المزوّد المفتاح. تحقّق منه وأعد المحاولة.
+AiForbidden = لا يمكن لهذا المفتاح الوصول إلى الكتالوج. تحقّق من أذوناته.
+AiRateLimited = المزوّد يحدّ من الطلبات. حاول لاحقًا.
+AiNetworkError = تعذّر الاتصال بالمزوّد. تحقّق من الاتصال وأعد المحاولة.
+AiResponseError = استجابة الكتالوج غير صالحة أو تتجاوز الحدود المدعومة.
+AiNoModels = لا توجد نماذج نصية مدعومة متاحة لهذا المفتاح.
+AiUnavailable = النموذج غير متاح: عدّل الملف
+AiCredentialsError = تعذّر الوصول إلى مخزن بيانات اعتماد النظام. افتحه وأعد المحاولة؛ لم يُحفظ المفتاح في ملف.
+AiSettingsError = تعذّر حفظ الإعدادات أو تغيّرت في نافذة أخرى. أعد فتح هذا القسم.
+AiCleanupError = تعذّر حذف بعض المفاتيح القديمة من مخزن النظام. أعد محاولة الحذف.
+AiRetryCleanup = إعادة محاولة حذف المفاتيح
+
 CreateOpen = إنشاء وفتح
 Open = فتح
 WorkspaceReady = مساحة العمل جاهزة للفتح.

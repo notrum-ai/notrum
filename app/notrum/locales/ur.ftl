@@ -1,6 +1,53 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+AiAssistant = AI معاون
+AiDescription = تمام ورک اسپیس اور انجنوں کے لیے ایک کنکشن اور تین مشترکہ کام کے پروفائل۔
+AiConnect = فراہم کنندہ جوڑیں
+AiModels = کاموں کے لیے ماڈل منتخب کریں
+AiConnectFirst = ماڈل ترتیب دینے کے لیے پہلے فراہم کنندہ جوڑیں۔
+AiKeyLabel = API کلید
+AiPasteCredential = API کلید پیسٹ کریں
+AiDetectHint = کلید سے OpenAI یا Anthropic کی شناخت ہوتی ہے۔
+AiKeyStorage = کلید سسٹم کے اسناد کے ذخیرے میں رہتی ہے۔ تصدیق صرف ماڈل فہرست طلب کرتی ہے۔
+AiVerify = تصدیق اور محفوظ کریں
+AiKeySaved = کلید محفوظ ہے
+AiEdit = ترمیم
+AiCollapse = سمیٹیں
+AiDisconnect = کلید اور پروفائل حذف کریں
+AiRefreshModels = ماڈل تازہ کریں
+AiLastChecked = فہرست کی تصدیق: { $value }
+AiRevealCredential = کلید دکھائیں
+AiConcealCredential = کلید چھپائیں
+AiPaste = پیسٹ کریں
+AiSmall = آسان کام
+AiMedium = روزمرہ کے کام
+AiLarge = پیچیدہ کام
+AiNotConfigured = ترتیب نہیں دیا گیا
+AiProgress = 3 میں سے { $count } ترتیب دیے گئے
+AiModelLabel = ماڈل
+AiChooseModel = ماڈل منتخب کریں
+AiSearchModels = ماڈل تلاش کریں
+AiEffortLabel = استدلال کی گہرائی · Effort
+AiChooseEffort = کوشش کی سطح منتخب کریں
+AiManaged = ماڈل کے زیر انتظام
+AiEffortHint = زیادہ کوشش استدلال بہتر کر سکتی ہے، مگر زیادہ وقت اور ٹوکن لیتی ہے۔
+AiEffortReset = پچھلی کوشش کی سطح اس ماڈل کے لیے دستیاب نہیں۔ نئی سطح منتخب کریں۔
+AiProviderChange = دوسرا فراہم کنندہ محفوظ کرنے سے تینوں پروفائل خالی ہو جائیں گے۔
+AiWorking = کام جاری ہے…
+AiKeyFormat = کلید کی شکل نامعلوم ہے۔ OpenAI یا Anthropic کی API کلید استعمال کریں۔
+AiUnauthorized = فراہم کنندہ نے کلید مسترد کر دی۔ جانچ کر دوبارہ کوشش کریں۔
+AiForbidden = اس کلید کو ماڈل فہرست تک رسائی نہیں۔ اجازتیں جانچیں۔
+AiRateLimited = فراہم کنندہ درخواستیں محدود کر رہا ہے۔ بعد میں کوشش کریں۔
+AiNetworkError = فراہم کنندہ سے رابطہ نہیں ہوا۔ کنکشن جانچ کر دوبارہ کوشش کریں۔
+AiResponseError = ماڈل فہرست کا جواب غلط ہے یا منظور شدہ حد سے بڑا ہے۔
+AiNoModels = اس کلید کے لیے کوئی معاون ٹیکسٹ ماڈل دستیاب نہیں۔
+AiUnavailable = ماڈل دستیاب نہیں: پروفائل میں ترمیم کریں
+AiCredentialsError = سسٹم کے اسناد کے ذخیرے تک رسائی نہیں ہوئی۔ اسے کھول کر دوبارہ کوشش کریں؛ کلید فائل میں محفوظ نہیں ہوئی۔
+AiSettingsError = AI ترتیبات محفوظ نہیں ہوئیں یا دوسری ونڈو میں بدل گئیں۔ یہ حصہ دوبارہ کھولیں۔
+AiCleanupError = کچھ پرانی کلیدیں حذف نہیں ہو سکیں۔ دوبارہ کوشش کریں۔
+AiRetryCleanup = کلیدیں حذف کرنے کی دوبارہ کوشش کریں
+
 CreateOpen = بنائیں اور کھولیں
 Open = کھولیں
 WorkspaceReady = ورک اسپیس کھلنے کے لیے تیار ہے۔

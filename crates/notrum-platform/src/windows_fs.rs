@@ -13,6 +13,8 @@ use std::time::SystemTime;
 
 use sha2::{Digest, Sha256};
 
+use crate::diagnostics::{Operation, Stage, io_result};
+
 pub use stdfs::{
     DirBuilder, DirEntry, FileTimes, ReadDir, canonicalize, copy, create_dir, create_dir_all,
     hard_link, read, read_dir, read_to_string, remove_dir, remove_dir_all, remove_file, write,
@@ -30,13 +32,15 @@ impl File {
         if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
             super::validate_real_path(parent)?;
         }
-        Ok(Self(
+        Ok(Self(io_result(
+            Operation::Metadata,
+            Stage::Open,
             stdfs::OpenOptions::new()
                 .read(true)
                 .share_mode(1 | 4)
                 .custom_flags(0x0200_0000 | 0x0020_0000)
-                .open(path)?,
-        ))
+                .open(path),
+        )?))
     }
     pub fn create(path: impl AsRef<Path>) -> io::Result<Self> {
         OpenOptions::new()
@@ -220,9 +224,17 @@ pub struct Metadata {
 }
 impl Metadata {
     fn from_file(file: &stdfs::File) -> io::Result<Self> {
-        let inner = file.metadata()?;
-        let info = super::file_information(file)?;
-        let permissions = super::windows::capture_permissions(file)?;
+        let inner = io_result(Operation::Metadata, Stage::Inspect, file.metadata())?;
+        let info = io_result(
+            Operation::Metadata,
+            Stage::Inspect,
+            super::file_information(file),
+        )?;
+        let permissions = io_result(
+            Operation::Metadata,
+            Stage::Permissions,
+            super::windows::capture_permissions(file),
+        )?;
         let mut hasher = Sha256::new();
         // Windows has no safe change-time accessor in the pinned handle API.
         // Hash through this handle to detect same-size writes with restored mtime.
@@ -247,8 +259,8 @@ impl Metadata {
                 Ok(())
             })();
             let restored = reader.seek(SeekFrom::Start(position));
-            hashed?;
-            restored?;
+            io_result(Operation::Metadata, Stage::Hash, hashed)?;
+            io_result(Operation::Metadata, Stage::Restore, restored)?;
         }
         Ok(Self {
             inner,

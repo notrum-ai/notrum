@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "credentials")]
 pub mod credentials;
+pub mod diagnostics;
 mod operation_lock;
 pub use operation_lock::OperationLock;
 
@@ -197,7 +198,11 @@ pub fn replace(source: &Path, destination: &Path) -> io::Result<()> {
     }
     #[cfg(windows)]
     {
-        atomicwrites::replace_atomic(source, destination)
+        diagnostics::io_result(
+            diagnostics::Operation::Replace,
+            diagnostics::Stage::Publish,
+            atomicwrites::replace_atomic(source, destination),
+        )
     }
 }
 

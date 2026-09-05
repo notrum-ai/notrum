@@ -78,8 +78,15 @@ ACL entries when replacing a file. A new private file is opened exclusively,
 receives a protected DACL for the current user, Administrators, and SYSTEM,
 and only then becomes available to the writer. ACL failures are returned.
 Metadata fingerprints preserve the open handle's read/write position. Notrum
-closes its own target readers at the replacement boundary; another program's
+closes consumed target readers before conflict checks and publication. Temporary
+guards are bound before their writers so error unwinding closes the writer before
+attempting deletion. Another program's
 incompatible open handle still causes a reported failure with recovery retained.
+
+Workspace-note recognition and restored selection compare canonical paths on both
+sides, including Windows extended-length paths. Missing external files remain
+visible as unavailable. Case-only rename tests inspect the actual directory entry
+instead of assuming the old spelling stops resolving on case-insensitive NTFS.
 
 Age armor written by Notrum uses LF on every OS; readers also accept CRLF armor
 from Windows tools. Original plaintext line endings remain unchanged. Search

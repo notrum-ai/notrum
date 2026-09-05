@@ -122,6 +122,25 @@ the CI console, and does not upload raw test logs. CI logs are deliberately
 reduced: reproduce a failing named check locally to inspect unrestricted fixture
 diagnostics.
 
+Native test kits also emit fixed-vocabulary `NATIVE_IO`, `NATIVE_SAVE`,
+`NATIVE_OPERATION`, `NATIVE_CLEANUP`,
+`NATIVE_TEMP`, `NATIVE_RESULT`, `NATIVE_ASSERT` and `NATIVE_PATH` records.
+I/O failures distinguish lock creation, validation, opening and acquisition;
+metadata opening, inspection, permission capture, hashing and cursor restoration;
+atomic replacement; and temporary cleanup. Records contain only known operation,
+stage and error-kind labels, numeric OS codes (zero when unavailable), cleanup
+outcomes, temporary counts and boolean path-comparison results. They never contain
+error messages, path strings or file contents. Malformed records are rejected
+before the legacy diagnostic extractors, and filtering the records again is safe.
+The same records survive in `checks.log` and `windows-results.json`.
+
+Rust captures these diagnostics with each test, so successful tests remain quiet
+and failed tests retain their diagnostic context. The platform instrumentation is
+enabled by `test-utils` (included in the native kit's `--all-features` build);
+ordinary release builds do not emit it. A failing first-use lock test identifies
+creation/acquisition failures separately from save conflicts. A Windows rerun is
+still required to establish which remaining native failures are resolved.
+
 UI acceptance failures additionally emit `UI_ACCEPTANCE_DIAGNOSTIC` lines to
 the Actions console and `checks.log`. They retain the scenario, a fixed stage,
 an allowlisted exception type (or `Exception` for an unknown type), and known

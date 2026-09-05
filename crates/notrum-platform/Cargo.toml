@@ -13,6 +13,7 @@ serde = { version = "=1.0.228", features = ["derive"] }
 fs4 = { version = "=0.13.1", default-features = false, features = ["sync"] }
 
 [features]
+test-utils = []
 credentials = ["dep:keyring", "dep:uuid"]
 
 [target.'cfg(target_os = "macos")'.dependencies]

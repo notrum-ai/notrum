@@ -1066,7 +1066,7 @@ fn protect_note_with(
         .map_err(|error| operation_failure(OperationStage::Validate, error))?;
 
     checkpoint.check(OperationStage::Write)?;
-    let (temp, mut guard) = create_secure_temp(&notes_directory)
+    let (mut guard, temp) = create_secure_temp(&notes_directory)
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
     temp.set_permissions(source_metadata.permissions())
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
@@ -1083,6 +1083,7 @@ fn protect_note_with(
     }
     copy_bounded(&mut input, &mut encrypted)
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
+    drop(input);
     let mut temp = encrypted
         .finish()
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
@@ -1122,8 +1123,6 @@ fn protect_note_with(
         return Err(NoteOperationError::Conflict);
     }
 
-    #[cfg(windows)]
-    drop(input);
     drop(temp);
     checkpoint.check(OperationStage::Publish)?;
     journal_guard.disarm();
@@ -1371,12 +1370,13 @@ fn disable_protection_with(
     }
 
     checkpoint.check(OperationStage::Write)?;
-    let (mut temp, mut guard) = create_secure_temp(&notes_directory)
+    let (mut guard, mut temp) = create_secure_temp(&notes_directory)
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
     temp.set_permissions(source_metadata.permissions())
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
     copy_bounded(&mut decrypted, &mut temp)
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
+    drop(decrypted);
     temp.flush()
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
     checkpoint.check(OperationStage::FileSync)?;
@@ -1737,7 +1737,7 @@ fn rewrite_protected_note_unix(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let (temp, mut guard) =
+    let (mut guard, temp) =
         create_secure_temp(parent).map_err(|error| precommit(SaveStage::CreateTemp, error))?;
     temp.set_permissions(target_metadata.permissions())
         .map_err(|error| precommit(SaveStage::CreateTemp, error))?;
@@ -1955,7 +1955,7 @@ fn create_note_with(
     validate_scalar(timestamp, "timestamp")?;
     let notes_directory = direct_notes_directory(workspace)?;
     let destination = available_title_path(&notes_directory, &title, None)?;
-    let (mut temp, mut guard) =
+    let (mut guard, mut temp) =
         create_temp(&destination, &notes_directory).map_err(operation_save)?;
     let quoted_title = yaml_quote(&title);
     let quoted_timestamp = yaml_quote(timestamp);
@@ -2188,7 +2188,7 @@ fn rename_note_with_filesystem(
 
     let source_metadata = fs::symlink_metadata(source)
         .map_err(|error| operation_failure(OperationStage::Validate, error))?;
-    let (mut temp, mut guard) =
+    let (mut guard, mut temp) =
         create_temp(&destination, &notes_directory).map_err(operation_save)?;
     temp.set_permissions(source_metadata.permissions())
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
@@ -2196,6 +2196,7 @@ fn rename_note_with_filesystem(
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
     copy_bounded(&mut input, &mut temp)
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
+    drop(input);
     temp.flush()
         .map_err(|error| operation_failure(OperationStage::Write, error))?;
     checkpoint.check(OperationStage::Write)?;
@@ -2577,6 +2578,8 @@ fn operation_save(error: SaveError) -> NoteOperationError {
 }
 
 fn operation_failure(stage: OperationStage, error: impl std::fmt::Display) -> NoteOperationError {
+    #[cfg(any(test, feature = "test-utils"))]
+    eprintln!("NATIVE_OPERATION stage={stage:?} outcome=Failed");
     NoteOperationError::Failed {
         stage,
         message: error.to_string(),
@@ -2784,7 +2787,7 @@ fn rewrite_external_file_versioned_unix(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let (mut temp, mut guard) = create_temp(path, parent)?;
+    let (mut guard, mut temp) = create_temp(path, parent)?;
     temp.set_permissions(target_metadata.permissions())
         .map_err(|error| precommit(SaveStage::CreateTemp, error))?;
     write_contents(&mut temp).map_err(|error| precommit(SaveStage::Write, error))?;
@@ -2869,13 +2872,14 @@ fn rewrite_note_to_destination_internal(
         return Err(SaveError::Conflict);
     }
     let scan = scan_reader(&mut input).map_err(|error| precommit(SaveStage::Scan, error))?;
+    drop(input);
     let rewrite = patch_front_matter(&scan, patch)
         .map_err(SaveError::Patch)?
         .ok_or_else(|| {
             SaveError::InvalidTarget("note rewrite requires a non-empty metadata patch".to_owned())
         })?;
     let parent = source.parent().unwrap_or_else(|| Path::new("."));
-    let (mut temp, mut guard) = create_temp(destination, parent)?;
+    let (mut guard, mut temp) = create_temp(destination, parent)?;
     temp.set_permissions(source_metadata.permissions())
         .map_err(|error| precommit(SaveStage::CreateTemp, error))?;
     temp.write_all(&rewrite.prefix)
@@ -2904,8 +2908,6 @@ fn rewrite_note_to_destination_internal(
             .is_some_and(|metadata| {
                 FileVersion::from_metadata(&metadata).same_file_as(expected_version)
             });
-    #[cfg(windows)]
-    drop(input);
     if destination == source || destination_aliases_source {
         fs::rename(guard.path(), source).map_err(|error| precommit(SaveStage::Replace, error))?;
         guard.disarm();
@@ -3031,6 +3033,7 @@ fn rewrite_note_with(
         return Err(SaveError::Conflict);
     }
     let scan = scan_reader(&mut input).map_err(|error| precommit(SaveStage::Scan, error))?;
+    drop(input);
     let rewrite = patch_front_matter(&scan, patch)
         .map_err(SaveError::Patch)?
         .ok_or_else(|| {
@@ -3041,7 +3044,7 @@ fn rewrite_note_with(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let (mut temp, mut guard) = create_temp(path, parent)?;
+    let (mut guard, mut temp) = create_temp(path, parent)?;
     temp.set_permissions(target_metadata.permissions())
         .map_err(|error| precommit(SaveStage::CreateTemp, error))?;
     temp.write_all(&rewrite.prefix)
@@ -3076,8 +3079,6 @@ fn rewrite_note_with(
     checkpoint
         .check(SaveStage::Replace)
         .map_err(|error| precommit(SaveStage::Replace, error))?;
-    #[cfg(windows)]
-    drop(input);
     drop(temp);
     fs::rename(guard.path(), path).map_err(|error| precommit(SaveStage::Replace, error))?;
     guard.disarm();
@@ -3154,7 +3155,7 @@ fn rewrite_metadata_with(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let (mut temp, mut guard) = create_temp(path, parent)?;
+    let (mut guard, mut temp) = create_temp(path, parent)?;
     temp.set_permissions(target_metadata.permissions())
         .map_err(|error| precommit(SaveStage::CreateTemp, error))?;
     input
@@ -3163,6 +3164,7 @@ fn rewrite_metadata_with(
     temp.write_all(&rewrite.prefix)
         .map_err(|error| precommit(SaveStage::Write, error))?;
     copy_bounded(&mut input, &mut temp).map_err(|error| precommit(SaveStage::Write, error))?;
+    drop(input);
     temp.flush()
         .map_err(|error| precommit(SaveStage::Write, error))?;
     checkpoint
@@ -3188,8 +3190,6 @@ fn rewrite_metadata_with(
     checkpoint
         .check(SaveStage::Replace)
         .map_err(|error| precommit(SaveStage::Replace, error))?;
-    #[cfg(windows)]
-    drop(input);
     drop(temp);
     fs::rename(guard.path(), path).map_err(|error| precommit(SaveStage::Replace, error))?;
     guard.disarm();
@@ -3267,7 +3267,9 @@ fn allocate_opaque_destination(parent: &Path) -> io::Result<PathBuf> {
 }
 
 #[cfg(any(unix, windows))]
-fn create_secure_temp(parent: &Path) -> io::Result<(File, TempGuard)> {
+// Bind the guard before its writer: reverse local drop order closes every
+// writer (including envelope wrappers) before cleanup, also on early errors.
+fn create_secure_temp(parent: &Path) -> io::Result<(TempGuard, File)> {
     for _ in 0..32 {
         let opaque = opaque_note_filename()
             .map_err(|_| io::Error::other("could not generate protected-note temp filename"))?;
@@ -3279,7 +3281,7 @@ fn create_secure_temp(parent: &Path) -> io::Result<(File, TempGuard)> {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true).mode(0o600);
         match options.open(&temp_path) {
-            Ok(file) => return Ok((file, TempGuard::new(temp_path))),
+            Ok(file) => return Ok((TempGuard::new(temp_path), file)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         }
@@ -3295,7 +3297,7 @@ fn sync_directory_io(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(any(unix, windows))]
-fn create_temp(path: &Path, parent: &Path) -> Result<(File, TempGuard), SaveError> {
+fn create_temp(path: &Path, parent: &Path) -> Result<(TempGuard, File), SaveError> {
     let file_name = path
         .file_name()
         .ok_or_else(|| SaveError::InvalidTarget("target path has no file name".to_owned()))?;
@@ -3308,7 +3310,7 @@ fn create_temp(path: &Path, parent: &Path) -> Result<(File, TempGuard), SaveErro
         let mut options = OpenOptions::new();
         options.write(true).create_new(true).mode(0o600);
         match options.open(&temp_path) {
-            Ok(file) => return Ok((file, TempGuard::new(temp_path))),
+            Ok(file) => return Ok((TempGuard::new(temp_path), file)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(precommit(SaveStage::CreateTemp, error)),
         }
@@ -3320,6 +3322,8 @@ fn create_temp(path: &Path, parent: &Path) -> Result<(File, TempGuard), SaveErro
 }
 
 fn precommit(stage: SaveStage, error: impl std::fmt::Display) -> SaveError {
+    #[cfg(any(test, feature = "test-utils"))]
+    eprintln!("NATIVE_SAVE stage={stage:?} outcome=PreCommit");
     SaveError::PreCommit {
         stage,
         message: error.to_string(),
@@ -3360,7 +3364,22 @@ impl TempGuard {
 impl Drop for TempGuard {
     fn drop(&mut self) {
         if self.armed {
-            let _ = fs::remove_file(&self.path);
+            let result = notrum_platform::diagnostics::io_result(
+                notrum_platform::diagnostics::Operation::Cleanup,
+                notrum_platform::diagnostics::Stage::Remove,
+                fs::remove_file(&self.path),
+            );
+            #[cfg(any(test, feature = "test-utils"))]
+            {
+                let outcome = match &result {
+                    Ok(()) => "Removed",
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => "Absent",
+                    Err(_) => "Failed",
+                };
+                eprintln!("NATIVE_CLEANUP outcome={outcome}");
+            }
+            // Drop cannot replace the operation's original error.
+            let _ = result;
         }
     }
 }
@@ -3458,6 +3477,19 @@ mod tests {
             .into_iter()
             .map(|worker| worker.join().unwrap())
             .collect::<Vec<_>>();
+        for result in &results {
+            let outcome = match result {
+                Ok(_) => "Success",
+                Err(SaveError::Conflict) => "Conflict",
+                Err(SaveError::PreCommit { .. }) => "PreCommit",
+                Err(SaveError::PostReplaceSync { .. }) => "PostReplaceSync",
+                Err(SaveError::PartialCommit { .. }) => "PartialCommit",
+                Err(SaveError::InvalidTarget(_)) => "InvalidTarget",
+                Err(SaveError::Patch(_)) => "Patch",
+                Err(SaveError::UnsupportedPlatform) => "UnsupportedPlatform",
+            };
+            eprintln!("NATIVE_RESULT operation=ExternalSave outcome={outcome}");
+        }
         assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
         assert_eq!(
             results
@@ -4274,7 +4306,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(commit.path.file_name().unwrap(), "Project.md");
-        assert!(!source.exists());
+        let names = fs::read_dir(workspace.root.join("notes"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(names, [OsString::from("Project.md")]);
         assert_eq!(open_versioned(&commit.path).unwrap().1, commit.version);
         let output = fs::read_to_string(&commit.path).unwrap();
         assert!(output.contains("title: 'Project'\n"));
@@ -4282,9 +4318,14 @@ mod tests {
         assert!(output.contains("future: keep\n"));
         assert!(output.ends_with("body\n"));
         assert_no_temp_files(&workspace);
+    }
 
+    #[test]
+    fn rename_rejects_a_distinct_hardlink_destination() {
+        let workspace = TestWorkspace::new();
+        let original = b"---\ntitle: project\nfuture: keep\n---\nbody\n";
         let hardlink_source = workspace.note("hardlink.md", original);
-        let hardlink_destination = workspace.root.join("notes/Hardlink.md");
+        let hardlink_destination = workspace.root.join("notes/Other.md");
         fs::hard_link(&hardlink_source, &hardlink_destination).unwrap();
         let hardlink_version = open_versioned(&hardlink_source).unwrap().1;
         assert!(matches!(
@@ -4292,7 +4333,7 @@ mod tests {
                 &workspace.root,
                 &hardlink_source,
                 &hardlink_version,
-                "Hardlink",
+                "Other",
                 "2026-09-02T12:34:56.789Z"
             ),
             Err(NoteOperationError::Collision(path)) if path == hardlink_destination
@@ -5027,7 +5068,7 @@ mod tests {
         }
 
         let owned_payload = b"owned encrypted temp";
-        let (owned_file, mut owned_guard) = create_secure_temp(&notes).unwrap();
+        let (mut owned_guard, owned_file) = create_secure_temp(&notes).unwrap();
         let owned_metadata = EnvelopeMetadata::new(
             EnvelopeKind::Note,
             "Owned.md".to_owned(),
@@ -5098,7 +5139,7 @@ mod tests {
             let notes = workspace.root.join("notes");
             let password = MasterPassword::new("cleanup-identity-password".to_owned());
             let payload = b"journaled encrypted temp";
-            let (file, mut temp_guard) = create_secure_temp(&notes).unwrap();
+            let (mut temp_guard, file) = create_secure_temp(&notes).unwrap();
             let envelope_metadata = EnvelopeMetadata::new(
                 EnvelopeKind::Note,
                 "Identity.md".to_owned(),
@@ -5367,8 +5408,34 @@ mod tests {
     }
 
     #[test]
+    fn failed_external_writer_closes_before_cleanup_and_preserves_target() {
+        let workspace = TestWorkspace::new();
+        let path = workspace.note("external.md", b"original");
+        let version = open_versioned(&path).unwrap().1;
+        let error = rewrite_external_file_versioned(&path, &version, |writer| {
+            writer.write_all(b"partial replacement")?;
+            Err(io::Error::other("injected writer failure"))
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            SaveError::PreCommit {
+                stage: SaveStage::Write,
+                ..
+            }
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert_no_temp_files(&workspace);
+    }
+
+    #[test]
     fn failures_before_replace_preserve_original_and_cleanup_temp() {
-        for stage in [SaveStage::Write, SaveStage::FileSync, SaveStage::Replace] {
+        for stage in [
+            SaveStage::Write,
+            SaveStage::FileSync,
+            SaveStage::ConflictCheck,
+            SaveStage::Replace,
+        ] {
             let workspace = TestWorkspace::new();
             let original = b"---\ntitle: Original\n---\nbody\n";
             let path = workspace.note("note.md", original);
@@ -5483,18 +5550,20 @@ mod tests {
     fn assert_no_temp_files(workspace: &TestWorkspace) {
         let temp_count = fs::read_dir(workspace.root.join("notes"))
             .unwrap()
-            .filter_map(Result::ok)
+            .map(|entry| entry.expect("read temporary entry"))
             .filter(|entry| entry.file_name().to_string_lossy().contains(".notrum-tmp-"))
             .count();
+        eprintln!("NATIVE_TEMP kind=Regular count={temp_count}");
         assert_eq!(temp_count, 0);
     }
 
     fn assert_no_secure_temp_files(workspace: &TestWorkspace) {
         let temp_count = fs::read_dir(workspace.root.join("notes"))
             .unwrap()
-            .filter_map(Result::ok)
+            .map(|entry| entry.expect("read secure temporary entry"))
             .filter(|entry| entry.file_name().to_str().is_some_and(is_secure_temp_name))
             .count();
+        eprintln!("NATIVE_TEMP kind=Secure count={temp_count}");
         assert_eq!(temp_count, 0);
     }
 

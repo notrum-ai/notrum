@@ -31,6 +31,38 @@ UI_DIAGNOSTIC_FILES = frozenset({
     "tools/ui_acceptance.py", "tools/ui_ready.py", "tools/generate_demo_data.py",
 })
 
+NATIVE_IO_STAGES = {
+    "Lock": {"Create", "Validate", "Open", "Acquire"},
+    "Metadata": {"Open", "Inspect", "Permissions", "Hash", "Restore"},
+    "Replace": {"Publish"},
+    "Cleanup": {"Remove"},
+}
+NATIVE_IO_KINDS = frozenset({
+    "NotFound", "PermissionDenied", "AlreadyExists", "InvalidInput", "InvalidData",
+    "Unsupported", "WouldBlock", "Interrupted", "UnexpectedEof", "Other",
+})
+
+
+def native_line(line):
+    match = re.fullmatch(
+        r"NATIVE_IO operation=([A-Za-z]+) stage=([A-Za-z]+) kind=([A-Za-z]+) os_error=(-?[0-9]{1,10})",
+        line,
+    )
+    if match:
+        return line if (match[2] in NATIVE_IO_STAGES.get(match[1], set())
+                        and match[3] in NATIVE_IO_KINDS
+                        and -(2**31) <= int(match[4]) < 2**31) else None
+    patterns = (
+        r"NATIVE_SAVE stage=(OpenTarget|Scan|CreateTemp|Write|FileSync|ConflictCheck|Replace|SourceRemove|ParentSync) outcome=PreCommit",
+        r"NATIVE_OPERATION stage=(Validate|CreateDirectory|Write|FileSync|Publish|SourceRemove|DirectorySync) outcome=Failed",
+        r"NATIVE_CLEANUP outcome=(Removed|Absent|Failed)",
+        r"NATIVE_TEMP kind=(Regular|Secure) count=[0-9]{1,10}",
+        r"NATIVE_RESULT operation=ExternalSave outcome=(Success|Conflict|PreCommit|PostReplaceSync|PartialCommit|InvalidTarget|Patch|UnsupportedPlatform)",
+        r"NATIVE_ASSERT operation=(NoteOrder|DeleteNote|ConcurrentLock) success=(true|false)",
+        r"NATIVE_PATH operation=(WorkspaceNote|ExternalSelection) requested_verbatim=(true|false) stored_verbatim=(true|false) lexical_equal=(true|false) canonical_equal=(true|false)",
+    )
+    return line if any(re.fullmatch(pattern, line) for pattern in patterns) else None
+
 
 def ui_diagnostic_context_valid(scenario, stage):
     return scenario in UI_SCENARIOS and (
@@ -42,6 +74,9 @@ def ui_diagnostic_context_valid(scenario, stage):
 def safe_line(line):
     """Never copy arbitrary test output, panic payloads, app logs or document paths."""
     line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).strip()
+    # Reject malformed native records before any legacy substring extractors.
+    if line.startswith("NATIVE_") and not line.startswith("NATIVE_EXTERNAL_SMOKE_OK"):
+        return native_line(line)
     # Reject malformed diagnostics before the permissive legacy extractors.
     if line.startswith("UI_ACCEPTANCE_DIAGNOSTIC"):
         match = re.fullmatch(

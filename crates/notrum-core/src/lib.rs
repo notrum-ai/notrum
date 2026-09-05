@@ -610,7 +610,10 @@ impl WorkspaceSession {
             ));
         }
         if let Ok(canonical) = requested.canonicalize()
-            && let Some(index) = self.notes.iter().position(|note| note.path == canonical)
+            && let Some(index) = self
+                .notes
+                .iter()
+                .position(|note| note.path.canonicalize().is_ok_and(|path| path == canonical))
         {
             return Ok(DocumentTarget::WorkspaceNote(index));
         }
@@ -5621,11 +5624,19 @@ mod tests {
         session.finish_autosave(save.execute()).unwrap();
         assert_eq!(fs::read_to_string(&external).unwrap(), replacement);
 
-        let inside = workspace.note_path("inside.md").canonicalize().unwrap();
-        assert!(matches!(
-            session.attach_external_file(&inside).unwrap(),
-            DocumentTarget::WorkspaceNote(_)
-        ));
+        let inside = workspace.note_path("inside.md");
+        let canonical = inside.canonicalize().unwrap();
+        notrum_platform::diagnostics::path_comparison(
+            notrum_platform::diagnostics::PathOperation::WorkspaceNote,
+            &canonical,
+            &session.notes()[0].path,
+        );
+        for path in [&inside, &canonical] {
+            assert_eq!(
+                session.attach_external_file(path).unwrap(),
+                DocumentTarget::WorkspaceNote(0)
+            );
+        }
         assert_eq!(session.external_files().len(), 1);
     }
 

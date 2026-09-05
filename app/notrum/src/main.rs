@@ -1241,18 +1241,20 @@ impl AppModel {
                         && !note.deleted
                 });
                 let restored_index = restored_note.and_then(|path| {
-                    workspace
-                        .notes()
-                        .iter()
-                        .position(|note| note.path == path && note.availability.is_ready())
+                    let canonical = path.canonicalize().ok()?;
+                    workspace.notes().iter().position(|note| {
+                        note.availability.is_ready()
+                            && note.path.canonicalize().is_ok_and(|path| path == canonical)
+                    })
                 });
                 let restored_external_target = restored_external.and_then(|path| {
+                    let canonical = path.canonicalize().ok()?;
                     workspace
                         .external_files()
                         .iter()
                         .find(|file| {
-                            file.path == path
-                                && matches!(file.availability, notrum_core::ItemAvailability::Ready)
+                            matches!(file.availability, notrum_core::ItemAvailability::Ready)
+                                && file.path.canonicalize().is_ok_and(|path| path == canonical)
                         })
                         .map(|file| (file.engine_id.clone(), file.item_id.clone()))
                 });
@@ -17582,7 +17584,12 @@ mod tests {
             ["Pinned", "Beta", "Alpha", "Charlie"]
         );
 
-        assert_eq!(model.clear_category_note_order("Work"), Some(true));
+        let cleared = model.clear_category_note_order("Work");
+        eprintln!(
+            "NATIVE_ASSERT operation=NoteOrder success={}",
+            cleared == Some(true)
+        );
+        assert_eq!(cleared, Some(true));
         state.set_note_sort(
             "Work".to_owned(),
             NoteSort {
@@ -18080,7 +18087,9 @@ mod tests {
         .expect("write favorite Work note");
 
         let mut model = AppModel::load(&root);
-        assert!(model.set_deleted_selected(true));
+        let deleted = model.set_deleted_selected(true);
+        eprintln!("NATIVE_ASSERT operation=DeleteNote success={deleted}");
+        assert!(deleted);
         assert_eq!(
             model
                 .workspace
@@ -18104,7 +18113,9 @@ mod tests {
             .expect("existing selection is preserved");
         assert_eq!(workspace.notes()[selected].title, "work body");
 
-        assert!(model.set_deleted_selected(true));
+        let deleted = model.set_deleted_selected(true);
+        eprintln!("NATIVE_ASSERT operation=DeleteNote success={deleted}");
+        assert!(deleted);
         model.open_first_matching_note_if_unselected(&SidebarFilter::Tag("Gone".to_owned()));
         assert_eq!(
             model
@@ -18432,6 +18443,116 @@ mod tests {
     }
 
     #[test]
+    fn canonical_and_native_paths_restore_notes_and_external_selection() {
+        let root = std::env::temp_dir().join(format!(
+            "notrum-paths 日本語 {}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("notes")).unwrap();
+        let note = root.join("notes/Selected 日本語.md");
+        let external = root.join("External 日本語.txt");
+        fs::write(root.join("notes/A.md"), "# A\n").unwrap();
+        fs::write(&note, "# Selected\n").unwrap();
+        fs::write(&external, "external\n").unwrap();
+        let canonical_root = root.canonicalize().unwrap();
+        let canonical_note = note.canonicalize().unwrap();
+        let canonical_external = external.canonicalize().unwrap();
+        let persisted = [PersistedExternalFile {
+            engine_id: "markdown".to_owned(),
+            absolute_path: external.display().to_string(),
+        }];
+        for workspace_root in [&root, &canonical_root] {
+            for selected in [&note, &canonical_note] {
+                let mut model = AppModel::load_restoring(workspace_root, Some(selected));
+                let workspace = model.workspace.as_ref().unwrap();
+                let index = workspace.selected_note().unwrap();
+                assert_eq!(
+                    workspace.notes()[index].path.canonicalize().unwrap(),
+                    canonical_note
+                );
+                model.shutdown_search_worker();
+            }
+            for selected in [&external, &canonical_external] {
+                let mut model = AppModel::load_restoring_state(
+                    workspace_root,
+                    None,
+                    &persisted,
+                    Some(selected),
+                    None,
+                );
+                let workspace = model.workspace.as_ref().unwrap();
+                notrum_platform::diagnostics::path_comparison(
+                    notrum_platform::diagnostics::PathOperation::ExternalSelection,
+                    selected,
+                    &workspace.external_files()[0].path,
+                );
+                assert!(matches!(
+                    workspace.selected_target(),
+                    Some(DocumentTarget::ExternalFile { .. })
+                ));
+                assert_eq!(workspace.external_files().len(), 1);
+                model.shutdown_search_worker();
+            }
+        }
+        assert_eq!(fs::read_to_string(&note).unwrap(), "# Selected\n");
+        assert_eq!(fs::read_to_string(&external).unwrap(), "external\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn note_mutations_with_search_worker_keep_metadata_and_search_consistent() {
+        let root = std::env::temp_dir().join(format!(
+            "notrum-search-mutations-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("notes")).unwrap();
+        let note = root.join("notes/Selected.md");
+        fs::write(
+            &note,
+            "---\ntags: [Work]\norder: {Work: 1}\nfuture: keep\n---\n# searchmutationmarker\n",
+        )
+        .unwrap();
+        let mut model = AppModel::load(&root);
+        assert_eq!(
+            search_results_for(&mut model, "searchmutationmarker").len(),
+            1
+        );
+        let cleared = model.clear_category_note_order("Work");
+        eprintln!(
+            "NATIVE_ASSERT operation=NoteOrder success={}",
+            cleared == Some(true)
+        );
+        assert_eq!(cleared, Some(true));
+        for _ in 0..4 {
+            model.request_search_reconcile();
+            let deleted = model.set_deleted_selected(true);
+            eprintln!("NATIVE_ASSERT operation=DeleteNote success={deleted}");
+            assert!(deleted);
+            model.open_first_matching_note_if_unselected(&SidebarFilter::Trash);
+            assert!(model.set_deleted_selected(false));
+            model.open_first_matching_note_if_unselected(&SidebarFilter::All);
+        }
+        model.request_search_reconcile();
+        assert_eq!(
+            search_results_for(&mut model, "searchmutationmarker").len(),
+            1
+        );
+        model.shutdown_search_worker();
+        let bytes = fs::read_to_string(&note).unwrap();
+        assert!(bytes.contains("future: keep\n"));
+        assert!(bytes.ends_with("# searchmutationmarker\n"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn external_settings_restore_selection_unavailable_rows_and_clean_close() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -18462,6 +18583,11 @@ mod tests {
             AppModel::load_restoring_state(&root, None, &persisted, Some(external.as_path()), None);
         let workspace = model.workspace.as_ref().expect("workspace opens");
         assert_eq!(workspace.external_files().len(), 2);
+        notrum_platform::diagnostics::path_comparison(
+            notrum_platform::diagnostics::PathOperation::ExternalSelection,
+            &external,
+            &workspace.external_files()[0].path,
+        );
         assert!(matches!(
             workspace.external_files()[1].availability,
             notrum_core::ItemAvailability::Unavailable(_)

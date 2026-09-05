@@ -2099,6 +2099,7 @@ mod tests {
             FrontMatterStatus::Parsed(parsed) => parsed.body_offset as usize,
             _ => panic!("protected note has parsed front matter"),
         };
+        drop(old_file);
         let mut progress = Vec::new();
         let commit = change_master_password(
             &root,

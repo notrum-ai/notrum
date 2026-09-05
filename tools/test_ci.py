@@ -24,6 +24,43 @@ SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    def test_native_diagnostics_are_strict_private_and_idempotent(self):
+        accepted = [
+            "NATIVE_IO operation=Lock stage=Create kind=PermissionDenied os_error=5",
+            "NATIVE_IO operation=Lock stage=Acquire kind=Other os_error=0",
+            "NATIVE_IO operation=Metadata stage=Hash kind=UnexpectedEof os_error=0",
+            "NATIVE_IO operation=Replace stage=Publish kind=PermissionDenied os_error=32",
+            "NATIVE_IO operation=Cleanup stage=Remove kind=PermissionDenied os_error=5",
+            "NATIVE_SAVE stage=ConflictCheck outcome=PreCommit",
+            "NATIVE_OPERATION stage=SourceRemove outcome=Failed",
+            "NATIVE_CLEANUP outcome=Removed",
+            "NATIVE_CLEANUP outcome=Failed",
+            "NATIVE_TEMP kind=Secure count=2",
+            "NATIVE_RESULT operation=ExternalSave outcome=Conflict",
+            "NATIVE_ASSERT operation=ConcurrentLock success=false",
+            "NATIVE_PATH operation=ExternalSelection requested_verbatim=false stored_verbatim=true lexical_equal=false canonical_equal=true",
+        ]
+        secrets = ["SYNTHETIC_SECRET", r"C:\Users\secret\note.md", "body (os error 5)"]
+        rejected = [
+            "NATIVE_IO operation=Lock stage=Hash kind=Other os_error=0",
+            "NATIVE_IO operation=Replace stage=Publish kind=PermissionDenied os_error=2147483648",
+            "NATIVE_IO operation=Replace stage=Publish kind=PermissionDenied os_error=-2147483649",
+            "NATIVE_TEMP kind=Regular count=-1",
+            "NATIVE_PATH operation=WorkspaceNote requested_verbatim=1 stored_verbatim=true lexical_equal=false canonical_equal=true",
+        ]
+        for line in accepted:
+            self.assertEqual(ci.safe_line(ci.safe_line(line)), line)
+            for secret in secrets:
+                rejected.extend([line + " " + secret, line.replace("=", "=" + secret, 1)])
+        for line in rejected:
+            with self.subTest(line=line):
+                self.assertIsNone(ci.safe_line(line))
+        report = rust_test_report(accepted + rejected)
+        self.assertEqual(report["diagnostics"], accepted)
+        self.assertEqual(rust_test_report(report["diagnostics"]), report)
+        for secret in secrets:
+            self.assertNotIn(secret, json.dumps(report))
+
     def test_ui_diagnostics_keep_only_context_and_known_traceback_locations(self):
         self.assertEqual(UI_SCENARIOS, set(ui_acceptance.SCENARIOS))
         try:

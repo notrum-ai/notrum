@@ -3,8 +3,9 @@
 ## Getting started
 
 1. Read [README.md](README.md) in full.
-2. Run `make status` and `make diff` to inspect the checkout and user changes.
-   Use `make log` only when history is relevant and the user's task permits it.
+2. Run `git status --short --branch` and `git diff` on the host to inspect the
+   checkout and user changes. Use `git log` only when history is relevant and
+   the user's task permits it.
 3. Work directly on the requested task without separate planning files or
    progress journals.
 4. Do not overwrite unrelated user changes or include them in your change set.
@@ -39,15 +40,16 @@
 ## Development and checks
 
 - The root Makefile is the primary command interface. Rust toolchain commands,
-  tests, linters, audits, benchmarks, and Git commands run through the Docker
-  Compose `toolchain` service.
-- On the host, use `make`, `docker`/`docker compose`, and file editing. Native
+  tests, linters, audits, and benchmarks run through the Docker Compose
+  `toolchain` service. Run all Git commands directly on the host, never in
+  Docker or through Makefile targets that run Git in Docker.
+- On the host, use `git`, `make`, `docker`/`docker compose`, and file editing. Native
   Apple Silicon operations are exposed by `make build`, `make native-smoke`,
   and `make native-external-smoke`. Builds use pinned Rust in ignored
   `.host-build/` and the system Xcode SDK without changing global Rust or shell
   profiles. The external-file smoke uses host Python and an existing bundle.
 - `make publish` runs its Python orchestrator and locally authenticated Codex
-  on the host; it calls GitHub's REST API directly and keeps Git/Rust in Docker.
+  on the host; it calls GitHub's REST API directly and runs Rust in Docker.
 - Write or update tests with behavior changes. Do not weaken tests to hide a
   defect.
 - Use scoped UI styles. Do not apply global theme/style overrides for local
@@ -65,5 +67,5 @@
 ## Finishing a task
 
 1. Run the applicable final check.
-2. Review `make diff` and confirm that original user changes are preserved.
+2. Review `git diff` on the host and confirm that original user changes are preserved.
 3. Report what changed, which checks passed, and any remaining failures or risks.

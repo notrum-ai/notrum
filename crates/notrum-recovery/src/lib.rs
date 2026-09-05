@@ -3,8 +3,8 @@
 
 #![forbid(unsafe_code)]
 
+use notrum_platform::fs::{self, File, OpenOptions};
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -470,7 +470,7 @@ impl RecoveryStore {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn write(
         &self,
         key: &RecoveryKey,
@@ -506,9 +506,7 @@ impl RecoveryStore {
         drop(temp);
         fs::rename(guard.path(), directory.join(&key.artifact_name)).map_err(io_error)?;
         guard.disarm();
-        File::open(&directory)
-            .and_then(|directory| directory.sync_all())
-            .map_err(io_error)?;
+        notrum_platform::sync_directory(&directory).map_err(io_error)?;
         Ok(RecoveryRecord {
             key: key.clone(),
             revision,
@@ -518,7 +516,7 @@ impl RecoveryStore {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[allow(clippy::too_many_arguments)]
     pub fn write_protected(
         &self,
@@ -578,7 +576,7 @@ impl RecoveryStore {
         })
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     #[allow(clippy::too_many_arguments)]
     pub fn write_protected(
         &self,
@@ -593,7 +591,7 @@ impl RecoveryStore {
         Err(RecoveryError::UnsupportedPlatform)
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     pub fn write(
         &self,
         _key: &RecoveryKey,
@@ -1097,30 +1095,34 @@ fn quarantine_protected_artifact(
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ArtifactVersion {
+    #[cfg(windows)]
+    digest: [u8; 32],
     len: u64,
     modified: Option<std::time::SystemTime>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     device: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     inode: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     changed_seconds: i64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     changed_nanoseconds: i64,
 }
 
 impl ArtifactVersion {
     fn from_metadata(metadata: &fs::Metadata) -> Self {
         Self {
+            #[cfg(windows)]
+            digest: metadata.digest(),
             len: metadata.len(),
             modified: metadata.modified().ok(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             device: metadata.dev(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             inode: metadata.ino(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             changed_seconds: metadata.ctime(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             changed_nanoseconds: metadata.ctime_nsec(),
         }
     }
@@ -1128,10 +1130,14 @@ impl ArtifactVersion {
     /// Same file with the same content identity, ignoring the inode change
     /// time that `link(2)` updates on the source it is called for.
     fn same_linked_content(&self, other: &Self) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let same_inode = self.device == other.device && self.inode == other.inode;
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let same_inode = true;
+        #[cfg(windows)]
+        if self.digest != other.digest {
+            return false;
+        }
         self.len == other.len && self.modified == other.modified && same_inode
     }
 }
@@ -1167,9 +1173,7 @@ fn protected_error(_error: impl std::fmt::Display) -> RecoveryError {
 }
 
 fn sync_recovery_directory(directory: &Path) -> Result<(), RecoveryError> {
-    File::open(directory)
-        .and_then(|directory| directory.sync_all())
-        .map_err(io_error)
+    notrum_platform::sync_directory(directory).map_err(io_error)
 }
 
 fn create_envelope_writer<W: Write>(
@@ -1187,7 +1191,7 @@ fn create_envelope_writer<W: Write>(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn create_temp(directory: &Path, key: &RecoveryKey) -> Result<(File, TempGuard), RecoveryError> {
     for _ in 0..32 {
         let id = TEMP_ID.fetch_add(1, Ordering::Relaxed);
@@ -1206,7 +1210,7 @@ fn create_temp(directory: &Path, key: &RecoveryKey) -> Result<(File, TempGuard),
     ))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn create_protected_temp(
     directory: &Path,
     key: &RecoveryKey,
@@ -1230,13 +1234,13 @@ fn create_protected_temp(
     Err(protected_failure())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ProtectedTempName {
     process_id: u32,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn protected_temp_name(value: &str) -> Option<ProtectedTempName> {
     if !value.is_ascii() {
         return None;
@@ -1271,7 +1275,7 @@ fn is_canonical_decimal(value: &str) -> bool {
         && (value == "0" || !value.starts_with('0'))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn safely_stale(metadata: &fs::Metadata, now: std::time::SystemTime) -> bool {
     metadata
         .modified()
@@ -1280,7 +1284,7 @@ fn safely_stale(metadata: &fs::Metadata, now: std::time::SystemTime) -> bool {
         .is_some_and(|age| age >= PROTECTED_TEMP_STALE_AFTER)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     left.dev() == right.dev()
         && left.ino() == right.ino()
@@ -1288,7 +1292,7 @@ fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
         && left.modified().ok() == right.modified().ok()
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn read_bounded_age_line(
     reader: &mut impl BufRead,
     consumed: &mut usize,
@@ -1302,7 +1306,7 @@ fn read_bounded_age_line(
     Ok(Some(line))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn is_unpadded_base64(value: &[u8], expected_len: Option<usize>) -> bool {
     expected_len.is_none_or(|length| value.len() == length)
         && !value.is_empty()
@@ -1311,7 +1315,7 @@ fn is_unpadded_base64(value: &[u8], expected_len: Option<usize>) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'+' || *byte == b'/')
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn has_structural_age_envelope(file: &mut File) -> Result<bool, RecoveryError> {
     file.seek(SeekFrom::Start(0)).map_err(io_error)?;
     let mut reader = BufReader::new(file);
@@ -1381,7 +1385,7 @@ fn has_structural_age_envelope(file: &mut File) -> Result<bool, RecoveryError> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn cleanup_protected_temps(directory: &Path) -> Result<(), RecoveryError> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
@@ -1435,7 +1439,7 @@ fn cleanup_protected_temps(directory: &Path) -> Result<(), RecoveryError> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn cleanup_protected_temps(_directory: &Path) -> Result<(), RecoveryError> {
     Ok(())
 }
@@ -1543,7 +1547,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn writes_discovers_streams_and_revision_gates_cleanup() {
         let (root, store, note) = store();
@@ -1570,7 +1573,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn failed_or_malformed_artifact_never_touches_canonical_note() {
         let (root, store, note) = store();
@@ -1603,7 +1605,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn linked_content_identity_ignores_change_time_only() {
         let (root, store, note) = store();
@@ -1633,7 +1634,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn valid_other_key_collision_is_preserved_and_never_quarantined() {
         let (root, store, note) = store();
@@ -1920,7 +1920,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn protected_write_encrypts_unusable_plain_artifact_before_quarantine() {
         let (root, store, note) = store();
@@ -1968,7 +1967,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn protected_temp_cleanup_requires_owned_stale_complete_unlinked_envelope() {
         use std::fs::FileTimes;

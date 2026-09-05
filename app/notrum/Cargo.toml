@@ -10,6 +10,7 @@ authors.workspace = true
 test-utils = ["notrum-core/test-utils"]
 
 [dependencies]
+notrum-platform = { version = "0.1.0", path = "../../crates/notrum-platform" }
 fluent-bundle = "=0.16.0"
 floem_renderer = "=0.2.0"
 chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
@@ -26,5 +27,9 @@ zeroize = "=1.8.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 floem-winit = { version = "=0.29.5" }
+rfd = { version = "=0.14.1", default-features = false }
+copypasta = { version = "=0.10.2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
 rfd = { version = "=0.14.1", default-features = false }
 copypasta = { version = "=0.10.2", default-features = false }

@@ -3,9 +3,9 @@
 
 #![forbid(unsafe_code)]
 
+use notrum_platform::fs::{self, OpenOptions};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -468,6 +468,7 @@ fn atomic_write_global_settings(
             .open(&temporary)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
+        drop(file);
         fs::rename(&temporary, &destination)?;
         sync_directory(home)?;
         Ok(())
@@ -499,6 +500,7 @@ fn atomic_write_settings(workspace: &Path, settings: &UiSettings) -> Result<(), 
             .open(&temporary)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
+        drop(file);
         fs::rename(&temporary, &destination)?;
         sync_directory(&directory)?;
         Ok(())
@@ -543,7 +545,7 @@ fn reject_symlink_or_directory(path: &Path) -> Result<(), SettingsError> {
 }
 
 fn sync_directory(path: &Path) -> Result<(), SettingsError> {
-    File::open(path)?.sync_all()?;
+    notrum_platform::sync_directory(path)?;
     Ok(())
 }
 
@@ -573,9 +575,9 @@ fn normalize_relative_note_path(path: &str) -> Option<String> {
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.len() < 2
         || parts.first().copied() != Some("notes")
-        || parts
-            .iter()
-            .any(|part| part.is_empty() || *part == "." || *part == "..")
+        || parts.iter().any(|part| {
+            part.is_empty() || *part == "." || *part == ".." || part.contains(['\\', ':'])
+        })
         || !parts.last().is_some_and(|part| part.ends_with(".md"))
     {
         return None;
@@ -635,9 +637,13 @@ mod tests {
     fn all_languages_persist_without_changing_workspace_or_unknown_fields() {
         let home = TestWorkspace::new();
         let path = home.0.join(".notrum.cfg");
+        let remembered = home.0.join("notes");
         fs::write(
             &path,
-            r#"{"version":1,"last_workspace":"/notes","future":{"enabled":true}}"#,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1, "last_workspace": remembered, "future": {"enabled": true}
+            }))
+            .unwrap(),
         )
         .unwrap();
         let mut store = GlobalSettingsStore::load(Some(&home.0)).store;
@@ -645,14 +651,14 @@ mod tests {
             store.set_locale(*locale).unwrap();
             let loaded = GlobalSettingsStore::load(Some(&home.0));
             assert_eq!(loaded.settings.locale, *locale);
-            assert_eq!(loaded.settings.last_workspace.as_deref(), Some("/notes"));
+            assert_eq!(loaded.settings.workspace(), Some(remembered.clone()));
             assert_eq!(
                 loaded.settings.additional["future"],
                 serde_json::json!({"enabled":true})
             );
         }
         store
-            .remember_workspace(Path::new("/another/workspace"))
+            .remember_workspace(&home.0.join("another workspace"))
             .unwrap();
         assert_eq!(
             GlobalSettingsStore::load(Some(&home.0)).settings.locale,

@@ -5,9 +5,9 @@
 
 //! Disposable, rebuildable local full-text search for Notrum workspaces.
 
+use notrum_platform::fs::{self, File, OpenOptions};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1149,13 +1149,13 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), SearchError> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn sync_directory(path: &Path) -> Result<(), SearchError> {
-    File::open(path)?.sync_all()?;
+    notrum_platform::sync_directory(path)?;
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn sync_directory(_path: &Path) -> Result<(), SearchError> {
     Ok(())
 }

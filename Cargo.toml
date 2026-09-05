@@ -6,6 +6,7 @@ members = [
     "crates/notrum-engine",
     "crates/notrum-frontmatter",
     "crates/notrum-markdown",
+    "crates/notrum-platform",
     "crates/notrum-recovery",
     "crates/notrum-rss",
     "crates/notrum-search",

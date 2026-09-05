@@ -5,8 +5,8 @@
 
 //! Canonical workspace verifier and engine-secret storage.
 
+use notrum_platform::fs::{self, File, OpenOptions};
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -461,8 +461,9 @@ fn inspect_secrets_directory(directory: &Path) -> Result<Vec<PathBuf>, SecurityE
     Ok(paths)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn validate_directory(path: &Path, metadata: &fs::Metadata) -> Result<(), SecurityError> {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     if !metadata.file_type().is_dir() || metadata.permissions().mode() & 0o077 != 0 {
         return Err(SecurityError::Blocked(format!(
@@ -473,7 +474,7 @@ fn validate_directory(path: &Path, metadata: &fs::Metadata) -> Result<(), Securi
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn validate_directory(path: &Path, metadata: &fs::Metadata) -> Result<(), SecurityError> {
     if !metadata.file_type().is_dir() {
         return Err(SecurityError::Blocked(format!(
@@ -484,8 +485,9 @@ fn validate_directory(path: &Path, metadata: &fs::Metadata) -> Result<(), Securi
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn validate_file(path: &Path, metadata: &fs::Metadata) -> Result<(), SecurityError> {
+    #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     if !metadata.file_type().is_file()
         || metadata.nlink() != 1
@@ -500,7 +502,7 @@ fn validate_file(path: &Path, metadata: &fs::Metadata) -> Result<(), SecurityErr
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn validate_file(path: &Path, metadata: &fs::Metadata) -> Result<(), SecurityError> {
     if !metadata.file_type().is_file() || metadata.len() > MAX_SECURITY_FILE_BYTES {
         return Err(SecurityError::Blocked(format!(
@@ -526,14 +528,12 @@ fn validate_armored_prefix(path: &Path) -> Result<(), SecurityError> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn ensure_private_directory(path: &Path) -> Result<(), SecurityError> {
-    use std::os::unix::fs::PermissionsExt;
     match fs::symlink_metadata(path) {
         Ok(metadata) => validate_directory(path, &metadata),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir(path).map_err(security_io)?;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(security_io)?;
+            notrum_platform::create_private_directory(path).map_err(security_io)?;
             sync_directory(path.parent().ok_or_else(|| {
                 SecurityError::Invalid("security directory has no parent".to_owned())
             })?)
@@ -542,14 +542,14 @@ fn ensure_private_directory(path: &Path) -> Result<(), SecurityError> {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn ensure_private_directory(_path: &Path) -> Result<(), SecurityError> {
     Err(SecurityError::Invalid(
         "workspace security is only supported on Unix".to_owned(),
     ))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn write_armored_file(
     directory: &Path,
     destination: &Path,
@@ -558,12 +558,16 @@ fn write_armored_file(
     logical_name: &str,
     payload: &[u8],
 ) -> Result<(), SecurityError> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
     if destination.parent() != Some(directory)
-        || destination
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_) | Component::RootDir))
+        || destination.components().any(|component| {
+            !matches!(
+                component,
+                Component::Normal(_) | Component::RootDir | Component::Prefix(_)
+            )
+        })
     {
         return Err(SecurityError::Invalid(
             "security destination is invalid".to_owned(),
@@ -607,7 +611,7 @@ fn write_armored_file(
     validate_file(destination, &metadata)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn write_armored_file(
     _directory: &Path,
     _destination: &Path,
@@ -665,9 +669,7 @@ fn armored_writer<W: Write>(
 }
 
 fn sync_directory(path: &Path) -> Result<(), SecurityError> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(security_io)
+    notrum_platform::sync_directory(path).map_err(security_io)
 }
 
 fn security_io(error: io::Error) -> SecurityError {

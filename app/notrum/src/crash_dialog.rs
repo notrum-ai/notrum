@@ -88,7 +88,7 @@ fn log_and_present(
     logged
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub(super) fn install() {
     let error_log = std::env::current_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -109,7 +109,7 @@ pub(super) fn install() {
     }));
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn show_native(summary: &str, copy_failed: bool) -> Choice {
     let locale = i18n::crash_locale();
     let copy = msg!(CopyTrace).render_for(locale);
@@ -134,7 +134,7 @@ fn show_native(summary: &str, copy_failed: bool) -> Choice {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn copy_native(report: &str) -> Result<(), ()> {
     use copypasta::ClipboardProvider;
 

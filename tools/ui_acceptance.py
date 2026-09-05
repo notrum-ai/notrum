@@ -5559,8 +5559,25 @@ def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.click_note(0, counts=locked_counts, categories=(tag,))
     driver.type_sensitive_text(old_password)
     driver.key("Return")
+
+    def old_password_rejection_is_painted() -> bool:
+        frame = driver.capture("password-change-old-password-rejected")
+        try:
+            return near_color_pixel_count(
+                frame, (164, 69, 69), crop=(425, 300, 390, 220)
+            ) >= 8
+        finally:
+            frame.unlink(missing_ok=True)
+
+    wait_until(
+        "old password rejection before retrying with the new password",
+        old_password_rejection_is_painted,
+        timeout=6.0,
+        interval=0.03,
+    )
     assert_focused_lock_inaccessible(driver, markers=(body_marker,))
-    driver.click("password_unlock_primary")
+    # Focus the field interior after rejection, not the original card's border.
+    driver.click_point(760, 385)
     driver.type_sensitive_text(new_password)
     driver.key("Return")
     wait_for_unlocked_editor(driver, body_marker)

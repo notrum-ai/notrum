@@ -10,6 +10,7 @@ authors.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+notrum-platform = { version = "0.1.0", path = "../notrum-platform" }
 chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
 feed-rs = "=2.4.0"
 html2text = "=0.17.1"

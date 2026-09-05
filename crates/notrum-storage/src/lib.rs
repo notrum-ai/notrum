@@ -17,8 +17,8 @@ pub use secure_backups::{
     restore_secure_backup,
 };
 
+use notrum_platform::fs::{self, File, OpenOptions};
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,11 +45,14 @@ pub const BODY_TITLE_SCAN_LINES: usize = 32;
 pub const EMPTY_NOTE_TITLE: &str = "Новая заметка";
 const MAX_TAG_CHARS: usize = 120;
 const MAX_TAG_BYTES: usize = 240;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const SECURE_TEMP_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+#[cfg(any(unix, windows))]
 #[cfg(unix)]
 const PROTECTION_JOURNAL_MAGIC: &[u8] = b"NTRMLOCKJOURNAL2\n";
-#[cfg(unix)]
+#[cfg(windows)]
+const PROTECTION_JOURNAL_MAGIC: &[u8] = b"NTRMLOCKJOURNALWINDOWS2\n";
+#[cfg(any(unix, windows))]
 const SECURE_TEMP_NAME_BYTES: usize = ".ntrm-secure-".len() + 32 + ".tmp".len();
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -398,7 +401,7 @@ fn validate_real_notes_directory(notes_directory: &Path) -> io::Result<()> {
 #[allow(dead_code)]
 fn repair_protected_names(notes_directory: &Path) -> io::Result<()> {
     validate_real_notes_directory(notes_directory)?;
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let journals = fs::read_dir(notes_directory)?
             .filter_map(Result::ok)
@@ -435,7 +438,7 @@ pub fn cleanup_stale_secure_temps(workspace: impl AsRef<Path>) -> io::Result<usi
     Ok(0)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn is_stale_secure_temp(metadata: &fs::Metadata) -> bool {
     metadata
         .modified()
@@ -444,7 +447,7 @@ fn is_stale_secure_temp(metadata: &fs::Metadata) -> bool {
         .is_some_and(|age| age >= SECURE_TEMP_STALE_AFTER)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn is_owned_unpublished_secure_temp(
     path: &Path,
     metadata: &fs::Metadata,
@@ -464,7 +467,7 @@ fn is_owned_unpublished_secure_temp(
     path_has_age_prefix(path)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn path_matches_protection_journal(path: &Path, journal: &ProtectionJournal) -> io::Result<bool> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -513,7 +516,7 @@ fn opaque_note_parts(value: &str) -> Option<(bool, &str)> {
     .then_some((deleted, identifier))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProtectionJournal {
     device: u64,
@@ -525,7 +528,7 @@ struct ProtectionJournal {
     destination_name: String,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn protection_journal_name(destination_name: &str) -> Option<String> {
     destination_name
         .strip_prefix("ntrm-")
@@ -539,7 +542,7 @@ fn protection_journal_name(destination_name: &str) -> Option<String> {
         .map(|identifier| format!(".ntrm-transition-{identifier}.journal"))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn is_protection_journal_name(value: &str) -> bool {
     value
         .strip_prefix(".ntrm-transition-")
@@ -552,7 +555,7 @@ fn is_protection_journal_name(value: &str) -> bool {
         })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn create_protection_journal(
     notes_directory: &Path,
     temp_path: &Path,
@@ -601,7 +604,7 @@ fn create_protection_journal(
     Ok(guard)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn read_protection_journal(path: &Path) -> io::Result<Option<ProtectionJournal>> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() || metadata.nlink() != 1 {
@@ -658,7 +661,7 @@ fn read_protection_journal(path: &Path) -> io::Result<Option<ProtectionJournal>>
     }))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn repair_protection_transition(
     notes_directory: &Path,
     journal_path: &Path,
@@ -775,7 +778,7 @@ fn repair_protection_transition(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn path_has_age_prefix(path: &Path) -> io::Result<bool> {
     let mut file = File::open(path)?;
     let mut prefix = vec![0_u8; AGE_PREFIX.len()];
@@ -916,13 +919,13 @@ pub fn relocate_protected_note_state(
     expected_version: &FileVersion,
     deleted: bool,
 ) -> Result<NoteCommit, NoteOperationError> {
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, source, expected_version, deleted);
         return Err(NoteOperationError::Save(SaveError::UnsupportedPlatform));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let notes_directory = direct_notes_directory(workspace.as_ref())?;
         let source = source.as_ref();
@@ -1006,13 +1009,13 @@ pub fn protect_note(
     expected_version: &FileVersion,
     password: &MasterPassword,
 ) -> Result<NoteCommit, NoteOperationError> {
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, source, expected_version, password);
         return Err(NoteOperationError::Save(SaveError::UnsupportedPlatform));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let mut checkpoint = NoOperationFault;
         protect_note_with(
@@ -1025,7 +1028,7 @@ pub fn protect_note(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn protect_note_with(
     workspace: &Path,
     source: &Path,
@@ -1290,13 +1293,13 @@ pub fn disable_protection(
     expected_version: &FileVersion,
     password: &MasterPassword,
 ) -> Result<NoteCommit, NoteOperationError> {
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, source, expected_version, password);
         return Err(NoteOperationError::Save(SaveError::UnsupportedPlatform));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let mut checkpoint = NoOperationFault;
         disable_protection_with(
@@ -1309,7 +1312,7 @@ pub fn disable_protection(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn disable_protection_with(
     workspace: &Path,
     source: &Path,
@@ -1435,7 +1438,7 @@ pub fn rewrite_protected_note(
     body_len: u64,
     write_body: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> Result<SaveCommit, SaveError> {
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (
             path,
@@ -1449,7 +1452,7 @@ pub fn rewrite_protected_note(
         return Err(SaveError::UnsupportedPlatform);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     rewrite_protected_note_unix(
         path.as_ref(),
         expected_version,
@@ -1683,7 +1686,7 @@ fn rewrite_existing_protected_with_title(
     secure_backups::verify_commit(workspace, commit, backup, expected_sha256)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn rewrite_protected_note_unix(
     path: &Path,
     expected_version: &FileVersion,
@@ -1910,7 +1913,7 @@ pub fn create_note(
     create_note_with(workspace.as_ref(), title, timestamp, &mut checkpoint)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn create_note_with(
     _workspace: &Path,
     _title: &str,
@@ -1920,7 +1923,7 @@ fn create_note_with(
     Err(NoteOperationError::Save(SaveError::UnsupportedPlatform))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn create_note_with(
     workspace: &Path,
     title: &str,
@@ -1984,7 +1987,7 @@ pub fn rename_note(
     )
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn rename_note_with(
     _workspace: &Path,
     _source: &Path,
@@ -1996,7 +1999,7 @@ fn rename_note_with(
     Err(NoteOperationError::Save(SaveError::UnsupportedPlatform))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn rename_note_with(
     workspace: &Path,
     source: &Path,
@@ -2016,7 +2019,7 @@ fn rename_note_with(
     )
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn rename_note_with_filesystem(
     workspace: &Path,
     source: &Path,
@@ -2226,7 +2229,7 @@ fn rename_note_with_filesystem(
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 trait RenameFilesystem {
     fn destination_aliases_source(
         &self,
@@ -2237,10 +2240,10 @@ trait RenameFilesystem {
     fn rename(&self, source: &Path, destination: &Path) -> io::Result<()>;
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct NativeRenameFilesystem;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl RenameFilesystem for NativeRenameFilesystem {
     fn destination_aliases_source(
         &self,
@@ -2279,7 +2282,7 @@ pub fn trash_note(
     )
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn trash_note_with(
     _workspace: &Path,
     _source: &Path,
@@ -2289,7 +2292,7 @@ fn trash_note_with(
     Err(NoteOperationError::Save(SaveError::UnsupportedPlatform))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn trash_note_with(
     workspace: &Path,
     source: &Path,
@@ -2489,7 +2492,7 @@ fn available_trash_path(
     Err(NoteOperationError::Collision(trash.join(file_name)))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn publish_temp(guard: &mut TempGuard, destination: &Path) -> Result<(), NoteOperationError> {
     fs::hard_link(guard.path(), destination).map_err(|error| {
         if error.kind() == io::ErrorKind::AlreadyExists {
@@ -2540,10 +2543,7 @@ fn sync_directory(
 }
 
 fn sync_directory_unchecked(directory: &Path) -> Result<(), NoteOperationError> {
-    let directory = File::open(directory)
-        .map_err(|error| operation_failure(OperationStage::DirectorySync, error))?;
-    directory
-        .sync_all()
+    notrum_platform::sync_directory(directory)
         .map_err(|error| operation_failure(OperationStage::DirectorySync, error))
 }
 
@@ -2685,12 +2685,12 @@ pub fn rewrite_note_with_title(
     title: &str,
     write_body: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> Result<SaveCommit, SaveError> {
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, path, expected_version, patch, title, write_body);
         Err(SaveError::UnsupportedPlatform)
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let workspace = workspace.as_ref();
         let path = path.as_ref();
@@ -2712,18 +2712,18 @@ pub fn rewrite_external_file_versioned(
     expected_version: &FileVersion,
     write_contents: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> Result<SaveCommit, SaveError> {
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (path, expected_version, write_contents);
         Err(SaveError::UnsupportedPlatform)
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         rewrite_external_file_versioned_unix(path.as_ref(), expected_version, write_contents)
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn rewrite_external_file_versioned_unix(
     path: &Path,
     expected_version: &FileVersion,
@@ -2781,11 +2781,9 @@ fn rewrite_external_file_versioned_unix(
             message: "external target changed immediately after atomic replace".to_owned(),
         });
     }
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| SaveError::PostReplaceSync {
-            message: error.to_string(),
-        })?;
+    notrum_platform::sync_directory(parent).map_err(|error| SaveError::PostReplaceSync {
+        message: error.to_string(),
+    })?;
     Ok(SaveCommit {
         outcome: SaveOutcome::Committed,
         version: committed_version,
@@ -2793,7 +2791,7 @@ fn rewrite_external_file_versioned_unix(
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn rewrite_note_to_destination(
     source: &Path,
     destination: &Path,
@@ -2812,7 +2810,7 @@ fn rewrite_note_to_destination(
     .map(|(commit, _)| commit)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn rewrite_note_to_destination_internal(
     source: &Path,
     destination: &Path,
@@ -2959,7 +2957,7 @@ fn rewrite_note_to_destination_internal(
     ))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn rewrite_note_with(
     _path: &Path,
     _expected_version: &FileVersion,
@@ -2970,7 +2968,7 @@ fn rewrite_note_with(
     Err(SaveError::UnsupportedPlatform)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn rewrite_note_with(
     path: &Path,
     expected_version: &FileVersion,
@@ -3061,14 +3059,9 @@ fn rewrite_note_with(
         .map_err(|error| SaveError::PostReplaceSync {
             message: error.to_string(),
         })?;
-    let directory = File::open(parent).map_err(|error| SaveError::PostReplaceSync {
+    notrum_platform::sync_directory(parent).map_err(|error| SaveError::PostReplaceSync {
         message: error.to_string(),
     })?;
-    directory
-        .sync_all()
-        .map_err(|error| SaveError::PostReplaceSync {
-            message: error.to_string(),
-        })?;
     Ok(SaveCommit {
         outcome: SaveOutcome::Committed,
         version: committed_version,
@@ -3076,7 +3069,7 @@ fn rewrite_note_with(
     })
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn rewrite_metadata_with(
     _path: &Path,
     patch: &MetadataPatch,
@@ -3089,7 +3082,7 @@ fn rewrite_metadata_with(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn rewrite_metadata_with(
     path: &Path,
     patch: &MetadataPatch,
@@ -3166,14 +3159,9 @@ fn rewrite_metadata_with(
         .map_err(|error| SaveError::PostReplaceSync {
             message: error.to_string(),
         })?;
-    let directory = File::open(parent).map_err(|error| SaveError::PostReplaceSync {
+    notrum_platform::sync_directory(parent).map_err(|error| SaveError::PostReplaceSync {
         message: error.to_string(),
     })?;
-    directory
-        .sync_all()
-        .map_err(|error| SaveError::PostReplaceSync {
-            message: error.to_string(),
-        })?;
     Ok(SaveOutcome::Committed)
 }
 
@@ -3238,7 +3226,7 @@ fn allocate_opaque_destination(parent: &Path) -> io::Result<PathBuf> {
     ))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn create_secure_temp(parent: &Path) -> io::Result<(File, TempGuard)> {
     for _ in 0..32 {
         let opaque = opaque_note_filename()
@@ -3263,10 +3251,10 @@ fn create_secure_temp(parent: &Path) -> io::Result<(File, TempGuard)> {
 }
 
 fn sync_directory_io(path: &Path) -> io::Result<()> {
-    File::open(path)?.sync_all()
+    notrum_platform::sync_directory(path)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn create_temp(path: &Path, parent: &Path) -> Result<(File, TempGuard), SaveError> {
     let file_name = path
         .file_name()
@@ -3341,39 +3329,47 @@ impl Drop for TempGuard {
 pub struct FileVersion {
     size: u64,
     modified: Option<std::time::SystemTime>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     device: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     inode: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     changed_seconds: i64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     changed_nanoseconds: i64,
+    #[cfg(windows)]
+    digest: [u8; 32],
 }
 
 impl FileVersion {
     fn from_metadata(metadata: &fs::Metadata) -> Self {
         Self {
+            #[cfg(windows)]
+            digest: metadata.digest(),
             size: metadata.len(),
             modified: metadata.modified().ok(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             device: metadata.dev(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             inode: metadata.ino(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             changed_seconds: metadata.ctime(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             changed_nanoseconds: metadata.ctime_nsec(),
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn same_file_as(&self, other: &Self) -> bool {
         self.device == other.device && self.inode == other.inode
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn same_content_as(&self, other: &Self) -> bool {
+        #[cfg(windows)]
+        if self.digest != other.digest {
+            return false;
+        }
         self.same_file_as(other) && self.size == other.size && self.modified == other.modified
     }
 }
@@ -3523,7 +3519,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn body_only_protection_keeps_metadata_and_locked_edits_copy_ciphertext_exactly() {
         let workspace = TestWorkspace::new();
@@ -3605,7 +3600,6 @@ mod tests {
         assert!(plaintext.ends_with("Visible Title\nprivate-body-marker\n"));
     }
 
-    #[cfg(unix)]
     #[test]
     fn protected_autosave_uses_title_collision_path_and_scanner_fails_closed() {
         let workspace = TestWorkspace::new();
@@ -3762,7 +3756,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn protected_restore_rejects_external_candidate_change_and_keeps_backup() {
         let workspace = TestWorkspace::new();
@@ -3819,7 +3812,6 @@ mod tests {
         assert!(!manifest["notes"][0]["pending"].is_null());
     }
 
-    #[cfg(unix)]
     #[test]
     fn protected_post_commit_read_failure_is_reported_with_rollback_backup() {
         let workspace = TestWorkspace::new();
@@ -3938,7 +3930,6 @@ mod tests {
         assert!(long.ends_with(" (27)"));
     }
 
-    #[cfg(unix)]
     #[test]
     fn title_driven_save_relocates_once_without_overwriting_collision() {
         let workspace = TestWorkspace::new();
@@ -4050,7 +4041,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn create_is_notable_compatible_and_never_overwrites_case_collision() {
         let workspace = TestWorkspace::new();
@@ -4135,7 +4125,6 @@ mod tests {
         assert_no_temp_files(&workspace);
     }
 
-    #[cfg(unix)]
     #[test]
     fn rename_supports_case_only_destination_alias_without_weakening_collisions() {
         struct CaseInsensitiveRenameFilesystem;
@@ -4203,7 +4192,6 @@ mod tests {
         assert_eq!(fs::read(&hardlink_destination).unwrap(), original);
     }
 
-    #[cfg(unix)]
     #[test]
     fn rename_collision_and_trash_are_recoverable_without_touching_other_files() {
         let workspace = TestWorkspace::new();
@@ -4276,7 +4264,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn protected_trash_partial_commit_moves_only_ciphertext() {
         let workspace = TestWorkspace::new();
@@ -4343,7 +4330,6 @@ mod tests {
         assert_eq!(parsed_notes(&scan).count(), 1);
     }
 
-    #[cfg(unix)]
     #[test]
     fn protection_is_streaming_opaque_and_restart_repairable() {
         use notrum_secure::{EnvelopeKind, MasterPassword, decrypt};
@@ -4404,7 +4390,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn repair_workspace_leaves_legacy_transition_and_scan_is_read_only() {
         let workspace = TestWorkspace::new();
@@ -4512,7 +4497,6 @@ mod tests {
         assert_eq!(fs::read(&literal_path).unwrap(), literal_before);
     }
 
-    #[cfg(unix)]
     #[test]
     fn concurrent_workspace_repair_is_an_idempotent_protection_commit() {
         let workspace = TestWorkspace::new();
@@ -4563,7 +4547,6 @@ mod tests {
         assert_no_secure_temp_files(&workspace);
     }
 
-    #[cfg(unix)]
     #[test]
     fn protected_rewrite_never_materializes_plaintext_temp() {
         use notrum_secure::{EnvelopeKind, MasterPassword, decrypt};
@@ -4608,7 +4591,6 @@ mod tests {
         assert_eq!(plaintext, [prefix.as_slice(), body.as_slice()].concat());
     }
 
-    #[cfg(unix)]
     #[test]
     fn protection_conflict_preserves_current_plaintext_byte_for_byte() {
         let workspace = TestWorkspace::new();
@@ -4656,7 +4638,6 @@ mod tests {
         assert_no_secure_temp_files(&workspace);
     }
 
-    #[cfg(unix)]
     #[test]
     fn protection_faults_preserve_plaintext_before_publish_and_ciphertext_after_it() {
         let cases = [
@@ -4742,7 +4723,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn disable_wrong_password_tamper_and_collision_preserve_canonical_files() {
         let workspace = TestWorkspace::new();
@@ -4794,7 +4774,6 @@ mod tests {
         assert_no_secure_temp_files(&workspace);
     }
 
-    #[cfg(unix)]
     #[test]
     fn disable_faults_clean_plaintext_temp_and_report_post_publish_partial_commit() {
         let workspace = TestWorkspace::new();
@@ -4845,7 +4824,6 @@ mod tests {
         assert_no_secure_temp_files(&workspace);
     }
 
-    #[cfg(unix)]
     #[test]
     fn disable_never_removes_a_changed_encrypted_source_after_plaintext_publish() {
         let workspace = TestWorkspace::new();
@@ -5002,7 +4980,6 @@ mod tests {
         assert_eq!(fs::read(&outside).unwrap(), b"outside bytes");
     }
 
-    #[cfg(unix)]
     #[test]
     fn startup_cleanup_preserves_changed_or_hardlinked_journaled_temps() {
         use std::time::{Duration, SystemTime};
@@ -5197,7 +5174,6 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), replacement);
     }
 
-    #[cfg(unix)]
     #[test]
     fn versioned_note_rewrite_streams_new_body_and_preserves_metadata() {
         let workspace = TestWorkspace::new();
@@ -5230,7 +5206,6 @@ mod tests {
         assert_no_temp_files(&workspace);
     }
 
-    #[cfg(unix)]
     #[test]
     fn note_rewrite_rejects_stale_version_and_body_writer_failure() {
         let workspace = TestWorkspace::new();
@@ -5277,7 +5252,6 @@ mod tests {
         assert_no_temp_files(&workspace);
     }
 
-    #[cfg(unix)]
     #[test]
     fn failures_before_replace_preserve_original_and_cleanup_temp() {
         for stage in [SaveStage::Write, SaveStage::FileSync, SaveStage::Replace] {
@@ -5305,7 +5279,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn conflict_preserves_external_version_and_post_replace_failure_is_explicit() {
         let workspace = TestWorkspace::new();
@@ -5393,7 +5366,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     fn assert_no_temp_files(workspace: &TestWorkspace) {
         let temp_count = fs::read_dir(workspace.root.join("notes"))
             .unwrap()
@@ -5403,7 +5375,6 @@ mod tests {
         assert_eq!(temp_count, 0);
     }
 
-    #[cfg(unix)]
     fn assert_no_secure_temp_files(workspace: &TestWorkspace) {
         let temp_count = fs::read_dir(workspace.root.join("notes"))
             .unwrap()
@@ -5436,14 +5407,12 @@ mod tests {
         remaining: usize,
     }
 
-    #[cfg(unix)]
     struct RepairProtectionAtPublish<'a> {
         workspace: &'a Path,
         remaining: usize,
         repaired: bool,
     }
 
-    #[cfg(unix)]
     impl OperationCheckpoint for RepairProtectionAtPublish<'_> {
         fn check(&mut self, stage: OperationStage) -> Result<(), NoteOperationError> {
             if stage != OperationStage::Publish || self.repaired {
@@ -5489,35 +5458,45 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    fn replace_test_contents(path: &Path, content: &[u8]) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            fs::write(path, content)
+        }
+        #[cfg(windows)]
+        {
+            // Windows readers allow replacement but exclude an in-place writer.
+            let temporary = path.with_extension("fault-injection");
+            fs::write(&temporary, content)?;
+            fs::rename(&temporary, path)
+        }
+    }
+
     struct MutateOperationAt<'a> {
         stage: OperationStage,
         path: PathBuf,
         content: &'a [u8],
     }
 
-    #[cfg(unix)]
     impl OperationCheckpoint for MutateOperationAt<'_> {
         fn check(&mut self, stage: OperationStage) -> Result<(), NoteOperationError> {
             if stage == self.stage {
-                fs::write(&self.path, self.content)
+                replace_test_contents(&self.path, self.content)
                     .map_err(|error| operation_failure(stage, error))?;
             }
             Ok(())
         }
     }
 
-    #[cfg(unix)]
     struct MutateAtConflict<'a> {
         path: PathBuf,
         content: &'a [u8],
     }
 
-    #[cfg(unix)]
     impl Checkpoint for MutateAtConflict<'_> {
         fn check(&mut self, stage: SaveStage) -> io::Result<()> {
             if stage == SaveStage::ConflictCheck {
-                fs::write(&self.path, self.content)?;
+                replace_test_contents(&self.path, self.content)?;
             }
             Ok(())
         }

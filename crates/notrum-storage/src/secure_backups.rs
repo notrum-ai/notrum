@@ -3,7 +3,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::fs::{self, File, OpenOptions};
+use notrum_platform::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -165,8 +165,9 @@ pub(crate) fn prepare_backup(
     }
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
+        #[cfg(unix)]
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
@@ -316,8 +317,9 @@ pub fn restore_secure_backup(
         .map_err(|error| precommit(SaveStage::OpenTarget, error))?;
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
+        #[cfg(unix)]
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
@@ -579,14 +581,8 @@ pub(crate) fn ensure_store(workspace: &Path) -> Result<PathBuf, SaveError> {
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), SaveError> {
-    fs::create_dir(path).map_err(|error| precommit(SaveStage::CreateTemp, error))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-            .map_err(|error| precommit(SaveStage::CreateTemp, error))?;
-    }
-    Ok(())
+    notrum_platform::create_private_directory(path)
+        .map_err(|error| precommit(SaveStage::CreateTemp, error))
 }
 
 fn ensure_existing_directory(path: &Path) -> Result<(), SaveError> {
@@ -635,8 +631,9 @@ fn save_manifest(secure: &Path, manifest: &Manifest) -> Result<(), SaveError> {
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), SaveError> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
+        #[cfg(unix)]
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
@@ -650,11 +647,9 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), SaveError> {
 }
 
 fn sync_directory(path: &Path) -> Result<(), SaveError> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| SaveError::PostReplaceSync {
-            message: error.to_string(),
-        })
+    notrum_platform::sync_directory(path).map_err(|error| SaveError::PostReplaceSync {
+        message: error.to_string(),
+    })
 }
 
 fn backup_source_relative_path(workspace: &Path, path: &Path) -> Result<PathBuf, SaveError> {

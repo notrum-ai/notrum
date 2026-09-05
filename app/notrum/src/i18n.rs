@@ -149,7 +149,7 @@ pub(crate) fn set_current(locale: Locale) {
     );
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", windows, test))]
 pub(crate) fn crash_locale() -> Locale {
     Locale::ALL
         .get(CRASH_LANGUAGE.load(Ordering::Relaxed))

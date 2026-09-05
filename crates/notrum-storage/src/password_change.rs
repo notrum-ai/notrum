@@ -3,8 +3,8 @@
 
 #![forbid(unsafe_code)]
 
+use notrum_platform::fs::{self, File, OpenOptions};
 use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,6 +21,13 @@ use crate::secure_backups::{ensure_store, finalize_verified, prepare_backup};
 use crate::{FileVersion, SaveError, load_pending_integrity_failure, open_versioned};
 
 const JOURNAL_VERSION: u32 = 1;
+fn legacy_journal_platform() -> String {
+    "unix".to_owned()
+}
+fn journal_platform() -> &'static str {
+    if cfg!(windows) { "windows" } else { "unix" }
+}
+
 const BUFFER_BYTES: usize = 64 * 1024;
 // Candidate preparation performs the expensive decrypt/encrypt/authenticate
 // passes. Ciphertext backup, atomic installation and final hashing are much
@@ -156,24 +163,28 @@ struct Snapshot {
     plaintext_sha256: String,
     plaintext_len: u64,
     mode: u32,
+    #[cfg(windows)]
+    permissions: fs::Permissions,
     recorded_version: RecordedFileVersion,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct RecordedFileVersion {
     size: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     device: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     inode: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     modified_seconds: i64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     modified_nanoseconds: i64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     changed_seconds: i64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     changed_nanoseconds: i64,
+    #[cfg(windows)]
+    digest: [u8; 32],
 }
 
 impl RecordedFileVersion {
@@ -182,18 +193,20 @@ impl RecordedFileVersion {
         use std::os::unix::fs::MetadataExt;
 
         Self {
+            #[cfg(windows)]
+            digest: metadata.digest(),
             size: metadata.len(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             device: metadata.dev(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             inode: metadata.ino(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             modified_seconds: metadata.mtime(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             modified_nanoseconds: metadata.mtime_nsec(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             changed_seconds: metadata.ctime(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             changed_nanoseconds: metadata.ctime_nsec(),
         }
     }
@@ -222,6 +235,8 @@ enum TransactionState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Journal {
+    #[serde(default = "legacy_journal_platform")]
+    platform: String,
     version: u32,
     state: TransactionState,
     entries: Vec<JournalEntry>,
@@ -237,6 +252,8 @@ struct JournalEntry {
     new_sha256: String,
     old_version: RecordedFileVersion,
     mode: u32,
+    #[cfg(windows)]
+    permissions: fs::Permissions,
     installed: bool,
 }
 
@@ -282,7 +299,7 @@ pub fn rotate_workspace_security(
         notes,
         recovery: recovery_paths,
     } = targets;
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, targets, current, new, progress);
         return Err(PasswordChangeError::Invalid(
@@ -290,7 +307,7 @@ pub fn rotate_workspace_security(
         ));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let workspace = workspace.as_ref();
         if current.is_empty() || new.is_empty() {
@@ -632,10 +649,8 @@ pub fn recover_password_change(workspace: impl AsRef<Path>) -> Result<(), Passwo
 }
 
 impl Transaction {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn create(workspace: &Path) -> Result<Self, PasswordChangeError> {
-        use std::os::unix::fs::PermissionsExt;
-
         let secure = ensure_store(workspace).map_err(save_error)?;
         let transactions = secure.join("transactions");
         ensure_private_directory(&transactions)?;
@@ -645,8 +660,7 @@ impl Transaction {
             TRANSACTION_ID.fetch_add(1, Ordering::Relaxed)
         );
         let directory = transactions.join(id);
-        fs::create_dir(&directory).map_err(io_error)?;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).map_err(io_error)?;
+        notrum_platform::create_private_directory(&directory).map_err(io_error)?;
         sync_directory(&transactions)?;
         let journal_path = directory.join("journal.json");
         let transaction = Self {
@@ -654,6 +668,7 @@ impl Transaction {
             directory,
             journal_path,
             journal: Journal {
+                platform: journal_platform().to_owned(),
                 version: JOURNAL_VERSION,
                 state: TransactionState::Preparing,
                 entries: Vec::new(),
@@ -676,10 +691,10 @@ impl Transaction {
         let journal: Journal = serde_json::from_slice(&bytes).map_err(|error| {
             PasswordChangeError::Blocked(format!("transaction journal is invalid: {error}"))
         })?;
-        if journal.version != JOURNAL_VERSION {
+        if journal.platform != journal_platform() || journal.version != JOURNAL_VERSION {
             return Err(PasswordChangeError::Blocked(format!(
-                "unsupported transaction journal version {}",
-                journal.version
+                "unsupported transaction journal platform {} / version {}",
+                journal.platform, journal.version
             )));
         }
         let transaction = Self {
@@ -692,13 +707,14 @@ impl Transaction {
         Ok(transaction)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn prepare(
         &mut self,
         snapshot: &Snapshot,
         current: &MasterPassword,
         new: &MasterPassword,
     ) -> Result<(), PasswordChangeError> {
+        #[cfg(unix)]
         use std::os::unix::fs::PermissionsExt;
 
         ensure_snapshot_current(snapshot)?;
@@ -738,11 +754,12 @@ impl Transaction {
                     EnvelopeKind::EngineSecret,
                 )?,
             }
+            #[cfg(windows)]
+            fs::set_permissions(&candidate, snapshot.permissions.clone()).map_err(io_error)?;
+            #[cfg(unix)]
             fs::set_permissions(&candidate, fs::Permissions::from_mode(snapshot.mode))
                 .map_err(io_error)?;
-            File::open(&candidate)
-                .and_then(|file| file.sync_all())
-                .map_err(io_error)?;
+            notrum_platform::sync_file(&candidate).map_err(io_error)?;
             if let Some(parent) = candidate.parent() {
                 sync_directory(parent)?;
             }
@@ -756,6 +773,8 @@ impl Transaction {
                 new_sha256,
                 old_version: snapshot.recorded_version.clone(),
                 mode: snapshot.mode,
+                #[cfg(windows)]
+                permissions: snapshot.permissions.clone(),
                 installed: false,
             })
         })();
@@ -778,13 +797,14 @@ impl Transaction {
     }
 
     fn save_journal(&self) -> Result<(), PasswordChangeError> {
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         return Err(PasswordChangeError::Invalid(
             "password change is only supported on Unix".to_owned(),
         ));
 
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
+            #[cfg(unix)]
             use std::os::unix::fs::OpenOptionsExt;
 
             let temporary = self.directory.join(".journal.tmp");
@@ -809,7 +829,7 @@ impl Transaction {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn install(&mut self, index: usize) -> Result<(PathBuf, FileVersion), PasswordChangeError> {
         let entry =
             self.journal.entries.get(index).cloned().ok_or_else(|| {
@@ -818,6 +838,7 @@ impl Transaction {
         let source = resolve_relative(&self.workspace, &entry.source)?;
         let candidate = resolve_relative(&self.workspace, &entry.candidate)?;
         let source_metadata = fs::symlink_metadata(&source).map_err(io_error)?;
+        #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
         if !source_metadata.file_type().is_file()
             || source_metadata.nlink() != 1
@@ -878,11 +899,12 @@ impl Transaction {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn rollback(
         &mut self,
         progress: &mut impl FnMut(PasswordChangeProgress),
     ) -> Result<(), PasswordChangeError> {
+        #[cfg(unix)]
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
         self.journal.state = TransactionState::Rollback;
@@ -924,6 +946,11 @@ impl Transaction {
                 let mut options = OpenOptions::new();
                 options.write(true).create_new(true).mode(0o600);
                 let mut output = options.open(&temporary).map_err(io_error)?;
+                #[cfg(windows)]
+                output
+                    .set_permissions(entry.permissions.clone())
+                    .map_err(io_error)?;
+                #[cfg(unix)]
                 output
                     .set_permissions(fs::Permissions::from_mode(entry.mode))
                     .map_err(io_error)?;
@@ -1011,8 +1038,9 @@ impl Transaction {
     }
 
     fn validate_journal(&self) -> Result<(), PasswordChangeError> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
+            #[cfg(unix)]
             use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
             let directory = fs::symlink_metadata(&self.directory).map_err(io_error)?;
@@ -1153,12 +1181,13 @@ impl Transaction {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn preflight_note(
     workspace: &Path,
     target: &PasswordChangeTarget,
     password: &MasterPassword,
 ) -> Result<Snapshot, PasswordChangeError> {
+    #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     validate_workspace_file(workspace, &target.path)?;
@@ -1206,16 +1235,19 @@ fn preflight_note(
         plaintext_sha256,
         plaintext_len,
         mode: metadata.permissions().mode() & 0o7777,
+        #[cfg(windows)]
+        permissions: metadata.permissions(),
         recorded_version: RecordedFileVersion::from_metadata(&metadata),
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn preflight_recovery(
     workspace: &Path,
     path: &Path,
     password: &MasterPassword,
 ) -> Result<Snapshot, PasswordChangeError> {
+    #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     validate_workspace_file(workspace, path)?;
@@ -1240,11 +1272,13 @@ fn preflight_recovery(
         plaintext_sha256,
         plaintext_len,
         mode: metadata.permissions().mode() & 0o7777,
+        #[cfg(windows)]
+        permissions: metadata.permissions(),
         recorded_version: RecordedFileVersion::from_metadata(&metadata),
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn preflight_armored(
     workspace: &Path,
     target: &PasswordChangeTarget,
@@ -1252,6 +1286,7 @@ fn preflight_armored(
     kind: TargetKind,
     envelope_kind: EnvelopeKind,
 ) -> Result<Snapshot, PasswordChangeError> {
+    #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     validate_workspace_file(workspace, &target.path)?;
@@ -1282,11 +1317,13 @@ fn preflight_armored(
         plaintext_sha256,
         plaintext_len,
         mode: metadata.permissions().mode() & 0o7777,
+        #[cfg(windows)]
+        permissions: metadata.permissions(),
         recorded_version: RecordedFileVersion::from_metadata(&metadata),
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn prepare_note_candidate(
     copy: &Path,
     candidate: &Path,
@@ -1294,6 +1331,7 @@ fn prepare_note_candidate(
     current: &MasterPassword,
     new: &MasterPassword,
 ) -> Result<(), PasswordChangeError> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut input = File::open(copy).map_err(io_error)?;
@@ -1354,7 +1392,7 @@ fn verify_note_candidate(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn prepare_recovery_candidate(
     copy: &Path,
     candidate: &Path,
@@ -1362,6 +1400,7 @@ fn prepare_recovery_candidate(
     current: &MasterPassword,
     new: &MasterPassword,
 ) -> Result<(), PasswordChangeError> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
     let input = File::open(copy).map_err(io_error)?;
@@ -1401,7 +1440,7 @@ fn prepare_recovery_candidate(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn prepare_armored_candidate(
     copy: &Path,
     candidate: &Path,
@@ -1410,6 +1449,7 @@ fn prepare_armored_candidate(
     new: &MasterPassword,
     kind: EnvelopeKind,
 ) -> Result<(), PasswordChangeError> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
     let input = File::open(copy).map_err(io_error)?;
@@ -1636,8 +1676,9 @@ fn resolve_relative(workspace: &Path, value: &str) -> Result<PathBuf, PasswordCh
     Ok(workspace.join(relative))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn copy_private(source: &Path, destination: &Path) -> Result<String, PasswordChangeError> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut input = File::open(source).map_err(io_error)?;
@@ -1690,7 +1731,13 @@ fn verified_entry_hash(
 
     let path = resolve_relative(workspace, &entry.source)?;
     let metadata = fs::symlink_metadata(&path).map_err(io_error)?;
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
+    #[cfg(windows)]
+    if metadata.permissions() != entry.permissions {
+        return Err(PasswordChangeError::Blocked(
+            "Windows ACL no longer matches the transaction journal".to_owned(),
+        ));
+    }
     if metadata.permissions().mode() & 0o7777 != entry.mode {
         return Err(PasswordChangeError::Blocked(format!(
             "{} permissions do not match the transaction journal",
@@ -1700,13 +1747,14 @@ fn verified_entry_hash(
     verified_current_hash(&path)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn metadata_nlink(metadata: &fs::Metadata) -> u64 {
+    #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
     metadata.nlink()
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn metadata_nlink(_metadata: &fs::Metadata) -> u64 {
     1
 }
@@ -1757,8 +1805,9 @@ fn copy_stream(input: &mut impl Read, output: &mut impl Write) -> io::Result<()>
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), PasswordChangeError> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
+        #[cfg(unix)]
         use std::os::unix::fs::PermissionsExt;
         match fs::symlink_metadata(path) {
             Ok(metadata)
@@ -1775,14 +1824,13 @@ fn ensure_private_directory(path: &Path) -> Result<(), PasswordChangeError> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(io_error(error)),
         }
-        fs::create_dir(path).map_err(io_error)?;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(io_error)?;
+        notrum_platform::create_private_directory(path).map_err(io_error)?;
         if let Some(parent) = path.parent() {
             sync_directory(parent)?;
         }
         Ok(())
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         Err(PasswordChangeError::Invalid(
@@ -1803,9 +1851,7 @@ fn ensure_real_directory(path: &Path) -> Result<(), PasswordChangeError> {
 }
 
 fn sync_directory(path: &Path) -> Result<(), PasswordChangeError> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(io_error)
+    notrum_platform::sync_directory(path).map_err(io_error)
 }
 
 fn save_error(error: SaveError) -> PasswordChangeError {
@@ -1853,7 +1899,6 @@ mod tests {
         (path, version)
     }
 
-    #[cfg(unix)]
     #[test]
     fn rotates_verifier_and_engine_secret_without_notes() {
         let root = workspace("verifier-secret");
@@ -1997,7 +2042,6 @@ mod tests {
         (path, plaintext)
     }
 
-    #[cfg(unix)]
     #[test]
     fn changes_note_password_preserves_prefix_and_creates_old_ciphertext_backup() {
         let root = workspace("commit");
@@ -2065,7 +2109,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn wrong_password_leaves_workspace_byte_identical() {
         let root = workspace("wrong");
@@ -2092,7 +2135,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn empty_or_reused_new_password_is_rejected_before_writes() {
         let root = workspace("invalid-new");
@@ -2207,7 +2249,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn startup_recovery_rolls_back_a_partial_commit_without_passwords() {
         let root = workspace("restart-rollback");
@@ -2255,7 +2296,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn startup_recovery_accepts_a_fully_installed_verified_set() {
         let root = workspace("restart-commit");
@@ -2285,7 +2325,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn startup_cleanup_is_idempotent_after_copy_removal() {
         let root = workspace("restart-cleanup");
@@ -2316,7 +2355,23 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
+    #[test]
+    fn foreign_platform_journal_is_preserved_and_blocks_recovery() {
+        let root = workspace("foreign-platform-journal");
+        let mut transaction = Transaction::create(&root).unwrap();
+        transaction.journal.platform = if cfg!(windows) { "unix" } else { "windows" }.to_owned();
+        transaction.save_journal().unwrap();
+        let path = transaction.journal_path.clone();
+        let before = fs::read(&path).unwrap();
+        drop(transaction);
+        assert!(matches!(
+            recover_password_change(&root),
+            Err(PasswordChangeError::Blocked(_))
+        ));
+        assert_eq!(fs::read(path).unwrap(), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn tampered_journal_blocks_recovery_without_touching_artifacts() {
         let root = workspace("tampered-journal");

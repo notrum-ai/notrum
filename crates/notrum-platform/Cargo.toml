@@ -1,0 +1,17 @@
+[package]
+name = "notrum-platform"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+sha2 = "=0.10.9"
+winapi-util = "=0.1.11"
+atomicwrites = "=0.4.4"
+windows-acl = "=0.3.0"
+

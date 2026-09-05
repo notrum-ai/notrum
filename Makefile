@@ -19,7 +19,7 @@ UI_JOBS ?= 2
 UI_ACCEPTANCE_STANDARD := ui-click-localization ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
 UI_ACCEPTANCE_SECURE := ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
 
-.PHONY: all help check clean build build-macos build-linux build-linux-smoke build-container native-smoke native-external-smoke demo-data test-demo-data check-macos test test-release lint fmt fmt-check lock tree audit audit-source audit-dependencies audit-vulnerabilities \
+.PHONY: all help check clean build build-windows test-windows-build build-macos build-linux build-linux-smoke build-container native-smoke native-external-smoke demo-data test-demo-data check-macos test test-release lint fmt fmt-check lock tree audit audit-source audit-dependencies audit-vulnerabilities \
 	diff-check status log diff-stat diff image benchmark-generate \
 	benchmark-ropey benchmark-lapce benchmark benchmark-editor test-editor \
 	benchmark-viewport benchmark-search test-frontmatter test-storage test-core test-recovery test-search test-secure ui-check ui-smoke ui-autosave-smoke ui-recovery-smoke ui-conflict-smoke \
@@ -35,13 +35,15 @@ help:
 		"  make           — make check, затем native build" \
 		"  make clean     — удалить Docker debug-артефакты Cargo" \
 		"  make build-macos — macOS release в dist/Notrum.app (make build — алиас)" \
+		"  make build-windows — Windows x64 release в dist/windows/x86_64/Notrum.exe через Docker" \
+		"  make test-windows-build — пакет Windows test EXE и PowerShell runner" \
 		"  make build-linux — Linux release в dist/linux/<архитектура>/notrum через Docker" \
 		"  UI_JOBS=2      — число параллельных UI acceptance scenarios (1 для диагностики)" \
 		"Диагностика после падения aggregate:" \
 		"  make ui-click-<scenario> | make ui-acceptance | make test-<crate>" \
 		"Не запускайте target, а затем включающий его aggregate на неизменном diff."'
 
-check: fmt-check lint test test-release test-demo-data check-macos package-macos-smoke build-linux-smoke ui-check audit diff-check
+check: fmt-check lint test test-release test-demo-data check-macos package-macos-smoke build-linux-smoke build-windows test-windows-build ui-check audit diff-check
 
 clean:
 	$(RUN) rm -rf -- /var/cache/notrum/target/debug
@@ -51,6 +53,12 @@ build: build-macos
 build-macos:
 	@revision="$$(docker compose run --rm toolchain sh -c 'revision=$$(git -c safe.directory=/workspace rev-parse HEAD); if test -n "$$(git -c safe.directory=/workspace status --porcelain)"; then printf "%s-dirty\n" "$$revision"; else printf "%s\n" "$$revision"; fi')"; \
 		SOURCE_REVISION="$$revision" sh tools/build_macos.sh
+
+build-windows:
+	$(RUN) python3 -B tools/build_windows.py
+
+test-windows-build:
+	$(RUN) python3 -B tools/build_windows.py --tests
 
 build-linux:
 	$(RUN) cargo build --locked --release -p notrum-app --bin notrum-app

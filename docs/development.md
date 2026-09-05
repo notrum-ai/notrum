@@ -7,7 +7,8 @@
 Use the root Makefile for project commands. Rust checks, tests, linters, audits,
 benchmarks, and Git inspection run in the Docker Compose `toolchain` service.
 Docker with Compose and a running engine are required. The Dockerfile pins
-Rust 1.88.0 and the audit tools. Named Docker volumes retain build and download
+Rust 1.88.0 and the audit tools. MinGW-w64 and the `x86_64-pc-windows-gnu`
+target support Windows cross-compilation on both macOS and Linux hosts. Named Docker volumes retain build and download
 caches between runs.
 
 Native Apple Silicon operations run through `make build-macos` (also available
@@ -32,6 +33,8 @@ system Xcode SDK, and leaves global Rust directories and shell profiles alone.
 | `make check` | Full gate, including container builds and UI checks, without a native macOS build |
 | `make` | Full gate, native Apple Silicon build, then native external-file smoke |
 | `make build-macos` / `make build` | Build a release `dist/Notrum.app` on an Apple Silicon Mac |
+| `make build-windows` | Cross-build and inspect a portable x64 Windows release in `dist/windows/x86_64/Notrum.exe` |
+| `make test-windows-build` | Compile Windows test executables and package a PowerShell runner without requiring Rust on Windows |
 | `make build-linux` | Build a stripped Linux release executable in `dist/linux/<architecture>/notrum` through Docker |
 | `make build-linux-smoke` | Build and launch that Linux release executable under Xvfb in a temporary workspace |
 | `make native-smoke` | Generate demo data, build, and launch the bundle in a temporary workspace |
@@ -126,6 +129,29 @@ resource byte for byte. PNG encoding can differ between rendering toolchains
 even when the displayed pixels are identical.
 
 ## Packaging and release limitations
+
+### Windows
+
+`make check` includes both `make build-windows` and `make test-windows-build`.
+The former uses locked release compilation without `test-utils`, compiles the
+icon/version/PerMonitorV2 manifest resources with MinGW windres, verifies PE32+
+x86_64 and the GUI subsystem, and checks DLL imports recursively. System DLLs
+remain supplied by Windows; any MinGW runtimes are copied with their notices.
+Only Windows package files are replaced; macOS and Linux artifacts are retained.
+
+`make test-windows-build` compiles the workspace tests for Windows with the test
+features in a separate profile. The release application is never substituted
+with a test-feature build. Copy the whole Windows directory to local NTFS and
+run `tests/Run-Tests.ps1`; see [the Windows acceptance guide](windows.md).
+A successful cross-build does not establish that the native tests passed.
+
+Platform-specific persistence lives in `notrum-platform`. Windows file identity
+uses `winapi-util = 0.1.11`, replacement uses `atomicwrites = 0.4.4`, and ACLs use
+`windows-acl = 0.3.0`. All are pinned in manifests and the lockfile, and the
+Windows target participates in dependency audits. Windows metadata snapshots
+also hash file contents with bounded buffers because the pinned safe handle API
+does not expose NTFS change time. Large-file polling performance needs to be
+measured on Windows; memory usage stays bounded.
 
 ### Linux
 

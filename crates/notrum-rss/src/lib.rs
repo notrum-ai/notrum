@@ -5,8 +5,8 @@
 
 //! Persistent RSS/Atom subscriptions with disposable, bounded feed caches.
 
+use notrum_platform::fs::{self, OpenOptions};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -891,9 +891,9 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), EngineE
             .map_err(|error| EngineError::Io(error.to_string()))?;
         file.sync_all()
             .map_err(|error| EngineError::Io(error.to_string()))?;
+        drop(file);
         fs::rename(&temporary, path).map_err(|error| EngineError::Io(error.to_string()))?;
-        fs::File::open(directory)
-            .and_then(|directory| directory.sync_all())
+        notrum_platform::sync_directory(directory)
             .map_err(|error| EngineError::Io(error.to_string()))?;
         Ok(())
     })();

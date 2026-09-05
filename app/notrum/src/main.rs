@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 #![forbid(unsafe_code)]
+#![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", windows, test))]
 mod crash_dialog;
 mod editor_geometry;
 mod i18n;
@@ -268,7 +269,7 @@ fn probe_editor_font() -> EditorFont {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn append_panic_report(error_log: &Path, summary: &str) -> std::io::Result<()> {
     use std::io::Write as _;
 
@@ -289,10 +290,10 @@ fn append_panic_report(error_log: &Path, summary: &str) -> std::io::Result<()> {
     file.sync_data()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 use crash_dialog::install as install_panic_logging;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn install_panic_logging() {
     let error_log = env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
@@ -327,7 +328,7 @@ fn install_panic_logging() {
 fn main() -> Result<(), LaunchError> {
     install_panic_logging();
     let launch = LaunchOptions::parse()?;
-    let home = env::var_os("HOME").map(PathBuf::from);
+    let home = notrum_platform::home_directory();
     let settings::GlobalSettingsLoad {
         store: mut global_store,
         settings: global_settings,
@@ -17456,7 +17457,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     fn panic_report_appends_a_forced_backtrace() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)

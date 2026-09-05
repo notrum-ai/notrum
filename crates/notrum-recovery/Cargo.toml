@@ -10,6 +10,7 @@ authors.workspace = true
 test-utils = ["notrum-secure/test-utils"]
 
 [dependencies]
+notrum-platform = { version = "0.1.0", path = "../notrum-platform" }
 notrum-secure = { version = "0.1.0", path = "../notrum-secure" }
 
 [dev-dependencies]

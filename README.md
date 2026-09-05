@@ -27,8 +27,9 @@ Your notes remain Markdown files that you can back up or open in another editor.
 Notrum is in early development. The interface defaults to English and offers
 17 language variants in Settings → General → Language.
 Native builds target **Apple Silicon Macs**. Linux release binaries can be
-built through Docker for the container's architecture. Windows desktop releases
-are not currently supported.
+built through Docker for the container's architecture. Portable Windows x64
+builds target Windows 10/11 on local NTFS. Cross-compilation and actual Windows
+acceptance are separate checks; see the [Windows guide](docs/windows.md).
 
 There is no signed, notarized public release. Local builds are unsigned.
 Known dependency warnings and the remaining work before distributing binaries
@@ -105,6 +106,28 @@ self-contained application bundle. A compatible Linux desktop with X11 or
 Wayland, the corresponding system libraries, fonts, and an XDG desktop portal
 for file dialogs is required. See the [development guide](docs/development.md)
 for build verification and release limitations.
+
+### Windows 10/11 x64
+
+Build on macOS or Linux with Docker Compose:
+
+```sh
+make build-windows
+make test-windows-build
+```
+
+Copy `dist/windows/x86_64/` to a Windows computer and run `Notrum.exe`.
+Any required non-system runtime DLLs are included beside the executable.
+The application is portable, unsigned, and runs without a console window.
+The existing `make build` command still builds the macOS application.
+
+Settings use `%USERPROFILE%\.notrum.cfg`, falling back to
+`%HOMEDRIVE%%HOMEPATH%\.notrum.cfg`. English remains the default language;
+all 17 language variants and saved workspace selection are available.
+
+Run the supplied test kit and complete the native UI checklist before treating
+that Windows build as validated. Instructions, supported filesystem boundaries,
+and known validation limits are in [docs/windows.md](docs/windows.md).
 
 ## Documentation and contributions
 

@@ -104,6 +104,12 @@ jobs:
       - name: Remaining disk space
         if: always()
         run: df -h
+      - name: Prepare Cargo cache for archiving
+        if: always()
+        run: |
+          if [ -d .ci/cargo ]; then
+            sudo chown -R -- "$(id -u):$(id -g)" .ci/cargo
+          fi
 
   macos:
     name: macOS / Apple Silicon native

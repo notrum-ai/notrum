@@ -71,6 +71,9 @@ macOS. Keys include OS, architecture and lockfile/toolchain inputs. Cargo target
 incremental artifacts, native binaries, test workspaces, settings and credentials
 are never cached across runs. Linux target remains a named volume on the
 disposable runner; macOS target remains on that runner's local filesystem.
+Before cache archiving, Linux returns ownership of `.ci/cargo` to the runner.
+Some published crates contain owner-only source files; extraction by Docker's
+root user otherwise makes those files unreadable to the host cache action.
 
 Only CI disables incremental compilation and debug symbols for dev/test via
 environment variables. Debug assertions, overflow checks, test features, release

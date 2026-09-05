@@ -5967,10 +5967,12 @@ def secure_integrity_scenario(driver: WindowDriver, workspace: Path) -> None:
     before_retry = protected.read_bytes()
     trigger = secure_workspace / ".notrum" / "test-corrupt-protected-save"
     trigger.parent.mkdir(mode=0o700, exist_ok=True)
-    trigger.write_bytes(b"once")
+    # Insert the newline and marker as one edit: a delayed runner must not
+    # autosave a standalone newline and open the blocking modal before typing.
     driver.key("Right")
-    driver.key("Return")
-    driver.type_sensitive_text(retry_marker)
+    set_clipboard_text(driver.environment, "\n" + retry_marker)
+    trigger.write_bytes(b"once")
+    driver.key("ctrl+v")
     wait_until(
         "blocking integrity incident after protected autosave",
         lambda: integrity_incident_pending(secure_workspace),
@@ -5998,10 +6000,10 @@ def secure_integrity_scenario(driver: WindowDriver, workspace: Path) -> None:
     )
 
     before_restore = protected.read_bytes()
-    trigger.write_bytes(b"once")
     driver.key("Right")
-    driver.key("Return")
-    driver.type_sensitive_text(restore_marker)
+    set_clipboard_text(driver.environment, "\n" + restore_marker)
+    trigger.write_bytes(b"once")
+    driver.key("ctrl+v")
     wait_until(
         "second blocking integrity incident",
         lambda: integrity_incident_pending(secure_workspace),

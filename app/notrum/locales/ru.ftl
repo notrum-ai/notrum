@@ -160,7 +160,7 @@ FileLocked = { $value }
     Файл заблокирован
 RemoveSidebar = Убрать из боковой панели
 CreateOrOpen = Создать заметку или открыть файл
-SearchShortcut = Поиск по заметкам (⌘K)
+SearchShortcut = Поиск по заметкам ({ $modifier }K)
 Title = Название
 Tag = Тег
 Body = Текст
@@ -195,7 +195,7 @@ MatchPosition = { $value } из { $count }
 PreviousMatch = Предыдущее совпадение (Shift+Enter)
 NextMatch = Следующее совпадение (Enter)
 CloseFind = Закрыть поиск (Escape)
-FindShortcut = Найти в документе (⌘F)
+FindShortcut = Найти в документе ({ $modifier }F)
 Cut = Вырезать
 Copy = Копировать
 Paste = Вставить

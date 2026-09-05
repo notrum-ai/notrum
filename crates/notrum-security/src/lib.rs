@@ -168,6 +168,8 @@ impl SecurityStore {
     }
 
     pub fn configure(&self, password: &MasterPassword) -> Result<VaultId, SecurityError> {
+        let _operation = notrum_platform::OperationLock::directory(&self.workspace)
+            .map_err(|error| SecurityError::Io(error.to_string()))?;
         if password.is_empty() {
             return Err(SecurityError::Invalid(
                 "master password is empty".to_owned(),
@@ -231,6 +233,8 @@ impl SecurityStore {
         value: &SecretValue,
         password: &MasterPassword,
     ) -> Result<SecretRef, SecurityError> {
+        let _operation = notrum_platform::OperationLock::directory(&self.workspace)
+            .map_err(|error| SecurityError::Io(error.to_string()))?;
         let vault_id = match self.inspect(false)?.state {
             WorkspaceSecurityState::Unconfigured => self.configure(password)?,
             WorkspaceSecurityState::ConfiguredLocked => self.unlock(password)?,
@@ -545,7 +549,7 @@ fn ensure_private_directory(path: &Path) -> Result<(), SecurityError> {
 #[cfg(not(any(unix, windows)))]
 fn ensure_private_directory(_path: &Path) -> Result<(), SecurityError> {
     Err(SecurityError::Invalid(
-        "workspace security is only supported on Unix".to_owned(),
+        "workspace security is supported on Unix and Windows".to_owned(),
     ))
 }
 
@@ -621,7 +625,7 @@ fn write_armored_file(
     _payload: &[u8],
 ) -> Result<(), SecurityError> {
     Err(SecurityError::Invalid(
-        "workspace security is only supported on Unix".to_owned(),
+        "workspace security is supported on Unix and Windows".to_owned(),
     ))
 }
 

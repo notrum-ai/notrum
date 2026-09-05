@@ -58,6 +58,40 @@ try {
         throw 'The native application smoke test timed out.'
     }
     if ($process.ExitCode -ne 0) { throw "The native application exited with $($process.ExitCode)." }
+    $external = Join-Path $root 'External 日本語 #1.MD'
+    $second = Join-Path $root 'External two.txt'
+    [IO.File]::WriteAllText($external, "External unchanged`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($second, "Second unchanged`n", [Text.UTF8Encoding]::new($false))
+    $arguments = @('--workspace', ('"' + $workspace + '"'), '--open', ('"' + $external + '"'), ('"' + $second + '"'), '--smoke-exit-ms', '1800')
+    $process = Start-Process -FilePath $application -ArgumentList $arguments -PassThru
+    if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'External file launch timed out.' }
+    if ($process.ExitCode -ne 0) { throw 'External file launch failed.' }
+    $settings = Get-Content -Raw -LiteralPath (Join-Path $workspace '.notrum/settings.json') | ConvertFrom-Json
+    $selectedPath = $settings.selected_external
+    if ($selectedPath.StartsWith('\\?\')) { $selectedPath = $selectedPath.Substring(4) }
+    if ($settings.external_files.Count -ne 2 -or $selectedPath -ne $external) { throw 'External file order/selection differs.' }
+    if ([IO.File]::ReadAllText($external) -ne "External unchanged`n") { throw 'Opening modified external content.' }
+    $report.externalLaunch = 'passed'
+    $registration = Join-Path (Split-Path -Parent $PSScriptRoot) 'Register.ps1'
+    $testRegistry = 'Software\NotrumTests\' + [Guid]::NewGuid().ToString('N')
+    try {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($testRegistry + '\.txt')
+        $key.SetValue('', 'Other.TextEditor')
+        $key.Dispose()
+        & $registration -RegistryRoot $testRegistry
+        & $registration -RegistryRoot $testRegistry
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($testRegistry + '\Notrum.Document\shell\open\command')
+        if ($key.GetValue('') -ne ('"' + $application + '" --open "%1"')) { throw 'Invalid Open With command.' }
+        $key.Dispose()
+        & $registration -RegistryRoot $testRegistry -Remove
+        & $registration -RegistryRoot $testRegistry -Remove
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($testRegistry + '\.txt')
+        if ($key.GetValue('') -ne 'Other.TextEditor') { throw 'Registration changed a default association.' }
+        $key.Dispose()
+        $report.registration = 'passed in isolated registry subtree'
+    } finally {
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testRegistry, $false)
+    }
     $report.nativeSmoke = 'passed'
     if ($Interactive) {
         Write-Host 'Complete the Windows UI checklist in docs/windows.md. This script does not mark manual checks as passed.'

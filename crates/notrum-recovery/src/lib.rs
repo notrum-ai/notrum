@@ -31,6 +31,9 @@ static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Debug)]
 pub struct RecoveryStore {
     workspace: PathBuf,
+    observed: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, (RecoveryRecord, ArtifactVersion)>>,
+    >,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -157,7 +160,12 @@ impl RecoveryStore {
     pub fn new(workspace: impl AsRef<Path>) -> Self {
         Self {
             workspace: workspace.as_ref().to_path_buf(),
+            observed: Default::default(),
         }
+    }
+
+    pub fn workspace(&self) -> &Path {
+        &self.workspace
     }
 
     pub fn key_for_note(&self, note: impl AsRef<Path>) -> Result<RecoveryKey, RecoveryError> {
@@ -290,6 +298,8 @@ impl RecoveryStore {
     }
 
     pub fn open(&self, key: &RecoveryKey) -> Result<RecoveryArtifact, RecoveryError> {
+        let _operation =
+            notrum_platform::OperationLock::directory(&self.workspace).map_err(io_error)?;
         let path = self.require_directory()?.join(&key.artifact_name);
         let metadata = fs::symlink_metadata(&path).map_err(io_error)?;
         if !metadata.file_type().is_file() {
@@ -304,6 +314,7 @@ impl RecoveryStore {
                 "artifact path key mismatch".to_owned(),
             ));
         }
+        self.remember(&record)?;
         Ok(RecoveryArtifact {
             record,
             body: RecoveryBody::plain(body),
@@ -443,6 +454,8 @@ impl RecoveryStore {
         key: &RecoveryKey,
         password: &MasterPassword,
     ) -> Result<RecoveryArtifact, RecoveryError> {
+        let _operation =
+            notrum_platform::OperationLock::directory(&self.workspace).map_err(io_error)?;
         let path = self.require_directory()?.join(&key.artifact_name);
         let expected = protected_artifact_version(&path)?;
         let validation = File::open(&path).map_err(protected_error)?;
@@ -464,6 +477,7 @@ impl RecoveryStore {
         if reopened_record != record || reopened_record.key != *key {
             return Err(protected_failure());
         }
+        self.remember(&record)?;
         Ok(RecoveryArtifact {
             record,
             body: RecoveryBody::protected(reader),
@@ -480,8 +494,11 @@ impl RecoveryStore {
         body_checksum: u64,
         write_body: impl FnOnce(&mut dyn Write) -> io::Result<()>,
     ) -> Result<RecoveryRecord, RecoveryError> {
+        let _operation =
+            notrum_platform::OperationLock::directory(&self.workspace).map_err(io_error)?;
         let directory = self.ensure_directory()?;
-        self.prepare_existing(&directory, key, ExpectedArtifact::Plain)?;
+        let existing = self.prepare_existing(&directory, key, ExpectedArtifact::Plain)?;
+        self.check_observed(&existing)?;
         let (mut temp, mut guard) = create_temp(&directory, key)?;
         write_header(
             &mut temp,
@@ -507,13 +524,15 @@ impl RecoveryStore {
         fs::rename(guard.path(), directory.join(&key.artifact_name)).map_err(io_error)?;
         guard.disarm();
         notrum_platform::sync_directory(&directory).map_err(io_error)?;
-        Ok(RecoveryRecord {
+        let record = RecoveryRecord {
             key: key.clone(),
             revision,
             base_checksum,
             body_len,
             body_checksum,
-        })
+        };
+        self.remember(&record)?;
+        Ok(record)
     }
 
     #[cfg(any(unix, windows))]
@@ -528,9 +547,13 @@ impl RecoveryStore {
         body_checksum: u64,
         write_body: impl FnOnce(&mut dyn Write) -> io::Result<()>,
     ) -> Result<RecoveryRecord, RecoveryError> {
+        let _operation =
+            notrum_platform::OperationLock::directory(&self.workspace).map_err(io_error)?;
         let directory = self.ensure_directory()?;
         let final_path = directory.join(&key.artifact_name);
-        self.prepare_existing(&directory, key, ExpectedArtifact::Protected(password))?;
+        let existing =
+            self.prepare_existing(&directory, key, ExpectedArtifact::Protected(password))?;
+        self.check_observed(&existing)?;
 
         let payload_len = recovery_payload_len(key, body_len)?;
         let metadata = EnvelopeMetadata::new(
@@ -567,13 +590,15 @@ impl RecoveryStore {
         fs::rename(guard.path(), &final_path).map_err(protected_error)?;
         guard.disarm();
         sync_recovery_directory(&directory)?;
-        Ok(RecoveryRecord {
+        let record = RecoveryRecord {
             key: key.clone(),
             revision,
             base_checksum,
             body_len,
             body_checksum,
-        })
+        };
+        self.remember(&record)?;
+        Ok(record)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -609,6 +634,8 @@ impl RecoveryStore {
         key: &RecoveryKey,
         saved_revision: u64,
     ) -> Result<bool, RecoveryError> {
+        let _operation =
+            notrum_platform::OperationLock::directory(&self.workspace).map_err(io_error)?;
         let Some(directory) = self.checked_directory()? else {
             return Ok(false);
         };
@@ -617,7 +644,11 @@ impl RecoveryStore {
         let ExistingArtifact::Current(record) = artifact else {
             return Ok(matches!(artifact, ExistingArtifact::Quarantined));
         };
-        if record.revision > saved_revision {
+        if record.revision > saved_revision
+            || self
+                .check_observed(&ExistingArtifact::Current(record.clone()))
+                .is_err()
+        {
             return Ok(false);
         }
         fs::remove_file(path).map_err(io_error)?;
@@ -626,6 +657,8 @@ impl RecoveryStore {
     }
 
     pub fn remove(&self, key: &RecoveryKey) -> Result<bool, RecoveryError> {
+        let _operation =
+            notrum_platform::OperationLock::directory(&self.workspace).map_err(io_error)?;
         let Some(directory) = self.checked_directory()? else {
             return Ok(false);
         };
@@ -640,12 +673,27 @@ impl RecoveryStore {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(io_error(error)),
         }
+        let version =
+            ArtifactVersion::from_metadata(&fs::symlink_metadata(&path).map_err(io_error)?);
+        let observed = self
+            .observed
+            .lock()
+            .map_err(|_| RecoveryError::Io("recovery state lock failed".to_owned()))?;
+        if observed.get(&key.artifact_name).map(|(_, version)| version) != Some(&version) {
+            return Err(RecoveryError::InvalidArtifact(
+                "recovery changed in another window; existing unsaved work was preserved"
+                    .to_owned(),
+            ));
+        }
+        drop(observed);
         fs::remove_file(path).map_err(io_error)?;
         sync_recovery_directory(&directory)?;
         Ok(true)
     }
 
     pub fn remove_protected(&self, key: &RecoveryKey) -> Result<bool, RecoveryError> {
+        let _operation =
+            notrum_platform::OperationLock::directory(&self.workspace).map_err(io_error)?;
         if !self.protected_exists(key)? {
             return Ok(false);
         }
@@ -658,6 +706,8 @@ impl RecoveryStore {
         password: &MasterPassword,
         saved_revision: u64,
     ) -> Result<bool, RecoveryError> {
+        let _operation =
+            notrum_platform::OperationLock::directory(&self.workspace).map_err(io_error)?;
         let Some(directory) = self.checked_directory()? else {
             return Ok(false);
         };
@@ -666,10 +716,46 @@ impl RecoveryStore {
         let ExistingArtifact::Current(record) = artifact else {
             return Ok(matches!(artifact, ExistingArtifact::Quarantined));
         };
-        if record.revision > saved_revision {
+        if record.revision > saved_revision
+            || self
+                .check_observed(&ExistingArtifact::Current(record.clone()))
+                .is_err()
+        {
             return Ok(false);
         }
+        self.remember(&record)?;
         self.remove_protected(key)
+    }
+
+    fn remember(&self, record: &RecoveryRecord) -> Result<(), RecoveryError> {
+        let path = self.require_directory()?.join(&record.key.artifact_name);
+        let version =
+            ArtifactVersion::from_metadata(&fs::symlink_metadata(path).map_err(io_error)?);
+        self.observed
+            .lock()
+            .map_err(|_| RecoveryError::Io("recovery state lock failed".to_owned()))?
+            .insert(record.key.artifact_name.clone(), (record.clone(), version));
+        Ok(())
+    }
+
+    fn check_observed(&self, existing: &ExistingArtifact) -> Result<(), RecoveryError> {
+        if let ExistingArtifact::Current(record) = existing {
+            let observed = self
+                .observed
+                .lock()
+                .map_err(|_| RecoveryError::Io("recovery state lock failed".to_owned()))?;
+            if observed
+                .get(&record.key.artifact_name)
+                .map(|(record, _)| record)
+                != Some(record)
+            {
+                return Err(RecoveryError::InvalidArtifact(
+                    "recovery changed in another window; existing unsaved work was preserved"
+                        .to_owned(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn prepare_existing(
@@ -1527,6 +1613,29 @@ mod tests {
         let note = root.join("notes").join("Пример.md");
         fs::write(&note, b"canonical").unwrap();
         (root.clone(), RecoveryStore::new(&root), note)
+    }
+
+    #[test]
+    fn another_window_cannot_overwrite_or_autoclean_unsaved_work() {
+        let root =
+            std::env::temp_dir().join(format!("notrum-recovery-windows-{}", std::process::id()));
+        fs::create_dir_all(root.join("notes")).unwrap();
+        let first = RecoveryStore::new(&root);
+        let second = RecoveryStore::new(&root);
+        let key = first.key_for_note(root.join("notes/note.md")).unwrap();
+        first
+            .write(&key, 1, 123, 0, FNV_OFFSET_1, |_| Ok(()))
+            .unwrap();
+        assert!(
+            second
+                .write(&key, 999, 456, 0, FNV_OFFSET_1, |_| Ok(()))
+                .is_err()
+        );
+        assert!(!second.remove_saved(&key, 999).unwrap());
+        assert!(second.remove(&key).is_err());
+        assert_eq!(first.open(&key).unwrap().record.base_checksum, 123);
+        assert!(first.remove_saved(&key, 1).unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

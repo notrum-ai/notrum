@@ -112,3 +112,18 @@ fetch images. RSS never creates note files in `notes/`.
 Project-owned Rust forbids unsafe code. This does not mean all transitive
 dependencies are safe-only or free of defects. See the dated dependency
 warnings and native release limitations in the [development guide](development.md).
+
+## Concurrent local windows
+
+A workspace root (or an external file's containing directory) can contain an
+empty `.notrum-operation.lock`. It coordinates short filesystem operations;
+it contains no paths, note text or requests. Do not delete it while Notrum is
+running: the OS releases its lock on process exit, and removing the marker
+would create two independent locks. It is not an authoritative note or cache.
+
+Atomic publication and version checks run within that lock. Password rotation
+and startup transaction recovery share it, so another opening window cannot
+roll back a live transaction. Recovery writes reject a competing record and
+preserve it; automatic cleanup cannot rely on another process's revision number.
+Conflicting settings changes are reported rather than silently replacing the
+other window's settings.

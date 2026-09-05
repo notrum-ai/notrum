@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+mod operation_lock;
+pub use operation_lock::OperationLock;
+
 #[cfg(windows)]
 mod windows;
 

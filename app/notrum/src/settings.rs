@@ -77,7 +77,8 @@ impl GlobalSettingsStore {
         let home = self.home.as_deref().ok_or_else(|| {
             SettingsError::UnsafePath("HOME is unavailable; global config is disabled".to_owned())
         })?;
-        let mut settings = self.settings.clone();
+        let _operation = notrum_platform::OperationLock::directory(home)?;
+        let mut settings = Self::load(Some(home)).settings;
         settings.locale = locale;
         atomic_write_global_settings(home, &settings)?;
         self.settings = settings;
@@ -160,7 +161,8 @@ impl GlobalSettingsStore {
         if self.settings.last_workspace.as_deref() == Some(path) {
             return Ok(());
         }
-        let mut settings = self.settings.clone();
+        let _operation = notrum_platform::OperationLock::directory(home)?;
+        let mut settings = Self::load(Some(home)).settings;
         settings.last_workspace = Some(path.to_owned());
         atomic_write_global_settings(home, &settings)?;
         self.settings = settings;
@@ -402,7 +404,15 @@ impl UiSettingsStore {
         let workspace = self.workspace.as_deref().ok_or_else(|| {
             SettingsError::UnsafePath("workspace settings store is not bound".to_owned())
         })?;
-        atomic_write_settings(workspace, &settings)?;
+        let _operation = notrum_platform::OperationLock::directory(workspace)?;
+        let current = Self::load(workspace).settings;
+        let merged = merge_settings(
+            serde_json::to_value(&self.persisted).map_err(SettingsError::Serialize)?,
+            serde_json::to_value(&settings).map_err(SettingsError::Serialize)?,
+            serde_json::to_value(current).map_err(SettingsError::Serialize)?,
+        )?;
+        let merged = serde_json::from_value(merged).map_err(SettingsError::Serialize)?;
+        atomic_write_settings(workspace, &merged)?;
         self.persisted = settings;
         self.pending = None;
         Ok(())
@@ -435,6 +445,37 @@ impl From<io::Error> for SettingsError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
+}
+
+// Merge independent window changes, but never silently discard a competing edit.
+fn merge_settings(
+    base: serde_json::Value,
+    wanted: serde_json::Value,
+    current: serde_json::Value,
+) -> Result<serde_json::Value, SettingsError> {
+    if wanted == base || wanted == current {
+        return Ok(current);
+    }
+    if current == base {
+        return Ok(wanted);
+    }
+    if let (Some(base), Some(wanted), Some(current)) =
+        (base.as_object(), wanted.as_object(), current.as_object())
+    {
+        let mut merged = current.clone();
+        for (key, value) in wanted {
+            merged.insert(
+                key.clone(),
+                merge_settings(
+                    base.get(key).cloned().unwrap_or_default(),
+                    value.clone(),
+                    current.get(key).cloned().unwrap_or_default(),
+                )?,
+            );
+        }
+        return Ok(serde_json::Value::Object(merged));
+    }
+    Err(SettingsError::UnsafePath("settings changed in another window; close and reopen this workspace before changing its settings".to_owned()))
 }
 
 fn settings_path(workspace: &Path) -> PathBuf {
@@ -611,6 +652,18 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn concurrent_settings_merge_independent_fields_and_reject_conflicts() {
+        use serde_json::json;
+        let base = json!({"window": {"width": 1200, "height": 800}, "external": []});
+        let first = json!({"window": {"width": 1000, "height": 800}, "external": []});
+        let second = json!({"window": {"width": 1200, "height": 900}, "external": []});
+        let merged = super::merge_settings(base.clone(), first.clone(), second).unwrap();
+        assert_eq!(merged["window"], json!({"width": 1000, "height": 900}));
+        let collision = json!({"window": {"width": 900, "height": 800}, "external": []});
+        assert!(super::merge_settings(base, first, collision).is_err());
     }
 
     #[test]

@@ -293,6 +293,8 @@ pub fn restore_secure_backup(
     workspace: impl AsRef<Path>,
     failure: &IntegrityFailure,
 ) -> Result<SaveCommit, SaveError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| precommit(SaveStage::OpenTarget, error))?;
     let workspace = workspace.as_ref();
     let current = fs::symlink_metadata(&failure.commit.path)
         .map_err(|error| precommit(SaveStage::OpenTarget, error))?;

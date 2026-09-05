@@ -4,7 +4,6 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]
 
-#[cfg(any(target_os = "macos", windows, test))]
 mod crash_dialog;
 mod editor_geometry;
 mod i18n;
@@ -89,7 +88,6 @@ fn rtl_column(style: Style) -> Style {
 
 const SAVE_POLL_MS: u64 = 25;
 const EXTERNAL_POLL_MS: u64 = 1_000;
-#[cfg(target_os = "macos")]
 const SYSTEM_OPEN_POLL_MS: u64 = 100;
 const CARET_BLINK_MS: u64 = 530;
 const SEARCH_POLL_MS: u64 = 25;
@@ -269,61 +267,7 @@ fn probe_editor_font() -> EditorFont {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
-fn append_panic_report(error_log: &Path, summary: &str) -> std::io::Result<()> {
-    use std::io::Write as _;
-
-    let timestamp = SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs());
-    let backtrace = std::backtrace::Backtrace::force_capture();
-    let report = format!(
-        "\n=== Notrum panic: unix={timestamp} pid={} ===\n{summary}\nBacktrace:\n{backtrace}\n",
-        std::process::id()
-    );
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(error_log)?;
-    file.write_all(report.as_bytes())?;
-    file.flush()?;
-    file.sync_data()
-}
-
-#[cfg(any(target_os = "macos", windows))]
 use crash_dialog::install as install_panic_logging;
-
-#[cfg(not(any(target_os = "macos", windows)))]
-fn install_panic_logging() {
-    let error_log = env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("error.log");
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let thread = std::thread::current();
-        let thread_name = thread.name().unwrap_or("<unnamed>");
-        let payload = info
-            .payload()
-            .downcast_ref::<&str>()
-            .copied()
-            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
-            .unwrap_or("non-string panic payload");
-        let location = info.location().map_or_else(
-            || "unknown location".to_owned(),
-            |location| {
-                format!(
-                    "{}:{}:{}",
-                    location.file(),
-                    location.line(),
-                    location.column()
-                )
-            },
-        );
-        let summary = format!("thread '{thread_name}' panicked at {location}:\n{payload}");
-        let _ = append_panic_report(&error_log, &summary);
-        default_hook(info);
-    }));
-}
 
 fn main() -> Result<(), LaunchError> {
     install_panic_logging();
@@ -335,6 +279,12 @@ fn main() -> Result<(), LaunchError> {
         diagnostic: global_diagnostic,
     } = GlobalSettingsStore::load(home.as_deref());
     i18n::set_current(global_store.locale());
+    #[cfg(feature = "test-utils")]
+    if launch.smoke_panic {
+        thread::spawn(|| panic!("synthetic protected body must never reach diagnostics"))
+            .join()
+            .expect("panic hook exits");
+    }
     if let Some(diagnostic) = global_diagnostic.as_deref() {
         eprintln!("Notrum: {diagnostic}");
     }
@@ -417,6 +367,7 @@ fn main() -> Result<(), LaunchError> {
                 settings,
                 startup_prompt,
                 smoke,
+                launch.external_paths,
             )
         },
         Some(
@@ -601,6 +552,9 @@ fn startup_candidate_state(
 #[derive(Debug, Eq, PartialEq)]
 struct LaunchOptions {
     workspace: Option<PathBuf>,
+    external_paths: Vec<PathBuf>,
+    #[cfg(feature = "test-utils")]
+    smoke_panic: bool,
     smoke_exit_after: Option<Duration>,
     smoke_autosave: bool,
     smoke_restore: bool,
@@ -609,27 +563,74 @@ struct LaunchOptions {
 
 impl LaunchOptions {
     fn parse() -> Result<Self, LaunchError> {
-        Self::parse_from(env::args().skip(1))
+        let mut options = Self::parse_from(env::args_os().skip(1))?;
+        let cwd =
+            env::current_dir().map_err(|error| LaunchError::WorkingDirectory(error.to_string()))?;
+        if let Some(path) = &mut options.workspace {
+            if path.is_relative() {
+                *path = cwd.join(&*path);
+            }
+        }
+        for path in &mut options.external_paths {
+            if path.is_relative() {
+                *path = cwd.join(&*path);
+            }
+        }
+        Ok(options)
     }
 
-    fn parse_from(args: impl IntoIterator<Item = String>) -> Result<Self, LaunchError> {
+    fn parse_from<S: AsRef<std::ffi::OsStr>>(
+        args: impl IntoIterator<Item = S>,
+    ) -> Result<Self, LaunchError> {
         let mut workspace = None;
+        let mut external_paths = Vec::new();
+        let mut opening_files = false;
+        let mut open_needs_value = false;
         let mut smoke_exit_after = None;
+        #[cfg(feature = "test-utils")]
+        let mut smoke_panic = false;
         let mut smoke_autosave = false;
         let mut smoke_restore = false;
         let mut smoke_operations = false;
         let mut positional_only = false;
-        let mut args = args.into_iter();
+        let mut args = args.into_iter().map(|arg| arg.as_ref().to_os_string());
         while let Some(argument) = args.next() {
+            #[cfg(feature = "test-utils")]
+            if !positional_only && argument == "--smoke-panic" {
+                smoke_panic = true;
+                continue;
+            }
+            if !positional_only
+                && open_needs_value
+                && argument.to_string_lossy().starts_with("--")
+                && argument != "--"
+            {
+                return Err(LaunchError::MissingValue("--open"));
+            }
             if !positional_only && argument == "--" {
                 positional_only = true;
+            } else if !positional_only && argument == "--workspace" {
+                if workspace.is_some() {
+                    return Err(LaunchError::UnexpectedArgument("--workspace".to_owned()));
+                }
+                workspace = Some(PathBuf::from(
+                    args.next()
+                        .ok_or(LaunchError::MissingValue("--workspace"))?,
+                ));
+                opening_files = false;
+            } else if !positional_only && argument == "--open" {
+                opening_files = true;
+                open_needs_value = true;
             } else if !positional_only && argument == "--smoke-exit-ms" {
                 let value = args
                     .next()
                     .ok_or(LaunchError::MissingValue("--smoke-exit-ms"))?;
                 let milliseconds = value
-                    .parse::<u64>()
-                    .map_err(|_| LaunchError::InvalidSmokeExit(value))?;
+                    .to_str()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .ok_or_else(|| {
+                        LaunchError::InvalidSmokeExit(value.to_string_lossy().into_owned())
+                    })?;
                 smoke_exit_after = Some(Duration::from_millis(milliseconds));
             } else if !positional_only && argument == "--smoke-autosave" {
                 smoke_autosave = true;
@@ -637,16 +638,40 @@ impl LaunchOptions {
                 smoke_restore = true;
             } else if !positional_only && argument == "--smoke-operations" {
                 smoke_operations = true;
-            } else if !positional_only && argument.starts_with('-') {
-                return Err(LaunchError::UnknownFlag(argument));
-            } else if workspace.is_some() {
-                return Err(LaunchError::UnexpectedArgument(argument));
+            } else if !positional_only && argument.to_string_lossy().starts_with('-') {
+                return Err(LaunchError::UnknownFlag(
+                    argument.to_string_lossy().into_owned(),
+                ));
             } else {
-                workspace = Some(PathBuf::from(argument));
+                let path = PathBuf::from(&argument);
+                let file_argument = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|ext| {
+                        ["md", "markdown", "txt"]
+                            .iter()
+                            .any(|known| ext.eq_ignore_ascii_case(known))
+                    });
+                if opening_files || (!path.is_dir() && (file_argument || path.is_file())) {
+                    external_paths.push(path);
+                    open_needs_value = false;
+                } else if workspace.is_none() {
+                    workspace = Some(path);
+                } else {
+                    return Err(LaunchError::UnexpectedArgument(
+                        argument.to_string_lossy().into_owned(),
+                    ));
+                }
             }
+        }
+        if open_needs_value {
+            return Err(LaunchError::MissingValue("--open"));
         }
         Ok(Self {
             workspace,
+            external_paths,
+            #[cfg(feature = "test-utils")]
+            smoke_panic,
             smoke_exit_after,
             smoke_autosave,
             smoke_restore,
@@ -657,6 +682,7 @@ impl LaunchOptions {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum LaunchError {
+    WorkingDirectory(String),
     MissingValue(&'static str),
     InvalidSmokeExit(String),
     UnknownFlag(String),
@@ -666,6 +692,9 @@ enum LaunchError {
 impl fmt::Display for LaunchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::WorkingDirectory(error) => {
+                write!(formatter, "cannot resolve launch directory: {error}")
+            }
             Self::MissingValue(flag) => {
                 write!(formatter, "{}", tr!(FlagValue, "flag" => flag.to_string()))
             }
@@ -2104,7 +2133,6 @@ impl AppModel {
         }
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn open_external_path(&mut self, path: &Path) -> bool {
         let now_ms = self.now_ms();
         let Some(workspace) = self.workspace.as_mut() else {
@@ -2161,7 +2189,6 @@ impl AppModel {
         }
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn accept_external_paths(&mut self, paths: &[PathBuf]) -> bool {
         if let [path] = paths {
             return self.open_external_path(path);
@@ -4309,20 +4336,36 @@ fn schedule_rss_poll(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>) {
     });
 }
 
-#[cfg(target_os = "macos")]
-fn schedule_system_open_poll(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>) {
+// Keep startup requests outside AppModel: choosing a workspace replaces the model.
+fn schedule_open_requests(
+    model: Rc<RefCell<AppModel>>,
+    revision: RwSignal<u64>,
+    pending: Rc<RefCell<Vec<PathBuf>>>,
+) {
     exec_after(Duration::from_millis(SYSTEM_OPEN_POLL_MS), move |_| {
-        let paths = floem_winit::platform::macos::take_opened_files();
-        if !paths.is_empty() && model.borrow_mut().accept_external_paths(&paths) {
+        #[cfg(target_os = "macos")]
+        pending
+            .borrow_mut()
+            .extend(floem_winit::platform::macos::take_opened_files());
+        let ready = {
+            let model = model.borrow();
+            model.workspace.is_some()
+                && !model.secure_worker_active
+                && model.pending_password_change.is_none()
+                && model.pending_external_target.is_none()
+        };
+        if ready && !pending.borrow().is_empty() {
+            let paths = std::mem::take(&mut *pending.borrow_mut());
+            model.borrow_mut().accept_external_paths(&paths);
+            // Errors also change the view, even if no file could be opened.
             revision.update(|value| *value = value.saturating_add(1));
             schedule_autosave(model.clone(), revision);
         }
-        schedule_system_open_poll(model, revision);
+        if cfg!(target_os = "macos") || !pending.borrow().is_empty() {
+            schedule_open_requests(model, revision, pending);
+        }
     });
 }
-
-#[cfg(not(target_os = "macos"))]
-fn schedule_system_open_poll(_model: Rc<RefCell<AppModel>>, _revision: RwSignal<u64>) {}
 
 fn schedule_search_poll(
     model: Rc<RefCell<AppModel>>,
@@ -4647,6 +4690,7 @@ fn app_view(
     initial_settings: UiSettings,
     startup_prompt: Option<StartupWorkspacePrompt>,
     smoke: SmokeOptions,
+    external_paths: Vec<PathBuf>,
 ) -> impl IntoView {
     let revision = create_rw_signal(0_u64);
     let sidebar_width = create_rw_signal(initial_settings.sidebar.width);
@@ -4762,7 +4806,11 @@ fn app_view(
     {
         schedule_rss_poll(model.clone(), revision);
     }
-    schedule_system_open_poll(model.clone(), revision);
+    schedule_open_requests(
+        model.clone(),
+        revision,
+        Rc::new(RefCell::new(external_paths)),
+    );
     schedule_search_poll(
         model.clone(),
         revision,
@@ -6154,7 +6202,8 @@ fn encryption_password_field(
             let Event::KeyDown(key_event) = event else {
                 return EventPropagation::Stop;
             };
-            let shortcut = key_event.modifiers.meta() || key_event.modifiers.control();
+            let shortcut = (key_event.modifiers.meta() || key_event.modifiers.control())
+                && !altgr_text(key_event.modifiers, key_event.key.text.as_deref());
             match &key_event.key.logical_key {
                 Key::Named(NamedKey::Enter) => {
                     submit_master_password_change(signals, &input_model, revision);
@@ -6933,7 +6982,8 @@ fn handle_password_key(
     let Event::KeyDown(key_event) = event else {
         return EventPropagation::Continue;
     };
-    let shortcut = key_event.modifiers.meta() || key_event.modifiers.control();
+    let shortcut = (key_event.modifiers.meta() || key_event.modifiers.control())
+        && !altgr_text(key_event.modifiers, key_event.key.text.as_deref());
     match &key_event.key.logical_key {
         Key::Named(NamedKey::Escape) => {
             security.close();
@@ -7767,7 +7817,8 @@ fn is_keyboard_activation(event: &Event) -> bool {
 }
 
 fn is_search_shortcut(key_event: &floem::keyboard::KeyEvent) -> bool {
-    let shortcut = key_event.modifiers.meta() || key_event.modifiers.control();
+    let shortcut = (key_event.modifiers.meta() || key_event.modifiers.control())
+        && !altgr_text(key_event.modifiers, key_event.key.text.as_deref());
     shortcut
         && matches!(
             &key_event.key.logical_key,
@@ -7776,7 +7827,8 @@ fn is_search_shortcut(key_event: &floem::keyboard::KeyEvent) -> bool {
 }
 
 fn is_note_find_shortcut(key_event: &floem::keyboard::KeyEvent) -> bool {
-    let shortcut = key_event.modifiers.meta() || key_event.modifiers.control();
+    let shortcut = (key_event.modifiers.meta() || key_event.modifiers.control())
+        && !altgr_text(key_event.modifiers, key_event.key.text.as_deref());
     shortcut
         && matches!(
             &key_event.key.logical_key,
@@ -7785,7 +7837,8 @@ fn is_note_find_shortcut(key_event: &floem::keyboard::KeyEvent) -> bool {
 }
 
 fn is_go_to_line_shortcut(key_event: &floem::keyboard::KeyEvent) -> bool {
-    let shortcut = key_event.modifiers.meta() || key_event.modifiers.control();
+    let shortcut = (key_event.modifiers.meta() || key_event.modifiers.control())
+        && !altgr_text(key_event.modifiers, key_event.key.text.as_deref());
     shortcut
         && matches!(
             &key_event.key.logical_key,
@@ -9143,14 +9196,15 @@ fn creation_choices(
             file_spec.name = i18n::static_filter_name();
             let options = FileDialogOptions::new()
                 .title(tr!(ChooseExternal))
+                .multi_selection()
                 .allowed_types(vec![file_spec]);
             let selected_model = file_model.clone();
             open_file(options, move |selection| {
                 picker_active.set(false);
-                let Some(path) = selection.and_then(|file| file.path.into_iter().next()) else {
+                let Some(paths) = selection.map(|file| file.path) else {
                     return;
                 };
-                selected_model.borrow_mut().open_external_path(&path);
+                selected_model.borrow_mut().accept_external_paths(&paths);
                 revision.update(|value| *value += 1);
                 schedule_autosave(selected_model.clone(), revision);
             });
@@ -10784,7 +10838,7 @@ fn sidebar_panel(
     let header = h_stack((
         icon_button(
             ICON_SEARCH,
-            || tr!(SearchShortcut),
+            || tr!(SearchShortcut, "modifier" => i18n::shortcut_modifier()),
             IconButtonTone::Sidebar,
             palette,
             move || {
@@ -12811,7 +12865,7 @@ fn editor_panel(
     let find_button_disabled_model = model.clone();
     let find_action = icon_toggle_button(
         ICON_SEARCH,
-        || tr!(FindShortcut),
+        || tr!(FindShortcut, "modifier" => i18n::shortcut_modifier()),
         palette,
         move || note_find.open.get(),
         move || {
@@ -13054,11 +13108,22 @@ fn handle_key_event(
     model: &Rc<RefCell<AppModel>>,
     revision: RwSignal<u64>,
 ) {
-    let shortcut = key_event.modifiers.meta() || key_event.modifiers.control();
+    let shortcut = (key_event.modifiers.meta() || key_event.modifiers.control())
+        && !altgr_text(key_event.modifiers, key_event.key.text.as_deref());
     let word_modifier =
         key_event.modifiers.alt() || (key_event.modifiers.control() && !key_event.modifiers.meta());
     let shift = key_event.modifiers.shift();
-    let command = if is_toggle_task_done_shortcut(key_event.modifiers, key_event.key.physical_key) {
+    let command = if altgr_text(key_event.modifiers, key_event.key.text.as_deref()) {
+        key_event
+            .key
+            .text
+            .as_ref()
+            .map(|text| EditorCommand::Insert(text.to_string()))
+    } else if let Some(command) =
+        platform_edit_command(&key_event.key.logical_key, key_event.modifiers)
+    {
+        Some(command)
+    } else if is_toggle_task_done_shortcut(key_event.modifiers, key_event.key.physical_key) {
         Some(EditorCommand::ToggleTaskDone)
     } else {
         match &key_event.key.logical_key {
@@ -13129,6 +13194,26 @@ fn handle_key_event(
         execute_editor_command(model, revision, command);
     } else {
         revision.update(|value| *value += 1);
+    }
+}
+
+fn altgr_text(modifiers: Modifiers, text: Option<&str>) -> bool {
+    modifiers.control()
+        && modifiers.alt()
+        && !modifiers.meta()
+        && text.is_some_and(|text| !text.is_empty() && text.chars().all(|c| !c.is_control()))
+}
+
+fn platform_edit_command(key: &Key, modifiers: Modifiers) -> Option<EditorCommand> {
+    if cfg!(target_os = "macos") || !modifiers.control() || modifiers.alt() || modifiers.meta() {
+        return None;
+    }
+    let extend = modifiers.shift();
+    match key {
+        Key::Named(NamedKey::Home) => Some(EditorCommand::MoveDocumentStart { extend }),
+        Key::Named(NamedKey::End) => Some(EditorCommand::MoveDocumentEnd { extend }),
+        Key::Character(value) if value.eq_ignore_ascii_case("y") => Some(EditorCommand::Redo),
+        _ => None,
     }
 }
 
@@ -15096,6 +15181,127 @@ mod tests {
             super::popover_left(300.0, 32.0, 200.0, 860.0, true, true),
             132.0
         );
+    }
+
+    #[test]
+    fn launch_accepts_file_batches_and_explicit_workspace() {
+        assert_eq!(
+            LaunchOptions::parse_from(["--open", "--", "--literal.txt"])
+                .unwrap()
+                .external_paths,
+            [std::path::PathBuf::from("--literal.txt")]
+        );
+        let parsed = LaunchOptions::parse_from([
+            "--workspace",
+            "workspace",
+            "--open",
+            "one.MD",
+            "Заметка #2.markdown",
+            "--smoke-exit-ms",
+            "25",
+            "--",
+            "-third.txt",
+        ])
+        .unwrap();
+        assert_eq!(parsed.workspace, Some("workspace".into()));
+        assert_eq!(
+            parsed.external_paths,
+            ["one.MD", "Заметка #2.markdown", "-third.txt"].map(std::path::PathBuf::from)
+        );
+        assert_eq!(
+            LaunchOptions::parse_from(["one.md", "two.txt"])
+                .unwrap()
+                .external_paths
+                .len(),
+            2
+        );
+        for args in [
+            vec!["--open"],
+            vec!["--workspace"],
+            vec!["--open", "--workspace", "workspace"],
+        ] {
+            assert!(matches!(
+                LaunchOptions::parse_from(args),
+                Err(LaunchError::MissingValue(_))
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_preserves_non_unicode_paths() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let path = std::ffi::OsString::from_vec(b"note\xff.md".to_vec());
+        let parsed = LaunchOptions::parse_from([path.clone()]).unwrap();
+        assert_eq!(
+            parsed.external_paths[0].as_os_str().as_bytes(),
+            path.as_bytes()
+        );
+    }
+
+    #[test]
+    fn desktop_shortcuts_and_altgr_preserve_text_input() {
+        use floem::keyboard::{Key, NamedKey};
+        assert!(super::altgr_text(
+            Modifiers::CONTROL | Modifiers::ALT,
+            Some("@")
+        ));
+        assert!(!super::altgr_text(Modifiers::CONTROL, Some("a")));
+        assert!(!super::altgr_text(
+            Modifiers::CONTROL | Modifiers::ALT,
+            Some("\r")
+        ));
+        let command = super::platform_edit_command(
+            &Key::Named(NamedKey::Home),
+            Modifiers::CONTROL | Modifiers::SHIFT,
+        );
+        if cfg!(target_os = "macos") {
+            assert!(command.is_none());
+        } else {
+            assert!(matches!(
+                command,
+                Some(EditorCommand::MoveDocumentStart { extend: true })
+            ));
+            assert!(matches!(
+                super::platform_edit_command(&Key::Named(NamedKey::End), Modifiers::CONTROL),
+                Some(EditorCommand::MoveDocumentEnd { extend: false })
+            ));
+            assert!(matches!(
+                super::platform_edit_command(&Key::Character("y".into()), Modifiers::CONTROL),
+                Some(EditorCommand::Redo)
+            ));
+        }
+    }
+
+    #[test]
+    fn external_batches_keep_order_duplicates_and_errors() {
+        let root = std::env::temp_dir().join(format!(
+            "notrum-open-batch-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("notes")).unwrap();
+        let first = root.join("日本語 one.MD");
+        let second = root.join("second.txt");
+        fs::write(&first, "First\n").unwrap();
+        fs::write(&second, "Second\n").unwrap();
+        let mut model = AppModel::load(&root);
+        assert!(model.accept_external_paths(&[
+            first.clone(),
+            root.join("missing.md"),
+            second.clone(),
+            first.clone()
+        ]));
+        assert!(model.error.is_some());
+        let workspace = model.workspace.as_ref().unwrap();
+        assert_eq!(workspace.external_files().len(), 2);
+        assert_eq!(fs::read_to_string(&first).unwrap(), "First\n");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "Second\n");
+        drop(model);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -17454,34 +17660,6 @@ mod tests {
             parse_go_to_line("13", 12),
             Err(GoToLineError::OutOfRange { maximum: 12 })
         );
-    }
-
-    #[test]
-    #[cfg(not(any(target_os = "macos", windows)))]
-    fn panic_report_appends_a_forced_backtrace() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-panic-report-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).expect("create panic-report directory");
-        let error_log = root.join("error.log");
-
-        super::append_panic_report(&error_log, "synthetic first panic")
-            .expect("append first panic report");
-        super::append_panic_report(&error_log, "synthetic second panic")
-            .expect("append second panic report");
-
-        let report = fs::read_to_string(&error_log).expect("read panic report");
-        assert_eq!(report.matches("=== Notrum panic:").count(), 2);
-        assert!(report.contains("synthetic first panic"));
-        assert!(report.contains("synthetic second panic"));
-        assert!(report.contains("Backtrace:"));
-
-        fs::remove_dir_all(root).expect("remove panic-report directory");
     }
 
     #[test]

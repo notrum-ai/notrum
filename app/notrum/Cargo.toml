@@ -33,3 +33,6 @@ copypasta = { version = "=0.10.2", default-features = false }
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "=0.14.1", default-features = false }
 copypasta = { version = "=0.10.2", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk4 = { version = "=0.9.7", default-features = false }

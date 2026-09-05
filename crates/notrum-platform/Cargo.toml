@@ -8,10 +8,10 @@ authors.workspace = true
 
 [dependencies]
 serde = { version = "=1.0.228", features = ["derive"] }
+fs4 = { version = "=0.13.1", default-features = false, features = ["sync"] }
 
 [target.'cfg(windows)'.dependencies]
 sha2 = "=0.10.9"
 winapi-util = "=0.1.11"
 atomicwrites = "=0.4.4"
 windows-acl = "=0.3.0"
-

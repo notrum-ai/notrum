@@ -46,7 +46,7 @@ Notrum preserves unknown front matter fields and unrelated files. Opening a
 workspace does not rewrite notes. It does not scan nested note directories or
 follow note symlinks.
 
-## External files and Finder
+## External files and desktop opening
 
 External `.md`, `.markdown`, and `.txt` files open as complete UTF-8 text without
 parsing YAML front matter. They remain at their original locations and are not
@@ -62,6 +62,28 @@ Get Info (`⌘I`), choose Notrum under Open with, and select Change All if you
 want it to become the default. Double-clicking a file or choosing Open with
 then delivers it to the running application or launches Notrum. The file
 appears in the active workspace's External group.
+
+On Linux, run the package's `python3 Register.py` to add Notrum to Open With;
+`python3 Register.py --remove` removes that registration. Python 3 is needed only
+for registration. On Windows, run `powershell -NoProfile -File .\Register.ps1`;
+add `-Remove` to unregister. Neither registration changes your default editor.
+Register again after moving the portable package.
+
+You can also pass files directly: `notrum --open first.md second.txt`, optionally
+with `--workspace /path/to/workspace`. A directory argument alone keeps its
+workspace-selection meaning. Requests wait for workspace selection on first
+launch. Linux and Windows can open a new window; Finder normally reuses the
+running macOS application.
+
+Different windows keep independent editor state. A conflicting save or recovery
+write is reported instead of overwriting another window's work. Independent
+settings changes are merged; conflicting changes to the same setting require
+closing and reopening the workspace. Resolve conflicts before closing a window
+with unsaved edits.
+
+Search and Find hints show Cmd on macOS and Ctrl on Windows/Linux. The latter
+also support Ctrl+Home/End, Ctrl+Shift+Home/End and Ctrl+Y. AltGr text input stays
+available.
 
 ## RSS and Atom
 

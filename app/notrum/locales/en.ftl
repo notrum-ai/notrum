@@ -160,7 +160,7 @@ FileLocked = { $value }
     File locked
 RemoveSidebar = Remove from sidebar
 CreateOrOpen = Create a note or open a file
-SearchShortcut = Search notes (⌘K)
+SearchShortcut = Search notes ({ $modifier }K)
 Title = Title
 Tag = Tag
 Body = Text
@@ -195,7 +195,7 @@ MatchPosition = { $value } of { $count }
 PreviousMatch = Previous match (Shift+Enter)
 NextMatch = Next match (Enter)
 CloseFind = Close search (Escape)
-FindShortcut = Find in document (⌘F)
+FindShortcut = Find in document ({ $modifier }F)
 Cut = Cut
 Copy = Copy
 Paste = Paste

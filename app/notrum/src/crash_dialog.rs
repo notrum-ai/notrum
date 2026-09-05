@@ -58,12 +58,14 @@ fn append_report(path: &Path, report: &str) -> std::io::Result<()> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(target_os = "macos", windows, test))]
 enum Choice {
     Copy,
     Close,
 }
 
 // The dialog and clipboard are injectable so tests never open native UI or exit.
+#[cfg(any(target_os = "macos", windows, test))]
 fn present_report(
     report: &Report,
     mut show: impl FnMut(&str, bool) -> Choice,
@@ -88,7 +90,6 @@ fn log_and_present(
     logged
 }
 
-#[cfg(any(target_os = "macos", windows))]
 pub(super) fn install() {
     let error_log = std::env::current_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -102,11 +103,98 @@ pub(super) fn install() {
         // Do not invoke the default hook: it prints arbitrary panic payloads.
         let _ = std::io::stderr().write_all(report.text.as_bytes());
         let _ = log_and_present(&error_log, &report, |report| {
+            #[cfg(any(target_os = "macos", windows))]
             present_report(report, show_native, copy_native);
+            #[cfg(target_os = "linux")]
+            linux::present(report);
         });
         // Never resume the damaged event loop or run editor shutdown/autosave.
         std::process::exit(1);
     }));
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use gtk4::{gdk, gio, glib, prelude::*};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    pub(super) fn present(report: &Report) {
+        let summary = report.summary.clone();
+        let text = report.text.clone();
+        let locale = i18n::crash_locale();
+        let (started, ready) = mpsc::sync_channel(1);
+        let (closed, done) = mpsc::sync_channel(1);
+        // This independent GTK loop works even when the Floem thread panics.
+        let spawned = std::thread::Builder::new().spawn(move || {
+            if gtk4::init().is_err() {
+                return;
+            }
+            let Some(display) = gdk::Display::default() else {
+                return;
+            };
+            let loop_ = glib::MainLoop::new(None, false);
+            let window = gtk4::Window::builder()
+                .title(msg!(CrashTitle).render_for(locale))
+                .default_width(480)
+                .resizable(false)
+                .build();
+            let content = gtk4::Box::new(gtk4::Orientation::Vertical, 16);
+            content.set_margin_top(24);
+            content.set_margin_bottom(24);
+            content.set_margin_start(24);
+            content.set_margin_end(24);
+            let label = gtk4::Label::new(Some(&summary));
+            label.set_wrap(true);
+            label.set_selectable(true);
+            content.append(&label);
+            let feedback = gtk4::Label::new(None);
+            feedback.set_wrap(true);
+            content.append(&feedback);
+            let buttons = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+            let copy = gtk4::Button::with_label(&msg!(CopyTrace).render_for(locale));
+            let close = gtk4::Button::with_label(&msg!(Close).render_for(locale));
+            let clipboard = display.clipboard();
+            copy.connect_clicked(move |_| {
+                clipboard.set_text(&text);
+                let expected = text.clone();
+                let feedback = feedback.clone();
+                clipboard.read_text_async(None::<&gio::Cancellable>, move |result| {
+                    let copied = result
+                        .ok()
+                        .flatten()
+                        .is_some_and(|actual| actual.as_str() == expected);
+                    let message = if copied {
+                        String::new()
+                    } else {
+                        msg!(CopyTraceFailed).render_for(locale)
+                    };
+                    feedback.set_text(&message);
+                });
+            });
+            let close_window = window.clone();
+            close.connect_clicked(move |_| close_window.close());
+            buttons.append(&copy);
+            buttons.append(&close);
+            content.append(&buttons);
+            window.set_child(Some(&content));
+            let closing_loop = loop_.clone();
+            window.connect_close_request(move |_| {
+                closing_loop.quit();
+                glib::Propagation::Proceed
+            });
+            window.present();
+            let _ = started.send(());
+            // Keep ownership of the clipboard while the report is displayed,
+            // including Wayland desktops without a clipboard manager.
+            loop_.run();
+            let _ = closed.send(());
+        });
+        if spawned.is_ok() && ready.recv_timeout(Duration::from_secs(3)).is_ok() {
+            let _ = done.recv();
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", windows))]

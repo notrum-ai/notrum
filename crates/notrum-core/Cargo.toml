@@ -18,6 +18,7 @@ test-utils = [
 path = "src/lib.rs"
 
 [dependencies]
+notrum-platform = { version = "0.1.0", path = "../notrum-platform" }
 notrum-editor = { version = "0.1.0", path = "../notrum-editor" }
 notrum-engine = { version = "0.1.0", path = "../notrum-engine" }
 notrum-frontmatter = { version = "0.1.0", path = "../notrum-frontmatter" }

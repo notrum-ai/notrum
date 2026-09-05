@@ -3,7 +3,7 @@
 # Windows builds and acceptance
 
 Supported target: Windows 10/11 x64, local NTFS, portable application.
-An installer, code signing, file association registration, ARM64, network shares,
+An installer, code signing, ARM64, network shares,
 and other filesystems are outside this target. The dependency audit includes
 `x86_64-pc-windows-gnu`; the compiler remains Rust 1.88.0.
 
@@ -26,7 +26,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Run-Tests.ps1
 No Rust installation is required. The runner requires a local NTFS temporary
 directory, creates isolated Unicode paths with spaces, redirects global settings
 to that test profile, creates an NTFS junction fixture, runs every compiled test
-executable, and starts the native application with a timed exit. Tests and logs
+executable, starts the native application with a timed exit, opens multiple external files,
+and tests registration in an isolated registry subtree. Tests and logs
 are retained under the printed temporary directory for diagnosis. Existing
 workspaces and the user's real `.notrum.cfg` are not used.
 
@@ -88,3 +89,12 @@ information. Legacy journals without a marker are Unix journals. A journal from
 a different platform blocks transaction recovery and is preserved for diagnosis.
 Internal relative paths continue to use `/`; absolute external paths and the
 Windows home/profile path use native path handling.
+
+## Optional Open With registration
+
+Run `powershell -NoProfile -File .\Register.ps1` from the portable package.
+Use `-Remove` to unregister that copy. The script changes only current-user
+Notrum registration and OpenWithProgids for `.md`, `.markdown`, and `.txt`.
+It never writes UserChoice or replaces the default application. Re-register
+after moving the package. Explorer launches the executable with the requested
+file; a new process/window is allowed.

@@ -135,6 +135,14 @@ thread_local! {
 }
 static CRASH_LANGUAGE: AtomicUsize = AtomicUsize::new(0);
 
+pub(crate) fn shortcut_modifier() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "⌘"
+    } else {
+        "Ctrl+"
+    }
+}
+
 pub(crate) fn current() -> Locale {
     LANGUAGE.with(SignalGet::get)
 }
@@ -149,7 +157,6 @@ pub(crate) fn set_current(locale: Locale) {
     );
 }
 
-#[cfg(any(target_os = "macos", windows, test))]
 pub(crate) fn crash_locale() -> Locale {
     Locale::ALL
         .get(CRASH_LANGUAGE.load(Ordering::Relaxed))

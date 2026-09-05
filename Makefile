@@ -16,8 +16,8 @@ SOURCE_REVISION ?=
 DEMO_WORKSPACE ?= /workspace/examples/demo-workspace
 UI_JOBS ?= 2
 
-UI_ACCEPTANCE_STANDARD := ui-click-localization ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
-UI_ACCEPTANCE_SECURE := ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
+UI_ACCEPTANCE_STANDARD := ui-click-external ui-click-localization ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
+UI_ACCEPTANCE_SECURE := ui-click-crash ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
 
 .PHONY: all help check clean build build-windows test-windows-build build-macos build-linux build-linux-smoke build-container native-smoke native-external-smoke demo-data test-demo-data check-macos test test-release lint fmt fmt-check lock tree audit audit-source audit-dependencies audit-vulnerabilities \
 	diff-check status log diff-stat diff image benchmark-generate \
@@ -63,6 +63,7 @@ test-windows-build:
 build-linux:
 	$(RUN) cargo build --locked --release -p notrum-app --bin notrum-app
 	$(RUN) sh -eu -c 'output="/workspace/dist/linux/$$(uname -m)/notrum"; install -D -s -m 755 "$$CARGO_TARGET_DIR/release/notrum-app" "$$output"; printf "BUILT_APP path=%s\n" "$$output"'
+	$(RUN) python3 -B tools/package_linux.py
 
 build-linux-smoke: build-linux
 	$(RUN) sh tools/smoke_linux.sh
@@ -71,7 +72,7 @@ build-container:
 	$(RUN) cargo build --workspace --all-targets --all-features
 
 native-smoke: demo-data build
-	@workspace="$$(mktemp -d /tmp/notrum-native-smoke.XXXXXX)"; trap 'rm -rf "$$workspace"' EXIT; cp -R examples/demo-workspace/. "$$workspace"; ./dist/Notrum.app/Contents/MacOS/Notrum "$$workspace" --smoke-exit-ms 1800
+	@workspace="$$(mktemp -d /tmp/notrum-native-smoke.XXXXXX)"; trap 'rm -rf "$$workspace"' EXIT; cp -R examples/demo-workspace/. "$$workspace"; HOME="$$workspace" ./dist/Notrum.app/Contents/MacOS/Notrum "$$workspace" --smoke-exit-ms 1800
 
 native-external-smoke: demo-data
 	python3 tools/native_external_smoke.py
@@ -81,6 +82,7 @@ demo-data:
 
 test-demo-data:
 	$(RUN) python3 -B tools/test_generate_demo_data.py
+	$(RUN) python3 -B tools/test_desktop_registration.py
 
 check-macos:
 	$(RUN) env CC_aarch64_apple_darwin=clang CFLAGS_aarch64_apple_darwin='-ffreestanding -nostdinc -isystem /usr/lib/llvm-14/lib/clang/14.0.6/include -I/workspace/docker/rust/macos-cross-headers' cargo check -p notrum-app --target aarch64-apple-darwin
@@ -298,3 +300,10 @@ ui-acceptance: ui-build ui-click-caret
 	$(MAKE) -j$(UI_JOBS) UI_ACCEPTANCE_PARALLEL=1 -o ui-build-test-utils $(UI_ACCEPTANCE_SECURE)
 
 ui-check: ui-smoke ui-autosave-smoke ui-recovery-smoke ui-conflict-smoke ui-operations-smoke ui-acceptance
+
+.PHONY: ui-click-external ui-click-crash
+ui-click-external: ui-build
+	$(RUN) python3 -B tools/desktop_smoke.py external
+
+ui-click-crash: ui-build-test-utils
+	$(RUN) python3 -B tools/desktop_smoke.py crash

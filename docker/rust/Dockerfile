@@ -14,6 +14,7 @@ RUN apt-get update \
         imagemagick \
         libegl1-mesa-dev \
         libgtk-3-dev \
+        libgtk-4-dev \
         libwayland-dev \
         libx11-xcb-dev \
         libxcb-shape0-dev \

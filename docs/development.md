@@ -198,3 +198,56 @@ accessibility, large-file UI, and protected-note UX checks; address the open
 dependency warnings; prepare the license notices and corresponding source for
 the distribution; and complete signing, notarization, and a Gatekeeper smoke.
 Docker checks and a native launch smoke alone do not establish release readiness.
+
+## Platform feature audit
+
+The application has equivalent features on its three existing targets. Platform
+adapters remain where the OS interfaces or filesystem guarantees differ.
+
+| Area | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| External files in the app / command line | Shared open pipeline | Shared open pipeline | Shared open pipeline |
+| Desktop delivery | Pinned Finder callback adapter | Desktop Exec arguments; new process | Open With command arguments; new process |
+| Registration | Bundle document types | Opt-in Register.py, XDG applications/icon | Opt-in Register.ps1, HKCU ProgID |
+| Fatal error report | RFD + native clipboard | Separate GTK4 loop + GDK clipboard | RFD + native clipboard |
+| Primary keyboard hints | Cmd | Ctrl | Ctrl |
+| Editing, search, RSS, encryption, recovery | Shared implementation | Shared implementation | Shared implementation |
+| File identity / permissions / commit barriers | Unix handles and modes | Unix handles and modes | Windows handles, ACLs, NTFS barriers |
+| Home directory | HOME | HOME | USERPROFILE, HOMEDRIVE/HOMEPATH fallback |
+| Native acceptance | Native smoke + Finder delivery | Xvfb UI and desktop smoke | Compiled test kit; native results recorded separately |
+
+Linux crash UI uses gtk4 0.9.7 on its own initialized thread, without restarting
+Floem or launching a dialog helper process. GTK4 runtime libraries are required;
+file/folder dialogs retain the existing XDG portal backend. In headless mode a
+fatal error writes the same redacted report and exits. Copy keeps the Linux
+report dialog alive so a desktop without a clipboard manager can still paste.
+The `--smoke-panic` synthetic worker failure exists only with `test-utils`.
+
+`make ui-click-external` exercises both CLI and real GIO desktop delivery,
+including package paths containing spaces, Unicode, quotes, dollar and percent
+characters. The installed Exec uses `/usr/bin/env --` to avoid GIO's initial
+executable lookup treating literal percent characters as unexpanded field codes.
+The same acceptance starts two processes on one workspace, checks stale-save
+conflicts, and verifies that subsequent edits preserve the losing window's
+recovery without changing the winning file.
+`make ui-click-crash` checks the GTK report, clipboard and headless fallback.
+Both scenarios participate in the existing final aggregates. Windows registration
+tests use a disposable registry subtree, not the real user associations.
+
+The source audit found that other `cfg(unix)` / `cfg(windows)` branches implement
+file identity, permission preservation, secure storage and sync barriers, or
+provision OS-specific link fixtures. They must remain. Unsupported-platform
+fallbacks exclude systems outside the three targets. Linux font-coverage tests
+check the controlled Docker font set; native font/IME acceptance remains a
+separate environment check. Apple Silicon packaging and Windows x64 targeting
+are architecture boundaries, not missing application features.
+
+No inter-process routing is introduced. Short reentrant operation locks serialize
+checked note writes, recovery writes, security changes and startup repair.
+Concurrent note saves still compare their original file versions under the lock.
+Recovery stores remember the record they observed/wrote, so an unrelated window
+cannot overwrite or automatically remove that record using its own revision
+counter. Settings use three-way field merging and report competing edits.
+Password rotation rechecks the encrypted target set while holding the operation
+lock. Stale protection and recovery jobs reauthenticate against the current
+workspace verifier before publishing ciphertext.

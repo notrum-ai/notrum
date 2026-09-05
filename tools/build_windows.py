@@ -177,13 +177,14 @@ def package_application() -> None:
         inspect_pe(executable, gui=True)
         dependencies = bundle_dependencies([executable], staged)
         shutil.copy2(ROOT / "LICENSE", staged / "LICENSE.txt")
+        shutil.copy2(ROOT / "tools/register_windows.ps1", staged / "Register.ps1")
         if list(staged.glob("*.dll")):
             shutil.copy2("/usr/share/doc/mingw-w64-common/copyright", staged / "MinGW-LICENSE.txt")
         (staged / "dependencies.json").write_text(json.dumps(dependencies, indent=2) + "\n")
         OUTPUT.mkdir(exist_ok=True)
         # Only replace Windows package files, retaining the separately built test kit.
         previous = previous_runtime_names(OUTPUT) | {
-            "notrum.exe", "license.txt", "mingw-license.txt", "dependencies.json"
+            "notrum.exe", "license.txt", "mingw-license.txt", "dependencies.json", "register.ps1"
         }
         for old in OUTPUT.iterdir():
             if old.is_file() and old.name.lower() in previous:

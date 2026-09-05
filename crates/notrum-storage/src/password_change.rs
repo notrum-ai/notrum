@@ -293,6 +293,8 @@ pub fn rotate_workspace_security(
     new: &MasterPassword,
     mut progress: impl FnMut(PasswordChangeProgress),
 ) -> Result<PasswordChangeCommit, PasswordChangeError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| PasswordChangeError::Blocked(error.to_string()))?;
     let SecurityRotationTargets {
         verifier,
         secrets,
@@ -303,7 +305,7 @@ pub fn rotate_workspace_security(
     {
         let _ = (workspace, targets, current, new, progress);
         return Err(PasswordChangeError::Invalid(
-            "password change is only supported on Unix".to_owned(),
+            "password change is supported on Unix and Windows".to_owned(),
         ));
     }
 
@@ -616,6 +618,8 @@ pub fn rotate_workspace_security(
 /// A completely installed new set is accepted; every other unambiguous state is
 /// restored from the recorded ciphertext copies.
 pub fn recover_password_change(workspace: impl AsRef<Path>) -> Result<(), PasswordChangeError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| PasswordChangeError::Blocked(error.to_string()))?;
     let workspace = workspace.as_ref();
     let Some(directory) = active_transaction_directory(workspace)? else {
         return Ok(());
@@ -799,7 +803,7 @@ impl Transaction {
     fn save_journal(&self) -> Result<(), PasswordChangeError> {
         #[cfg(not(any(unix, windows)))]
         return Err(PasswordChangeError::Invalid(
-            "password change is only supported on Unix".to_owned(),
+            "password change is supported on Unix and Windows".to_owned(),
         ));
 
         #[cfg(any(unix, windows))]
@@ -1834,7 +1838,7 @@ fn ensure_private_directory(path: &Path) -> Result<(), PasswordChangeError> {
     {
         let _ = path;
         Err(PasswordChangeError::Invalid(
-            "password change is only supported on Unix".to_owned(),
+            "password change is supported on Unix and Windows".to_owned(),
         ))
     }
 }
@@ -1897,6 +1901,47 @@ mod tests {
         protect_note_body(&path, &version, password, "Private").unwrap();
         let version = open_versioned(&path).unwrap().1;
         (path, version)
+    }
+
+    #[test]
+    fn another_window_cannot_recover_a_live_password_transaction() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let root = workspace("concurrent-recovery");
+        let old = MasterPassword::new("old concurrent password".to_owned());
+        let new = MasterPassword::new("new concurrent password".to_owned());
+        let (path, version) = protected_note(&root, "Private.md", &old);
+        let target = PasswordChangeTarget {
+            path: path.clone(),
+            version,
+        };
+        let (started, receiving) = mpsc::channel();
+        let (resume, resumed) = mpsc::channel();
+        let changing_root = root.clone();
+        let worker = std::thread::spawn(move || {
+            let mut paused = false;
+            change_master_password(&changing_root, &[target], &[], &old, &new, |_| {
+                if !paused {
+                    paused = true;
+                    started.send(()).unwrap();
+                    resumed.recv().unwrap();
+                }
+            })
+            .unwrap();
+        });
+        receiving.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (finished, finishing) = mpsc::channel();
+        let recovery_root = root.clone();
+        let recovery = std::thread::spawn(move || {
+            recover_password_change(recovery_root).unwrap();
+            finished.send(()).unwrap();
+        });
+        assert!(finishing.recv_timeout(Duration::from_millis(50)).is_err());
+        resume.send(()).unwrap();
+        worker.join().unwrap();
+        finishing.recv_timeout(Duration::from_secs(5)).unwrap();
+        recovery.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

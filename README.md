@@ -19,7 +19,7 @@ Your notes remain Markdown files that you can back up or open in another editor.
 - Categories from YAML tags, favorites, pinning, manual ordering, and sorting.
 - Local search and soft deletion of notes.
 - Password-protected note bodies using authenticated age encryption.
-- External `.md`, `.markdown`, and `.txt` files opened in place, including from Finder.
+- External `.md`, `.markdown`, and `.txt` files opened in place, including through the file manager on macOS, Linux, and Windows.
 - HTTPS RSS and Atom subscriptions with a native reader and `J`/`K` navigation.
 
 ## Project status
@@ -92,7 +92,12 @@ make build-linux
 The stripped release binary is written to `dist/linux/<architecture>/notrum`,
 where the architecture matches the Docker container: `aarch64` on Apple
 Silicon by default, or `x86_64` on an Intel/AMD host. Build on the matching
-architecture for the destination Linux machine. The command also works from
+architecture for the destination Linux machine. The package also includes a desktop entry, icon, and optional `Register.py` script.
+Run `python3 Register.py` on the destination Linux desktop to add Notrum to
+Open With, or `python3 Register.py --remove` to remove that registration.
+The script does not change default applications.
+
+The command also works from
 macOS, but the resulting executable runs only on Linux.
 
 On Linux, launch it with an optional workspace path:
@@ -103,7 +108,7 @@ On Linux, launch it with an optional workspace path:
 
 This is a dynamically linked binary built on Debian 12 (glibc 2.36), not a
 self-contained application bundle. A compatible Linux desktop with X11 or
-Wayland, the corresponding system libraries, fonts, and an XDG desktop portal
+Wayland, the corresponding system libraries, fonts, GTK4 (4.0 or newer), and an XDG desktop portal
 for file dialogs is required. See the [development guide](docs/development.md)
 for build verification and release limitations.
 
@@ -120,6 +125,8 @@ Copy `dist/windows/x86_64/` to a Windows computer and run `Notrum.exe`.
 Any required non-system runtime DLLs are included beside the executable.
 The application is portable, unsigned, and runs without a console window.
 The existing `make build` command still builds the macOS application.
+For optional Open With registration, run `powershell -NoProfile -File .\Register.ps1`
+in the package directory; add `-Remove` to unregister. Defaults are unchanged.
 
 Settings use `%USERPROFILE%\.notrum.cfg`, falling back to
 `%HOMEDRIVE%%HOMEPATH%\.notrum.cfg`. English remains the default language;
@@ -128,6 +135,24 @@ all 17 language variants and saved workspace selection are available.
 Run the supplied test kit and complete the native UI checklist before treating
 that Windows build as validated. Instructions, supported filesystem boundaries,
 and known validation limits are in [docs/windows.md](docs/windows.md).
+
+## Opening external files
+
+On every supported OS the executable accepts:
+
+```sh
+notrum --workspace /absolute/path/to/workspace --open first.md second.txt
+notrum first.md second.markdown
+```
+
+A single directory argument still selects a workspace. Relative paths are
+resolved against the launch directory; use `--` before paths beginning with `-`.
+When no workspace is configured, select one in the startup dialog; the requested
+files wait until that choice. Files stay in their original locations.
+
+Linux and Windows may start another process when opening files from the desktop.
+Finder delivers files to the running macOS application. There is no inter-instance
+message queue or single-instance requirement.
 
 ## Documentation and contributions
 

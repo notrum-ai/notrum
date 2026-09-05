@@ -255,6 +255,17 @@ pub struct WorkspaceSession {
 impl WorkspaceSession {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, CoreError> {
         let root = root.as_ref().to_path_buf();
+        // Validate before recovery/repair can create any coordination marker.
+        for directory in [&root, &root.join("notes")] {
+            let metadata = std::fs::symlink_metadata(directory)
+                .map_err(|error| CoreError::Workspace(error.to_string()))?;
+            if !metadata.file_type().is_dir() {
+                return Err(CoreError::Workspace(format!(
+                    "workspace requires a real directory: {}",
+                    directory.display()
+                )));
+            }
+        }
         recover_password_change(&root)?;
         let cleanup_diagnostic = cleanup_stale_secure_temps(&root)
             .err()
@@ -987,6 +998,7 @@ impl WorkspaceSession {
             });
         }
         let recovery_paths = self.recovery_store.protected_artifact_paths()?;
+        let secret_catalog = self.security_store.inspect(true)?.secrets;
         for index in 0..self.engines.len() {
             if let Err(error) = self.engines[index].quiesce() {
                 for engine in &mut self.engines[..index] {
@@ -1004,6 +1016,7 @@ impl WorkspaceSession {
                 workspace: self.root.clone(),
                 verifier,
                 secrets,
+                secret_catalog,
                 notes,
                 recovery_paths,
                 current,
@@ -3928,15 +3941,31 @@ impl RecoveryJob {
         let body_checksum = self.snapshot.checksum_fnv1a();
         let snapshot = self.snapshot;
         let result = if let Some(protected) = &self.protected {
-            self.store.write_protected(
-                &self.key,
-                &protected.password,
-                self.revision,
-                self.base_checksum,
-                body_len,
-                body_checksum,
-                move |writer| snapshot.write_to(writer),
-            )
+            (|| {
+                let _operation = notrum_platform::OperationLock::directory(self.store.workspace())
+                    .map_err(|error| RecoveryError::Io(error.to_string()))?;
+                let security = SecurityStore::new(self.store.workspace());
+                let catalog = security
+                    .inspect(true)
+                    .map_err(|error| RecoveryError::Io(error.to_string()))?;
+                if catalog.verifier.is_some() {
+                    security.unlock(&protected.password).map_err(|_| {
+                        RecoveryError::InvalidArtifact(
+                            "workspace password changed; old-password recovery was not written"
+                                .to_owned(),
+                        )
+                    })?;
+                }
+                self.store.write_protected(
+                    &self.key,
+                    &protected.password,
+                    self.revision,
+                    self.base_checksum,
+                    body_len,
+                    body_checksum,
+                    move |writer| snapshot.write_to(writer),
+                )
+            })()
         } else {
             self.store.write(
                 &self.key,
@@ -4106,6 +4135,7 @@ struct ChangeMasterPasswordJob {
     workspace: PathBuf,
     verifier: PasswordChangeTarget,
     secrets: Vec<PasswordChangeTarget>,
+    secret_catalog: Vec<PathBuf>,
     notes: Vec<PasswordChangeTarget>,
     recovery_paths: Vec<PathBuf>,
     current: MasterPassword,
@@ -4117,7 +4147,48 @@ impl ChangeMasterPasswordJob {
         self,
         progress: impl FnMut(notrum_storage::PasswordChangeProgress),
     ) -> Result<SecureJobResult, CoreError> {
+        let _operation = notrum_platform::OperationLock::directory(&self.workspace)
+            .map_err(|error| CoreError::Workspace(error.to_string()))?;
         let recovery_store = RecoveryStore::new(&self.workspace);
+        let mut current_notes = BTreeSet::new();
+        for note in scan_workspace(&self.workspace)
+            .map_err(|error| CoreError::Workspace(error.to_string()))?
+            .notes
+        {
+            match note.result {
+                NoteScanResult::Protected(_) => {
+                    current_notes.insert(note.path);
+                }
+                NoteScanResult::Scanned(_) => {}
+                _ => {
+                    return Err(CoreError::Workspace(
+                        "workspace contains an unavailable note; password change was cancelled"
+                            .to_owned(),
+                    ));
+                }
+            }
+        }
+        let expected_notes = self.notes.iter().map(|note| note.path.clone()).collect();
+        let current_recovery: BTreeSet<_> = recovery_store
+            .protected_artifact_paths()?
+            .into_iter()
+            .collect();
+        let expected_recovery = self.recovery_paths.iter().cloned().collect();
+        let current_secrets: BTreeSet<_> = SecurityStore::new(&self.workspace)
+            .inspect(true)?
+            .secrets
+            .into_iter()
+            .collect();
+        let expected_secrets = self.secret_catalog.iter().cloned().collect();
+        if current_notes != expected_notes
+            || current_recovery != expected_recovery
+            || current_secrets != expected_secrets
+        {
+            return Err(CoreError::Workspace(
+                "encrypted workspace contents changed in another window; reload before changing the password"
+                    .to_owned(),
+            ));
+        }
         for path in &self.recovery_paths {
             recovery_store.validate_protected_artifact(path, &self.current)?;
         }
@@ -4236,8 +4307,16 @@ struct ProtectJob {
 
 impl ProtectJob {
     fn execute(self) -> Result<SecureJobResult, CoreError> {
+        let _operation = notrum_platform::OperationLock::file(&self.path)
+            .map_err(|error| CoreError::Workspace(error.to_string()))?;
         if let Some(authentication_path) = self.authentication_path {
             authenticate_protected_note(&authentication_path, &self.password)?;
+        }
+        if let Some(workspace) = self.path.parent().and_then(Path::parent) {
+            let security = SecurityStore::new(workspace);
+            if security.inspect(true)?.verifier.is_some() {
+                security.unlock(&self.password)?;
+            }
         }
         self.recovery_store.remove(&self.recovery_key)?;
         let commit = protect_note_body(&self.path, &self.version, &self.password, &self.title)?;
@@ -4338,6 +4417,8 @@ struct IntegrityResolutionJob {
 
 impl IntegrityResolutionJob {
     fn execute(self) -> Result<SecureJobResult, CoreError> {
+        let _operation = notrum_platform::OperationLock::directory(&self.workspace)
+            .map_err(|error| CoreError::Workspace(error.to_string()))?;
         let restored = restore_secure_backup(&self.workspace, &self.failure)?;
         if self.resolution == IntegrityResolution::Restore {
             return Ok(SecureJobResult::IntegrityRestored { commit: restored });
@@ -7798,6 +7879,101 @@ mod tests {
         assert_eq!(
             fs::read_to_string(workspace.note_path("plain.md")).unwrap(),
             "plain must survive"
+        );
+    }
+
+    #[test]
+    fn password_change_rejects_notes_protected_after_target_collection() {
+        let workspace = TestWorkspace::new();
+        workspace.write_note("plain.md", "plaintext body");
+        let old = MasterPassword::new("old catalog password".to_owned());
+        let new = MasterPassword::new("new catalog password".to_owned());
+        let mut first = WorkspaceSession::open(workspace.path()).unwrap();
+        first.configure_workspace_security(old.clone()).unwrap();
+        let pending = first
+            .begin_change_master_password(old.clone(), new.clone())
+            .unwrap();
+        let mut second = WorkspaceSession::open(workspace.path()).unwrap();
+        second.open_note(0).unwrap();
+        let protection = second.begin_protect_selected(Some(old.clone())).unwrap();
+        second
+            .finish_secure_operation(protection.execute())
+            .unwrap();
+        let protected_path = second.notes()[0].path.clone();
+        let before = fs::read(&protected_path).unwrap();
+        assert!(first.finish_secure_operation(pending.execute()).is_err());
+        assert_eq!(fs::read(protected_path).unwrap(), before);
+        let security = notrum_security::SecurityStore::new(workspace.path());
+        assert!(security.unlock(&old).is_ok());
+        assert!(security.unlock(&new).is_err());
+    }
+
+    #[test]
+    fn password_change_rejects_pending_old_password_recovery() {
+        let workspace = TestWorkspace::new();
+        let old = MasterPassword::new("old recovery password".to_owned());
+        let new = MasterPassword::new("new recovery password".to_owned());
+        let path = workspace.write_protected_note(
+            "ntrm-33333333333333333333333333333333.md",
+            "private.md",
+            b"---\ntitle: Private\n---\nbody\n",
+            &old,
+        );
+        let mut first = WorkspaceSession::open(workspace.path()).unwrap();
+        first.configure_workspace_security(old.clone()).unwrap();
+        first.unlock_note(0, old.clone()).unwrap();
+        first
+            .document_mut()
+            .unwrap()
+            .apply_at(EditorCommand::Insert("unsaved private text".to_owned()), 0)
+            .unwrap();
+        let key = first.recovery_store.key_for_note(&path).unwrap();
+        let store = first.recovery_store.clone();
+        let pending = first
+            .document_mut()
+            .unwrap()
+            .begin_recovery(store, key, PROTECTED_RECOVERY_DEBOUNCE_MS)
+            .unwrap();
+        let mut second = WorkspaceSession::open(workspace.path()).unwrap();
+        let change = second
+            .begin_change_master_password(old, new.clone())
+            .unwrap();
+        second.finish_secure_operation(change.execute()).unwrap();
+        assert!(pending.execute().result.is_err());
+        assert!(
+            first
+                .recovery_store
+                .protected_artifact_paths()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            notrum_security::SecurityStore::new(workspace.path())
+                .unlock(&new)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn another_window_password_change_invalidates_pending_protection() {
+        let workspace = TestWorkspace::new();
+        workspace.write_note("plain.md", "plaintext remains unchanged");
+        let old = MasterPassword::new("old shared verifier".to_owned());
+        let new = MasterPassword::new("new shared verifier".to_owned());
+        let mut first = WorkspaceSession::open(workspace.path()).unwrap();
+        first.configure_workspace_security(old.clone()).unwrap();
+        first.open_note(0).unwrap();
+        let pending = first.begin_protect_selected(Some(old.clone())).unwrap();
+        let mut second = WorkspaceSession::open(workspace.path()).unwrap();
+        let changed = second
+            .begin_change_master_password(old, new)
+            .unwrap()
+            .execute();
+        second.finish_secure_operation(changed).unwrap();
+        assert!(first.finish_secure_operation(pending.execute()).is_err());
+        assert_eq!(
+            fs::read_to_string(workspace.note_path("plain.md")).unwrap(),
+            "plaintext remains unchanged"
         );
     }
 

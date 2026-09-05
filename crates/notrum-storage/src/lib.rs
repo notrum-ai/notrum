@@ -384,6 +384,7 @@ fn floor_char_boundary(value: &str, mut index: usize) -> usize {
 }
 
 pub fn repair_workspace(workspace: impl AsRef<Path>) -> io::Result<()> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())?;
     validate_real_notes_directory(&workspace.as_ref().join("notes"))
 }
 
@@ -425,6 +426,7 @@ fn repair_protected_names(notes_directory: &Path) -> io::Result<()> {
 }
 
 pub fn cleanup_stale_secure_temps(workspace: impl AsRef<Path>) -> io::Result<usize> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())?;
     let notes_directory = workspace.as_ref().join("notes");
     let directory_metadata = fs::symlink_metadata(&notes_directory)?;
     if !directory_metadata.file_type().is_dir() {
@@ -919,6 +921,8 @@ pub fn relocate_protected_note_state(
     expected_version: &FileVersion,
     deleted: bool,
 ) -> Result<NoteCommit, NoteOperationError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, source, expected_version, deleted);
@@ -1009,6 +1013,8 @@ pub fn protect_note(
     expected_version: &FileVersion,
     password: &MasterPassword,
 ) -> Result<NoteCommit, NoteOperationError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, source, expected_version, password);
@@ -1293,6 +1299,8 @@ pub fn disable_protection(
     expected_version: &FileVersion,
     password: &MasterPassword,
 ) -> Result<NoteCommit, NoteOperationError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, source, expected_version, password);
@@ -1438,6 +1446,8 @@ pub fn rewrite_protected_note(
     body_len: u64,
     write_body: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> Result<SaveCommit, SaveError> {
+    let _operation = notrum_platform::OperationLock::file(path.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (
@@ -1473,6 +1483,8 @@ pub fn protect_note_body(
     password: &MasterPassword,
     title: &str,
 ) -> Result<SaveCommit, SaveError> {
+    let _operation = notrum_platform::OperationLock::file(path.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     let path = path.as_ref();
     let (mut input, opened_version) = open_versioned(path)?;
     if opened_version != *expected_version {
@@ -1540,6 +1552,8 @@ pub fn rewrite_protected_body_with_title(
     request: ProtectedBodyRewrite<'_>,
     write_body: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> Result<VerifiedSave, SaveError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     let password = request.password.clone();
     let workspace = workspace.as_ref();
     let path = path.as_ref();
@@ -1568,6 +1582,8 @@ pub fn disable_body_protection(
     password: &MasterPassword,
     title: &str,
 ) -> Result<VerifiedSave, SaveError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     let workspace = workspace.as_ref();
     let path = path.as_ref();
     let (mut input, opened_version) = open_versioned(path)?;
@@ -1617,6 +1633,8 @@ pub fn rewrite_protected_metadata_versioned(
     patch: &MetadataPatch,
     rename_title: Option<&str>,
 ) -> Result<VerifiedSave, SaveError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     if patch.is_empty() {
         return Err(SaveError::InvalidTarget(
             "protected metadata rewrite requires a non-empty patch".to_owned(),
@@ -1909,6 +1927,8 @@ pub fn create_note(
     title: &str,
     timestamp: &str,
 ) -> Result<NoteCommit, NoteOperationError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     let mut checkpoint = NoOperationFault;
     create_note_with(workspace.as_ref(), title, timestamp, &mut checkpoint)
 }
@@ -1976,6 +1996,8 @@ pub fn rename_note(
     title: &str,
     timestamp: &str,
 ) -> Result<NoteCommit, NoteOperationError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     let mut checkpoint = NoOperationFault;
     rename_note_with(
         workspace.as_ref(),
@@ -2273,6 +2295,8 @@ pub fn trash_note(
     source: impl AsRef<Path>,
     expected_version: &FileVersion,
 ) -> Result<TrashCommit, NoteOperationError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     let mut checkpoint = NoOperationFault;
     trash_note_with(
         workspace.as_ref(),
@@ -2611,6 +2635,8 @@ pub fn rewrite_metadata_versioned(
     expected_version: &FileVersion,
     patch: &MetadataPatch,
 ) -> Result<SaveCommit, SaveError> {
+    let _operation = notrum_platform::OperationLock::file(path.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     if patch.is_empty() {
         return Err(SaveError::InvalidTarget(
             "versioned metadata rewrite requires a non-empty patch".to_owned(),
@@ -2664,6 +2690,8 @@ pub fn rewrite_note(
     patch: &MetadataPatch,
     write_body: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> Result<SaveCommit, SaveError> {
+    let _operation = notrum_platform::OperationLock::file(path.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     let mut checkpoint = NoFault;
     rewrite_note_with(
         path.as_ref(),
@@ -2685,6 +2713,8 @@ pub fn rewrite_note_with_title(
     title: &str,
     write_body: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> Result<SaveCommit, SaveError> {
+    let _operation = notrum_platform::OperationLock::directory(workspace.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (workspace, path, expected_version, patch, title, write_body);
@@ -2712,6 +2742,8 @@ pub fn rewrite_external_file_versioned(
     expected_version: &FileVersion,
     write_contents: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> Result<SaveCommit, SaveError> {
+    let _operation = notrum_platform::OperationLock::file(path.as_ref())
+        .map_err(|error| SaveError::InvalidTarget(error.to_string()))?;
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (path, expected_version, write_contents);
@@ -3393,6 +3425,42 @@ mod tests {
             "notrum-storage-{label}-{}-{id}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn concurrent_external_saves_cannot_both_publish_the_same_version() {
+        let root = unique_test_path("concurrent-save");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("external.txt");
+        fs::write(&path, b"original").unwrap();
+        let version = open_versioned(&path).unwrap().1;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let workers = [b"first".as_slice(), b"second".as_slice()]
+            .into_iter()
+            .map(|body| {
+                let barrier = barrier.clone();
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    rewrite_external_file_versioned(path, &version, |writer| writer.write_all(body))
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(SaveError::Conflict)))
+                .count(),
+            1
+        );
+        let bytes = fs::read(&path).unwrap();
+        assert!(bytes == b"first" || bytes == b"second");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

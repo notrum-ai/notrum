@@ -38,6 +38,8 @@ def run_scenario(*, cold_start: bool) -> None:
         with info_path.open("wb") as destination:
             plistlib.dump(info, destination, sort_keys=True)
 
+        home = root / "home"
+        home.mkdir()
         workspace = root / "workspace"
         shutil.copytree(source_workspace, workspace)
         external = root / "External Smoke.MD"
@@ -52,6 +54,8 @@ def run_scenario(*, cold_start: bool) -> None:
                 "open",
                 "-na",
                 str(smoke_bundle),
+                "--env",
+                f"HOME={home}",
                 *([str(external), str(second)] if cold_start else []),
                 "--args",
                 str(workspace),

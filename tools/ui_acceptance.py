@@ -19,6 +19,7 @@ import tempfile
 import time
 from typing import Callable
 
+from ci_diagnostics import UI_DIAGNOSTIC_FILES, ui_diagnostic_context_valid
 from generate_demo_data import generate_demo_workspace
 from ui_ready import wait_for_first_paint
 
@@ -461,6 +462,29 @@ PROTECTION_ACTION_ICON_CROP = (
 
 class AcceptanceFailure(RuntimeError):
     """A click-driven acceptance condition was not satisfied."""
+
+
+def failure_diagnostics(scenario: str, stage: str, error: Exception) -> list[str]:
+    """Read code locations only: never format a traceback, source line or payload."""
+    if not ui_diagnostic_context_valid(scenario, stage):
+        raise ValueError("invalid UI diagnostic context")
+    known_types = (
+        AcceptanceFailure, AssertionError, ValueError, TypeError, RuntimeError,
+        OSError, FileNotFoundError, PermissionError, UnicodeError, UnicodeDecodeError,
+        subprocess.CalledProcessError, subprocess.TimeoutExpired,
+    )
+    exception = type(error).__name__ if type(error) in known_types else "Exception"
+    prefix = f"UI_ACCEPTANCE_DIAGNOSTIC scenario={scenario} stage={stage} exception={exception}"
+    lines = [prefix]
+    root = Path(__file__).resolve().parent.parent
+    known_files = {str(root / name): name for name in UI_DIAGNOSTIC_FILES}
+    frame = error.__traceback__
+    while frame is not None:
+        filename = known_files.get(frame.tb_frame.f_code.co_filename)
+        if filename is not None:
+            lines.append(f"{prefix} location={filename}:{frame.tb_lineno}")
+        frame = frame.tb_next
+    return lines
 
 
 def run_command(
@@ -943,6 +967,7 @@ def shaded_row_runs(
 class WindowDriver:
     def __init__(self, scenario: str, temporary_root: Path) -> None:
         self.scenario = scenario
+        self.stage = "startup"
         # Secure scenarios intentionally never create screenshots: the window can
         # contain a master password or decrypted note text at any failure point.
         self.sensitive = scenario.startswith("secure")
@@ -972,6 +997,11 @@ class WindowDriver:
         self.xvfb: subprocess.Popen[bytes] | None = None
         self.app: subprocess.Popen[bytes] | None = None
         self.window_id: str | None = None
+
+    def set_stage(self, stage: str) -> None:
+        if not ui_diagnostic_context_valid(self.scenario, stage):
+            raise ValueError("invalid UI diagnostic stage")
+        self.stage = stage
 
     def start_xvfb(self) -> None:
         log = self.xvfb_log_path.open("wb")
@@ -5519,6 +5549,7 @@ def password_dialog_scenario(driver: WindowDriver, workspace: Path) -> None:
 
 def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
     del workspace
+    driver.set_stage("prepare")
     title = "Password Change 0031"
     body_marker = "passwordchangebodymarker0031"
     tag = "passwordchangetag0031"
@@ -5534,14 +5565,18 @@ def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
     )
 
     driver.start_app(secure_workspace, "change")
+    driver.set_stage("protect")
     protected = protect_selected_note(driver, secure_workspace, plaintext, old_password)
     old_ciphertext = protected.read_bytes()
 
+    driver.set_stage("settings")
     driver.click("settings")
     driver.click("settings_encryption")
+    driver.set_stage("empty/validation")
     driver.click("encryption_submit")
     if protected.read_bytes() != old_ciphertext:
         raise AcceptanceFailure("empty password validation changed protected ciphertext")
+    driver.set_stage("clipboard")
     driver.click("encryption_current")
     driver.type_sensitive_text(old_password)
     clipboard_sentinel = "notrum-password-change-clipboard-sentinel"
@@ -5550,6 +5585,7 @@ def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.key("ctrl+c")
     if clipboard_text(driver.environment) != clipboard_sentinel:
         raise AcceptanceFailure("current master password copy changed the clipboard")
+    driver.set_stage("confirmation/validation")
     driver.click("encryption_new")
     driver.type_sensitive_text(new_password)
     driver.click("encryption_confirmation")
@@ -5559,6 +5595,7 @@ def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.click("encryption_submit")
     if protected.read_bytes() != old_ciphertext:
         raise AcceptanceFailure("password mismatch validation changed protected ciphertext")
+    driver.set_stage("rotate")
     driver.click("encryption_confirmation")
     for _ in mismatched_confirmation:
         driver.key("BackSpace")
@@ -5576,6 +5613,7 @@ def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
     )
     if body_marker.encode() in new_ciphertext:
         raise AcceptanceFailure("password change exposed protected plaintext")
+    driver.set_stage("backup")
     transaction_root = (
         secure_workspace / ".notrum_backups" / "secure" / "transactions"
     )
@@ -5591,12 +5629,14 @@ def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
     ]
     if not any(path.read_bytes() == old_ciphertext for path in backup_files):
         raise AcceptanceFailure("password change did not retain the old ciphertext backup")
+    driver.set_stage("restart")
     driver.close_app()
 
     driver.start_app(secure_workspace, "verify-new-password")
     locked_counts = {"all": 1, "favorites": 0, tag: 1}
     driver.click_note(0, counts=locked_counts, categories=(tag,))
     driver.wait_for_password_dialog()
+    driver.set_stage("old/rejection")
     driver.click_point(760, 385)
     driver.type_sensitive_text(old_password)
     driver.key("Return")
@@ -5617,11 +5657,13 @@ def password_change_scenario(driver: WindowDriver, workspace: Path) -> None:
         interval=0.03,
     )
     assert_focused_lock_inaccessible(driver, markers=(body_marker,))
+    driver.set_stage("new/unlock")
     # Focus the field interior after rejection, not the original card's border.
     driver.click_point(760, 385)
     driver.type_sensitive_text(new_password)
     driver.key("Return")
     wait_for_unlocked_editor(driver, body_marker)
+    driver.set_stage("final/validation")
     driver.close_app()
 
     assert_no_temporary_files(secure_workspace)
@@ -7346,30 +7388,44 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix=f"notrum-ui-{arguments.scenario}-") as directory:
         temporary_root = Path(directory)
-        workspace = copy_demo(temporary_root)
         driver = WindowDriver(arguments.scenario, temporary_root)
-        succeeded = False
-        failure: Exception | None = None
+        failed = False
         screenshot: Path | None = None
+
+        def record_failure(error: Exception, stage: str) -> None:
+            nonlocal failed
+            if not failed:
+                print(f"UI_ACCEPTANCE_FAIL scenario={arguments.scenario}",
+                      file=sys.stderr, flush=True)
+            failed = True
+            for line in failure_diagnostics(arguments.scenario, stage, error):
+                print(line, file=sys.stderr, flush=True)
+
         try:
+            workspace = copy_demo(temporary_root)
             driver.start_xvfb()
+            driver.set_stage("scenario")
             SCENARIOS[arguments.scenario](driver, workspace)
-            succeeded = True
         except Exception as error:
-            screenshot = driver.capture_failure()
-            failure = error
+            # Flush the original failure before fallible artifact collection.
+            record_failure(error, driver.stage)
+            try:
+                screenshot = driver.capture_failure()
+            except Exception as capture_error:
+                record_failure(capture_error, "capture")
         finally:
-            driver.cleanup()
-            if succeeded:
-                driver.remove_success_artifacts()
-            else:
-                driver.sanitize_failure_logs()
-        if failure is not None:
-            message = driver.redact_message(str(failure))
-            print(
-                f"UI_ACCEPTANCE_FAIL scenario={arguments.scenario}: {message}",
-                file=sys.stderr,
-            )
+            try:
+                driver.cleanup()
+            except Exception as cleanup_error:
+                record_failure(cleanup_error, "cleanup")
+            try:
+                if failed:
+                    driver.sanitize_failure_logs()
+                else:
+                    driver.remove_success_artifacts()
+            except Exception as artifact_error:
+                record_failure(artifact_error, "artifacts")
+        if failed:
             if screenshot is not None:
                 print(f"failure screenshot: {screenshot}", file=sys.stderr)
             print(f"diagnostic directory: {ARTIFACT_ROOT}", file=sys.stderr)

@@ -122,6 +122,19 @@ the CI console, and does not upload raw test logs. CI logs are deliberately
 reduced: reproduce a failing named check locally to inspect unrestricted fixture
 diagnostics.
 
+UI acceptance failures additionally emit `UI_ACCEPTANCE_DIAGNOSTIC` lines to
+the Actions console and `checks.log`. They retain the scenario, a fixed stage,
+an allowlisted exception type (or `Exception` for an unknown type), and known
+test-tool source paths with line numbers. `password_change` distinguishes setup,
+protection, settings validation, clipboard checks, rotation, backup verification,
+restart, old-password rejection and new-password unlock. These lines are flushed
+before screenshots or cleanup; failures in those operations are reported separately
+and do not replace the original failure. No exception messages, source-line text,
+command arguments or local variables are included, including in local UI failure
+output. Existing `UI_ACCEPTANCE_PASS`/`UI_ACCEPTANCE_FAIL` markers and exit codes
+remain unchanged. This diagnostic addition does not establish the cause of an
+earlier failure whose report omitted those details.
+
 ## Verify the first GitHub runs
 
 After pushing the workflow commit, open **Actions → CI**. A first successful run

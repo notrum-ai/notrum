@@ -12,17 +12,164 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zipfile
 
 import ci
-from ci_diagnostics import rust_test_report
+from ci_diagnostics import UI_SCENARIOS, rust_test_report
 from source_revision import validate_revision
+import ui_acceptance
 
 SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    def test_ui_diagnostics_keep_only_context_and_known_traceback_locations(self):
+        self.assertEqual(UI_SCENARIOS, set(ui_acceptance.SCENARIOS))
+        try:
+            ui_acceptance.wait_until("SYNTHETIC_SECRET", lambda: False, timeout=0)
+        except ui_acceptance.AcceptanceFailure as error:
+            error.add_note("SYNTHETIC_SECRET")
+            lines = ui_acceptance.failure_diagnostics("password_change", "rotate", error)
+        self.assertEqual(lines[0], "UI_ACCEPTANCE_DIAGNOSTIC scenario=password_change "
+                         "stage=rotate exception=AcceptanceFailure")
+        self.assertEqual(len(lines), 2)
+        self.assertRegex(lines[1], r" location=tools/ui_acceptance\.py:[1-9][0-9]*$")
+        for line in lines:
+            self.assertEqual(ci.safe_line(line), line)
+            self.assertNotIn("SYNTHETIC_SECRET", line)
+            self.assertNotIn(str(Path(__file__).parent), line)
+            self.assertNotIn("test_ci.py", line)
+
+    def test_ui_diagnostics_do_not_render_unknown_types_or_subprocess_payloads(self):
+        class PrivateError(Exception):
+            def __str__(self):
+                raise AssertionError("exception payload must not be rendered")
+
+        PrivateError.__name__ = "SYNTHETIC_SECRET"
+        # A custom class cannot impersonate an allowlisted exception by name.
+        disguised = type("ValueError", (Exception,), {})
+        for error, kind in (
+            (PrivateError(), "Exception"),
+            (disguised("SYNTHETIC_SECRET"), "Exception"),
+            (subprocess.CalledProcessError(1, ["SYNTHETIC_SECRET"],
+                                          output="SYNTHETIC_SECRET"), "CalledProcessError"),
+            (subprocess.TimeoutExpired(["SYNTHETIC_SECRET"], 1,
+                                       stderr="SYNTHETIC_SECRET"), "TimeoutExpired"),
+        ):
+            with self.subTest(kind=kind):
+                lines = ui_acceptance.failure_diagnostics("password_change", "rotate", error)
+                self.assertEqual(lines, ["UI_ACCEPTANCE_DIAGNOSTIC scenario=password_change "
+                                         f"stage=rotate exception={kind}"])
+                self.assertEqual(ci.safe_line(lines[0]), lines[0])
+
+    def test_ui_diagnostic_filter_rejects_unknown_fields_and_context(self):
+        valid = ("UI_ACCEPTANCE_DIAGNOSTIC scenario=password_change stage=rotate "
+                 "exception=AcceptanceFailure location=tools/ui_acceptance.py:123")
+        for line in (
+            valid.replace("password_change", "private_scenario"),
+            valid.replace("stage=rotate", "stage=private_stage"),
+            valid.replace("password_change", "ai"),
+            valid.replace("AcceptanceFailure", "PrivateError"),
+            valid.replace("tools/ui_acceptance.py", "tools/private.py"),
+            valid.replace("tools/ui_acceptance.py", "/tmp/private/tools/ui_acceptance.py"),
+            valid.replace(":123", ":0"),
+            valid.replace(":123", ":-1"),
+            valid + " secret=SYNTHETIC_SECRET",
+            valid + " crates/private/src/lib.rs:12:3",
+            valid + " (os error 5)",
+            valid + "\nSYNTHETIC_SECRET",
+        ):
+            with self.subTest(line=line):
+                self.assertIsNone(ci.safe_line(line))
+        self.assertEqual(ci.safe_line(valid), valid)
+
+    def run_ui_with_fake_driver(self, *, scenario_fails=True, secondary_failures=False,
+                                cleanup_fails=False):
+        driver = Mock(spec=ui_acceptance.WindowDriver)
+        driver.scenario = "password_change"
+        driver.stage = "startup"
+        # Preserve the real stage validator while replacing construction below.
+        set_stage = ui_acceptance.WindowDriver.set_stage
+        driver.set_stage.side_effect = lambda stage: set_stage(driver, stage)
+        output = io.StringIO()
+
+        def scenario(current, workspace):
+            current.set_stage("rotate")
+            if scenario_fails:
+                ui_acceptance.wait_until("SYNTHETIC_SECRET", lambda: False, timeout=0)
+
+        def capture():
+            self.assertIn("stage=rotate exception=AcceptanceFailure", output.getvalue())
+            self.assertIn("location=tools/ui_acceptance.py:", output.getvalue())
+            if secondary_failures:
+                raise ValueError("SYNTHETIC_SECRET")
+            return None
+
+        driver.capture_failure.side_effect = capture
+        if secondary_failures or cleanup_fails:
+            driver.cleanup.side_effect = OSError("SYNTHETIC_SECRET")
+        if secondary_failures:
+            driver.sanitize_failure_logs.side_effect = PermissionError("SYNTHETIC_SECRET")
+        with patch.object(ui_acceptance, "APP_BINARY", Path(__file__)), \
+                patch.object(sys, "argv", ["ui_acceptance.py", "password_change"]), \
+                patch.object(ui_acceptance, "WindowDriver", return_value=driver), \
+                patch.object(ui_acceptance, "copy_demo", return_value=Path("unused")), \
+                patch.dict(ui_acceptance.SCENARIOS, password_change=scenario), \
+                contextlib.redirect_stderr(output), contextlib.redirect_stdout(output):
+            code = ui_acceptance.main()
+        self.assertNotIn("SYNTHETIC_SECRET", output.getvalue())
+        return code, output.getvalue(), driver
+
+    def test_ui_failure_survives_capture_cleanup_and_artifact_failures(self):
+        code, output, driver = self.run_ui_with_fake_driver(secondary_failures=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(output.count("UI_ACCEPTANCE_FAIL scenario=password_change"), 1)
+        self.assertNotIn("UI_ACCEPTANCE_PASS", output)
+        stages = ["stage=rotate", "stage=capture", "stage=cleanup", "stage=artifacts"]
+        positions = [output.index(stage) for stage in stages]
+        self.assertEqual(positions, sorted(positions))
+        driver.cleanup.assert_called_once()
+        driver.sanitize_failure_logs.assert_called_once()
+        driver.remove_success_artifacts.assert_not_called()
+
+    def test_ui_success_and_cleanup_failure_keep_exit_status(self):
+        code, output, driver = self.run_ui_with_fake_driver(scenario_fails=False)
+        self.assertEqual(code, 0)
+        self.assertEqual(output, "UI_ACCEPTANCE_PASS scenario=password_change\n")
+        driver.remove_success_artifacts.assert_called_once()
+        driver.capture_failure.assert_not_called()
+        code, output, driver = self.run_ui_with_fake_driver(scenario_fails=False,
+                                                         cleanup_fails=True)
+        self.assertEqual(code, 1)
+        self.assertIn("stage=cleanup exception=OSError", output)
+        self.assertNotIn("UI_ACCEPTANCE_PASS", output)
+        driver.sanitize_failure_logs.assert_called_once()
+
+    def test_ui_failure_reaches_ci_console_and_report_without_secrets(self):
+        code, diagnostics, _ = self.run_ui_with_fake_driver()
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, SOURCE_REVISION=SHA):
+            root = Path(temporary)
+            console = io.StringIO()
+            with patch.object(ci, "ROOT", root), patch.object(ci, "REPORTS", root / "reports"), \
+                    contextlib.redirect_stdout(console):
+                result = ci.run("linux", [sys.executable, "-c",
+                                         f"import sys; sys.stderr.write({diagnostics!r}); "
+                                         f"print('SYNTHETIC_SECRET'); sys.exit({code})"])
+            self.assertEqual(result, 1)
+            report = json.loads((root / "reports/linux/status.json").read_text())
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["exit_code"], 1)
+            log = (root / "reports/linux/checks.log").read_text()
+            self.assertEqual(console.getvalue(), log)
+            self.assertIn("stage=rotate exception=AcceptanceFailure", log)
+            self.assertIn("location=tools/ui_acceptance.py:", log)
+            for path in (root / "reports").rglob("*"):
+                if path.is_file():
+                    self.assertNotIn("SYNTHETIC_SECRET", path.read_text())
+                    self.assertNotIn(str(root), path.read_text())
+            self.assertNotIn("diagnostic directory:", log)
+
     def test_revision_requires_exact_checkout_sha(self):
         self.assertEqual(validate_revision(SHA, SHA), SHA)
         for value in ("", "master", SHA[:7], SHA + "-dirty", "f" * 40):

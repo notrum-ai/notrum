@@ -9,9 +9,51 @@ import re
 import sys
 
 
+UI_SCENARIOS = frozenset({
+    "ai", "localization", "rss_cards", "rss_keyboard", "creation", "workspace",
+    "compatibility", "categories", "interaction", "lifecycle", "tags", "caret",
+    "editor", "context_menu", "selection", "persistence", "recovery", "conflict",
+    "search", "find", "resize", "password_dialog", "password_change", "secure",
+    "secure_recovery", "secure_conflict", "secure_integrity", "visual",
+})
+UI_COMMON_STAGES = frozenset({"startup", "scenario", "capture", "cleanup", "artifacts"})
+UI_PASSWORD_CHANGE_STAGES = frozenset({
+    "prepare", "protect", "settings", "empty/validation", "clipboard",
+    "confirmation/validation", "rotate", "backup", "restart", "old/rejection",
+    "new/unlock", "final/validation",
+})
+UI_EXCEPTION_NAMES = frozenset({
+    "Exception", "AcceptanceFailure", "AssertionError", "ValueError", "TypeError",
+    "RuntimeError", "OSError", "FileNotFoundError", "PermissionError", "UnicodeError",
+    "UnicodeDecodeError", "CalledProcessError", "TimeoutExpired",
+})
+UI_DIAGNOSTIC_FILES = frozenset({
+    "tools/ui_acceptance.py", "tools/ui_ready.py", "tools/generate_demo_data.py",
+})
+
+
+def ui_diagnostic_context_valid(scenario, stage):
+    return scenario in UI_SCENARIOS and (
+        stage in UI_COMMON_STAGES
+        or (scenario == "password_change" and stage in UI_PASSWORD_CHANGE_STAGES)
+    )
+
+
 def safe_line(line):
     """Never copy arbitrary test output, panic payloads, app logs or document paths."""
     line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).strip()
+    # Reject malformed diagnostics before the permissive legacy extractors.
+    if line.startswith("UI_ACCEPTANCE_DIAGNOSTIC"):
+        match = re.fullmatch(
+            r"UI_ACCEPTANCE_DIAGNOSTIC scenario=([a-z_]+) stage=([a-z/]+) "
+            r"exception=([A-Za-z]+)(?: location=(tools/[a-z_]+\.py):([1-9][0-9]*))?",
+            line,
+        )
+        if (match and ui_diagnostic_context_valid(match[1], match[2])
+                and match[3] in UI_EXCEPTION_NAMES
+                and (match[4] is None or match[4] in UI_DIAGNOSTIC_FILES)):
+            return line
+        return None
     if re.fullmatch(r"test [a-zA-Z0-9_:]+ \.\.\. (ok|FAILED|ignored)", line):
         return line
     if re.fullmatch(r"test result: (ok|FAILED)\. [0-9a-z ;.]+", line):

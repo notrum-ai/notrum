@@ -9,7 +9,7 @@ ahead of GitHub are included; a behind or diverged branch is rejected.
 ## Requirements
 
 - The normal macOS build requirements: Docker Compose with a running engine,
-  Xcode Command Line Tools, and host Python 3.9 or newer.
+  Xcode Command Line Tools, and system Python 3.9 or newer (`/usr/bin/python3`).
 - A working local `codex` CLI in `PATH`, already signed in and able to use
   `gpt-5.6-luna`. The command explicitly selects `medium` reasoning effort.
 - GitHub CLI (`gh`) in `PATH`, authenticated with `gh auth login`, with permission
@@ -18,6 +18,10 @@ ahead of GitHub are included; a behind or diverged branch is rejected.
 
 Python orchestrates publication on the host and invokes the host's Codex and
 GitHub CLIs. Git and Rust commands continue to run in the Docker toolchain.
+`make publish` explicitly launches system Python as arm64, so an Intel-only
+`python3` earlier in `PATH` or a terminal running under Rosetta does not trigger
+the Apple Silicon prerequisite error. It does not change `PATH` or your Python
+installation.
 GitHub authentication is passed to individual Docker Git commands in environment
 variables; tokens are not written to the checkout or Git configuration. The
 existing SSH or HTTPS `origin` URL is preserved.

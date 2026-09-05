@@ -60,7 +60,15 @@ help:
 		"  make ui-click-<scenario> | make ui-acceptance | make test-<crate>" \
 		"Не запускайте target, а затем включающий его aggregate на неизменном diff."'
 
-check: ci-validate fmt-check lint test test-release test-demo-data test-publish check-macos package-macos-smoke build-linux-smoke build-windows test-windows-build ui-check audit diff-check
+# CI runs the Windows cross-build on its own runner; local check retains the full gate.
+CHECK_HOST_TARGETS := ci-validate fmt-check lint test test-release test-demo-data test-publish check-macos package-macos-smoke build-linux-smoke
+
+.PHONY: check-linux check-windows-build
+check: $(CHECK_HOST_TARGETS) check-windows-build ui-check audit diff-check
+
+check-linux: $(CHECK_HOST_TARGETS) ui-check audit diff-check
+
+check-windows-build: build-windows test-windows-build
 
 clean:
 	$(RUN) rm -rf -- /var/cache/notrum/target/debug
@@ -331,7 +339,7 @@ ui-click-external: ui-build
 ui-click-crash: ui-build-test-utils
 	$(RUN) python3 -B tools/desktop_smoke.py crash
 
-.PHONY: native-check revision-check ci-linux ci-macos ci-package-linux ci-package-macos ci-validate
+.PHONY: native-check revision-check ci-linux ci-macos ci-windows-build ci-package-linux ci-package-macos ci-package-windows ci-validate
 
 revision-check:
 	$(PYTHON) tools/source_revision.py "$(SOURCE_REVISION)"
@@ -340,8 +348,11 @@ revision-check:
 native-check: revision-check native-smoke native-external-smoke
 
 ci-linux: revision-check
-	python3 -B tools/ci.py run linux -- $(MAKE) check
+	python3 -B tools/ci.py run linux -- $(MAKE) check-linux
 	$(MAKE) ci-package-linux
+
+ci-windows-build: revision-check
+	python3 -B tools/ci.py run windows-tests -- $(MAKE) check-windows-build ci-package-windows
 
 ci-macos: revision-check
 	python3 -B tools/ci.py run macos -- /usr/bin/arch -arm64 $(MAKE) NATIVE=1 native-check
@@ -349,6 +360,8 @@ ci-macos: revision-check
 
 ci-package-linux: revision-check
 	$(RUN) env SOURCE_REVISION="$(SOURCE_REVISION)" python3 -B tools/ci.py package linux
+
+ci-package-windows: revision-check
 	$(RUN) env SOURCE_REVISION="$(SOURCE_REVISION)" python3 -B tools/ci.py package windows
 	$(RUN) env SOURCE_REVISION="$(SOURCE_REVISION)" python3 -B tools/ci.py package windows-tests
 

@@ -1,0 +1,20 @@
+[package]
+name = "notrum-search"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+notrum-frontmatter = { version = "0.1.0", path = "../notrum-frontmatter" }
+notrum-storage = { version = "0.1.0", path = "../notrum-storage" }
+tantivy = { version = "=0.26.1", default-features = false, features = ["lz4-compression", "mmap"] }
+unicode-normalization = "=0.1.25"
+unicode-segmentation = "=1.13.3"
+
+[dev-dependencies]
+notrum-secure = { version = "0.1.0", path = "../notrum-secure", features = ["test-utils"] }

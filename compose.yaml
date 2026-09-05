@@ -1,0 +1,18 @@
+services:
+  toolchain:
+    build:
+      context: .
+      dockerfile: docker/rust/Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - cargo-target:/var/cache/notrum/target
+      - benchmark-data:/var/cache/notrum/benchmark-data
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  cargo-target:
+  benchmark-data:

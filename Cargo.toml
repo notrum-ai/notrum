@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "app/notrum",
+    "crates/notrum-core",
+    "crates/notrum-editor",
+    "crates/notrum-engine",
+    "crates/notrum-frontmatter",
+    "crates/notrum-markdown",
+    "crates/notrum-recovery",
+    "crates/notrum-rss",
+    "crates/notrum-search",
+    "crates/notrum-secure",
+    "crates/notrum-security",
+    "crates/notrum-storage",
+    "tools/notrum-buffer-probe",
+    "tools/notrum-editor-probe",
+    "tools/notrum-search-probe",
+    "tools/notrum-ui-probe",
+]
+resolver = "3"
+
+[workspace.package]
+license = "GPL-3.0-only"
+authors = ["Evgeniy Udodov"]
+
+[patch.crates-io]
+floem-winit = { git = "https://github.com/notrum-ai/winit", rev = "2e2dc2f5555b7f1df465a72ebef578a4ae01e010" }

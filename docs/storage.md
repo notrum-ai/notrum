@@ -1,0 +1,112 @@
+# Storage and security
+
+[Back to README](../README.md)
+
+## Files are the source of truth
+
+The authoritative text and metadata of workspace notes live in UTF-8 Markdown
+files under `<workspace>/notes/`. YAML front matter is compatible with Notable.
+Unknown fields, unrelated files, and directories are preserved. Notrum does
+not follow note symlinks or scan nested note directories, and opening or
+scanning a workspace does not rewrite untouched notes.
+
+Saves use atomic replacement, external conflict checks, and protection against
+overwriting a colliding path. Storage and metadata operations are designed to
+keep bounded memory use. External files stay at their original paths and are
+not part of the workspace's note index.
+
+```text
+workspace/
+├── notes/                         # authoritative note files
+├── .notrum/
+│   ├── settings.json              # layout and external-file references
+│   ├── engines/rss/subscriptions.json
+│   ├── search/                    # rebuildable local search index
+│   ├── cache/rss/                 # feed content, validators, and read status
+│   └── recovery/                  # potentially unsaved work
+├── .notrum_security/
+│   ├── master.age                 # password verifier and workspace identity
+│   └── secrets/                   # encrypted engine secrets
+└── .notrum_backups/
+    └── secure/                    # encrypted rollback history
+```
+
+This shows the main storage locations, not an exhaustive list of files.
+Preserve unknown files and operation journals as well.
+
+## What to preserve
+
+| Location | Role and consequences of removal |
+|---|---|
+| `notes/` | Authoritative notes, including soft-deleted notes. Preserve it. |
+| `.notrum/settings.json` | Workspace layout and external-file references. Removing it loses those settings and references. |
+| `.notrum/engines/rss/subscriptions.json` | Subscription URLs, local names, and organizational metadata. Preserve it to keep subscriptions. |
+| `.notrum/search/` | Derived local search index. It can be rebuilt from notes. |
+| `.notrum/cache/rss/` | Downloaded entries, HTTP validators, and read status. Content may be fetched again, but old entries may disappear from the source feed and read status is not recoverable from it. |
+| `.notrum/recovery/` | Recovery records may contain edits not yet saved to a note, including work retained after a conflict. Removing them can lose work. |
+| `.notrum_security/` | Authoritative password verifier, workspace identity, and encrypted engine secrets. Preserve it. |
+| `.notrum_backups/` | Encrypted rollback versions and their supporting records. Preserve it if you need backup history. |
+| `~/.notrum.cfg` | Global settings, including the last workspace's absolute path. Stored outside the workspace. |
+
+Do not delete `.notrum/` wholesale as a cache cleanup. Resolve pending recovery
+and conflicts in the application before considering removal of their records.
+For a workspace backup, close Notrum and copy the entire workspace, including
+hidden directories. External files require separate backups at their original
+locations. Application-managed rollback history is not a replacement for a
+separate backup.
+
+## Protected notes and secrets
+
+A protected note keeps its YAML front matter and title-derived filename in
+plaintext. Its Markdown body is an authenticated, ASCII-armored age envelope.
+Encryption therefore does not conceal titles, tags, filenames, or other YAML
+metadata. Unprotected notes and their recovery data are not encrypted.
+
+The protected body's plaintext is not written to persistent search indexes,
+recovery records, caches, diagnostics, or application-managed temporary files.
+This is an application storage boundary, not a claim that the entire computer
+or workspace is encrypted.
+
+`<workspace>/.notrum_security/master.age` contains an authenticated master
+password verifier and a permanent random workspace ID. Files under
+`secrets/<random-id>.age` contain immutable engine secrets. Their encrypted
+payload binds them to the workspace, engine, owner, and field key. The security
+directory uses private permissions. Engine configurations refer to secrets
+through `SecretRef` rather than storing their plaintext.
+
+## Password changes and rollback history
+
+Changing the master password re-encrypts the verifier, referenced engine
+secrets, all protected notes including deleted notes, and active encrypted
+recovery files. It also works when only the verifier remains in the workspace.
+
+The operation uses a recoverable filesystem journal. If interrupted, Notrum
+finishes installing the complete new set or restores the previous ciphertext
+set before scanning the workspace. Passwords and plaintext are not written to
+the journal.
+
+Before replacing an already protected note, Notrum backs up the previous
+confirmed ciphertext version. After atomic replacement, it verifies the
+SHA-256 of the complete stored file against the generated bytes. The latest
+ten versions are retained for each logical note. Secure rollback history also
+covers engine secrets.
+
+Each note backup contains the whole protected file: its YAML remains readable
+and its body stays encrypted. Manifests and incident records contain internal
+IDs, relative paths, version numbers, timestamps, and SHA-256 values, not the
+body plaintext or master password.
+
+Password changes create backups under the same retention policy, but do not
+re-encrypt existing backup history. Keep the previous master password to read
+those older versions.
+
+## Network boundary and known limitations
+
+RSS uses a restricted HTTPS client for direct feed URLs, without cookies or
+authentication. Explicit article opening uses the RSS engine's dedicated
+HTTPS opener. There is no WebView or HTML execution, and feed cards do not
+fetch images. RSS never creates note files in `notes/`.
+
+Project-owned Rust forbids unsafe code. This does not mean all transitive
+dependencies are safe-only or free of defects. See the dated dependency
+warnings and native release limitations in the [development guide](development.md).

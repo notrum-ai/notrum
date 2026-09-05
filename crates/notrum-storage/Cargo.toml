@@ -1,0 +1,23 @@
+[package]
+name = "notrum-storage"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+authors.workspace = true
+
+[features]
+test-utils = ["notrum-secure/test-utils"]
+
+[dependencies]
+notrum-frontmatter = { version = "0.1.0", path = "../notrum-frontmatter" }
+notrum-secure = { version = "0.1.0", path = "../notrum-secure" }
+pulldown-cmark = { version = "=0.13.4", default-features = false }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+
+[dev-dependencies]
+notrum-engine = { version = "0.1.0", path = "../notrum-engine" }
+notrum-secure = { version = "0.1.0", path = "../notrum-secure", features = ["test-utils"] }
+notrum-security = { version = "0.1.0", path = "../notrum-security", features = ["test-utils"] }

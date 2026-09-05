@@ -1,0 +1,16 @@
+[package]
+name = "notrum-recovery"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+authors.workspace = true
+
+[features]
+test-utils = ["notrum-secure/test-utils"]
+
+[dependencies]
+notrum-secure = { version = "0.1.0", path = "../notrum-secure" }
+
+[dev-dependencies]
+notrum-secure = { version = "0.1.0", path = "../notrum-secure", features = ["test-utils"] }

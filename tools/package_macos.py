@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
-"""Assemble a deterministic, unsigned macOS application bundle."""
+"""Assemble a deterministic macOS application bundle."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import json
 import plistlib
 import shutil
 import stat
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -38,6 +39,48 @@ CPU_TYPE_X86_64 = 0x01000007
 
 class PackageError(ValueError):
     """Raised when an input cannot safely produce the requested bundle."""
+
+
+def sign_adhoc_bundle(bundle: Path) -> None:
+    """Seal a complete bundle without requiring an Apple Developer identity."""
+
+    commands = (
+        [
+            "/usr/bin/codesign",
+            "--force",
+            "--sign",
+            "-",
+            "--timestamp=none",
+            str(bundle),
+        ],
+        [
+            "/usr/bin/codesign",
+            "--verify",
+            "--deep",
+            "--strict",
+            "--verbose=2",
+            str(bundle),
+        ],
+    )
+    for command in commands:
+        try:
+            subprocess.run(
+                command,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except FileNotFoundError as error:
+            raise PackageError("ad-hoc signing requires /usr/bin/codesign") from error
+        except subprocess.CalledProcessError as error:
+            detail = " ".join((error.stderr or error.stdout or "").split())
+            if len(detail) > 512:
+                detail = detail[-512:]
+            suffix = f": {detail}" if detail else ""
+            raise PackageError(
+                f"ad-hoc code signing failed with exit status {error.returncode}{suffix}"
+            ) from error
 
 
 def _architecture_name(cpu_type: int) -> str:
@@ -210,6 +253,7 @@ def build_bundle(
     output: Path,
     source_revision: str,
     *,
+    adhoc_sign: bool = False,
     replace_existing: bool = False,
 ) -> Path:
     binary = binary.absolute()
@@ -309,6 +353,8 @@ def build_bundle(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        if adhoc_sign:
+            sign_adhoc_bundle(bundle)
 
         backup = Path(temp) / "previous-Notrum.app"
         if output_exists:
@@ -333,6 +379,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--source-revision", required=True)
     parser.add_argument(
+        "--adhoc-sign",
+        action="store_true",
+        help="seal the completed bundle with the local ad-hoc signing identity",
+    )
+    parser.add_argument(
         "--replace-existing",
         action="store_true",
         help="replace only an existing bundle recognized as a packaged Notrum app",
@@ -347,6 +398,7 @@ def main() -> int:
             args.binary,
             args.output,
             args.source_revision,
+            adhoc_sign=args.adhoc_sign,
             replace_existing=args.replace_existing,
         )
     except (OSError, PackageError) as error:

@@ -199,12 +199,18 @@ The packager checks for a Mach-O arm64 slice, refuses to overwrite an unknown
 output, and records SHA-256, version, and source revision in
 `Contents/Resources/release.json`.
 
-Local bundles are not Developer ID signed or notarized. Before distributing a
-binary release, complete native macOS functional, APFS filename, Unicode/IME,
-accessibility, large-file UI, and protected-note UX checks; address the open
-dependency warnings; prepare the license notices and corresponding source for
-the distribution; and complete signing, notarization, and a Gatekeeper smoke.
-Docker checks and a native launch smoke alone do not establish release readiness.
+Native builds seal the completed bundle with an ad-hoc signature. This protects
+bundle integrity but does not identify an Apple-registered developer, so a user
+must explicitly approve a downloaded release in **System Settings → Privacy &
+Security → Open Anyway**. The Docker-only `make package-macos` target remains
+unsigned because `codesign` is a macOS system tool.
+
+Before distributing a release without that manual step, complete native macOS
+functional, APFS filename, Unicode/IME, accessibility, large-file UI, and
+protected-note UX checks; address the open dependency warnings; prepare the
+license notices and corresponding source; and complete Developer ID signing,
+notarization, and a Gatekeeper smoke. Docker checks and a native launch smoke
+alone do not establish release readiness.
 
 ## Platform feature audit
 

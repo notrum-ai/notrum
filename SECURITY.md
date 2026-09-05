@@ -28,7 +28,9 @@ technical details. Response and fix times are not guaranteed.
 
 Notrum is in early development. Security fixes target the latest development
 revision; older revisions have no separate maintenance or backport commitment.
-There is currently no signed, notarized public release.
+There is currently no Developer ID signed or notarized public release. Native
+macOS release bundles use an ad-hoc integrity signature and require explicit
+user approval through macOS Privacy & Security settings after download.
 
 ## Security boundaries and known issues
 

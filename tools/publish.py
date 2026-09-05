@@ -428,6 +428,9 @@ def validate_archive(path, sha, version, target):
             if source.read().decode().strip() != sha:
                 raise ValueError("release archive source revision mismatch")
         if target == "macos":
+            signature = prefix + "Notrum.app/Contents/_CodeSignature/CodeResources"
+            if signature not in names:
+                raise ValueError("macOS release archive has no bundle code signature")
             with open_member(prefix + "Notrum.app/Contents/Resources/release.json") as source:
                 metadata = json.load(source)
             if metadata["version"] != version or metadata["source_revision"] != sha:

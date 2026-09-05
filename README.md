@@ -34,7 +34,9 @@ built through Docker for the container's architecture. Portable Windows x64
 builds target Windows 10/11 on local NTFS. Cross-compilation and actual Windows
 acceptance are separate checks; see the [Windows guide](docs/windows.md).
 
-There is no signed, notarized public release. Local builds are unsigned.
+There is no Developer ID signed or notarized public release. Native macOS builds
+use an ad-hoc integrity signature that does not identify an Apple-registered
+developer.
 Known dependency warnings and the remaining work before distributing binaries
 are documented in the [development guide](docs/development.md).
 
@@ -59,6 +61,13 @@ cd notrum
 make build-macos
 open dist/Notrum.app
 ```
+
+A release downloaded from GitHub requires explicit approval until Notrum is
+Developer ID signed and notarized. Try to open `Notrum.app` once, then open
+**System Settings → Privacy & Security**, scroll to **Security**, choose
+**Open Anyway**, and confirm the launch. macOS offers this override for about an
+hour after the failed launch attempt. Only approve an archive whose checksum
+matches the release's `SHA256SUMS`.
 
 On first launch, choose a workspace or create one through the application.
 To open an existing workspace explicitly:

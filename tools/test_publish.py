@@ -23,11 +23,13 @@ LOCK = ('version = 4\n\n[[package]]\nname = "notrum-app"\nversion = "0.1.0"\n'
 SHA = "a" * 40
 
 
-def fixture_archive(path, *, target="linux", sha=SHA, corrupt=False):
+def fixture_archive(path, *, target="linux", sha=SHA, corrupt=False, signed=True):
     files = {"notrum": b"application", "SOURCE_REVISION.txt": (sha + "\n").encode()}
     if target == "macos":
         files["Notrum.app/Contents/Resources/release.json"] = json.dumps({
             "source_revision": sha, "version": "0.1.1"}).encode()
+        if signed:
+            files["Notrum.app/Contents/_CodeSignature/CodeResources"] = b"adhoc signature"
     records = [{"path": name, "sha256": hashlib.sha256(data).hexdigest()} for name, data in files.items()]
     files["build.json"] = json.dumps({"source_revision": sha, "platform": target,
                                       "architecture": "arm64", "files": records}).encode()
@@ -227,8 +229,16 @@ class ArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "fixture.tar.gz"
             fixture_archive(path, target="macos")
+            self.assertEqual(publish.validate_archive(path, SHA, "0.1.1", "macos"), "arm64")
             with self.assertRaisesRegex(ValueError, "version"):
                 publish.validate_archive(path, SHA, "0.1.2", "macos")
+
+    def test_macos_archive_requires_bundle_signature(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture.tar.gz"
+            fixture_archive(path, target="macos", signed=False)
+            with self.assertRaisesRegex(ValueError, "no bundle code signature"):
+                publish.validate_archive(path, SHA, "0.1.1", "macos")
 
     def test_failed_build_does_not_mark_assets_ready(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import call, patch
 
 import package_macos
 import generate_app_icon
@@ -76,6 +77,45 @@ def assert_icon_pixels_match(case: unittest.TestCase, expected: bytes, actual: b
 
 
 class PackageMacosTests(unittest.TestCase):
+    def test_adhoc_sign_seals_and_strictly_verifies_complete_bundle(self) -> None:
+        bundle = Path("/tmp/Notrum.app")
+        with patch.object(package_macos.subprocess, "run") as execute:
+            package_macos.sign_adhoc_bundle(bundle)
+
+        options = {
+            "check": True,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+        }
+        self.assertEqual(
+            execute.call_args_list,
+            [
+                call(
+                    [
+                        "/usr/bin/codesign",
+                        "--force",
+                        "--sign",
+                        "-",
+                        "--timestamp=none",
+                        str(bundle),
+                    ],
+                    **options,
+                ),
+                call(
+                    [
+                        "/usr/bin/codesign",
+                        "--verify",
+                        "--deep",
+                        "--strict",
+                        "--verbose=2",
+                        str(bundle),
+                    ],
+                    **options,
+                ),
+            ],
+        )
+
     def test_builds_arm64_bundle_with_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -216,6 +256,42 @@ class PackageMacosTests(unittest.TestCase):
             )
             self.assertEqual(executable.read_bytes(), second_binary.read_bytes())
             self.assertEqual(manifest["source_revision"], "second-revision")
+
+    def test_signing_failure_preserves_previous_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first_binary = root / "notrum-app-first"
+            first_binary.write_bytes(
+                thin_macho(package_macos.CPU_TYPE_ARM64) + b"first"
+            )
+            second_binary = root / "notrum-app-second"
+            second_binary.write_bytes(
+                thin_macho(package_macos.CPU_TYPE_ARM64) + b"second"
+            )
+            output = root / "Notrum.app"
+            package_macos.build_bundle(first_binary, output, "first-revision")
+
+            with patch.object(
+                package_macos,
+                "sign_adhoc_bundle",
+                side_effect=package_macos.PackageError("signing failed"),
+            ), self.assertRaisesRegex(package_macos.PackageError, "signing failed"):
+                package_macos.build_bundle(
+                    second_binary,
+                    output,
+                    "second-revision",
+                    adhoc_sign=True,
+                    replace_existing=True,
+                )
+
+            executable = output / "Contents" / "MacOS" / "Notrum"
+            metadata = json.loads(
+                (output / "Contents" / "Resources" / "release.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(executable.read_bytes(), first_binary.read_bytes())
+            self.assertEqual(metadata["source_revision"], "first-revision")
 
     def test_refuses_to_replace_unrecognized_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

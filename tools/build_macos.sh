@@ -79,6 +79,7 @@ python3 tools/package_macos.py \
     --binary "$target_dir/release/notrum-app" \
     --output "$output" \
     --source-revision "$SOURCE_REVISION" \
+    --adhoc-sign \
     --replace-existing
 
 echo "BUILT_APP path=$output"

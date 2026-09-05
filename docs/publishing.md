@@ -84,8 +84,10 @@ CODEX="$HOME/.local/bin/codex" make publish
 5. Runs the full `make` aggregate on the release commit. Packages the resulting
    macOS arm64 application, Windows x64 application and Linux executable for the
    Docker architecture (normally aarch64 on Apple Silicon). Linux x86_64 is not
-   implicitly cross-built. Builds remain unsigned and macOS is not notarized;
-   the existing platform validation limitations still apply.
+   implicitly cross-built. The macOS bundle receives an ad-hoc integrity
+   signature but is not Developer ID signed or notarized, so its first launch
+   requires explicit approval in **System Settings → Privacy & Security → Open
+   Anyway**. The existing platform validation limitations still apply.
 6. Checks archive manifests, source SHA and file hashes. Prepares three
    versioned archives and `SHA256SUMS`, retaining licenses and platform metadata.
    The Windows test kit is not a release asset.

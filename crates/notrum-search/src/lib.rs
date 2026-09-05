@@ -441,6 +441,11 @@ impl SearchIndex {
             let _ = index_entry(&mut writer, fields, entry)?;
         }
         writer.commit()?;
+        // Windows cannot move a directory while Tantivy still owns open writer
+        // and mmap handles within it. Complete merges and close the old index
+        // before publishing its generation under the final directory name.
+        writer.wait_merging_threads()?;
+        drop(index);
         write_synced(&building_path.join("notrum.manifest"), MANIFEST.as_bytes())?;
         write_catalog(&building_path, &indexed_stamps)?;
         sync_directory(&building_path)?;
@@ -751,8 +756,9 @@ fn relative_note_path(workspace: &Path, path: &Path) -> Result<String, SearchErr
         ));
     }
     relative
-        .to_str()
-        .map(str::to_owned)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("notes/{name}"))
         .ok_or_else(|| SearchError::InvalidPath("note path is not UTF-8".to_owned()))
 }
 

@@ -15,6 +15,7 @@ use rand::rngs::OsRng;
 
 pub const AGE_PREFIX: &[u8] = b"age-encryption.org/v1\n";
 pub const ARMORED_AGE_PREFIX: &[u8] = b"-----BEGIN AGE ENCRYPTED FILE-----\n";
+pub const ARMORED_AGE_CRLF_PREFIX: &[u8] = b"-----BEGIN AGE ENCRYPTED FILE-----\r\n";
 pub const SCRYPT_LOG_N: u8 = 18;
 pub const MAX_ORIGINAL_FILENAME_BYTES: usize = 255;
 pub const MAX_PAYLOAD_BYTES: u64 = 1 << 40;
@@ -203,11 +204,28 @@ impl<W: Write> Write for EnvelopeWriter<W> {
     }
 }
 
+// Normalize only the ASCII armor emitted by age, never plaintext or binary age
+// data. age uses the host line ending; Notrum writes portable LF on every OS.
+struct LfArmorOutput<W>(W);
+
+impl<W: Write> Write for LfArmorOutput<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        for part in bytes.split(|byte| *byte == b'\r') {
+            self.0.write_all(part)?;
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 /// Streaming ASCII-armored variant used by canonical workspace security
 /// files. It retains the generic authenticated metadata header while keeping
 /// the on-disk representation inspectable as an age envelope.
 pub struct ArmoredEnvelopeWriter<W: Write> {
-    inner: EnvelopeWriter<age::armor::ArmoredWriter<W>>,
+    inner: EnvelopeWriter<age::armor::ArmoredWriter<LfArmorOutput<W>>>,
 }
 
 impl<W: Write> ArmoredEnvelopeWriter<W> {
@@ -235,15 +253,22 @@ impl<W: Write> ArmoredEnvelopeWriter<W> {
         metadata: EnvelopeMetadata,
         work_factor: u8,
     ) -> Result<Self, SecureError> {
-        let armor = age::armor::ArmoredWriter::wrap_output(output, age::armor::Format::AsciiArmor)
-            .map_err(|_| SecureError)?;
+        let armor = age::armor::ArmoredWriter::wrap_output(
+            LfArmorOutput(output),
+            age::armor::Format::AsciiArmor,
+        )
+        .map_err(|_| SecureError)?;
         Ok(Self {
             inner: EnvelopeWriter::with_work_factor(armor, password, metadata, work_factor)?,
         })
     }
 
     pub fn finish(self) -> Result<W, SecureError> {
-        self.inner.finish()?.finish().map_err(|_| SecureError)
+        self.inner
+            .finish()?
+            .finish()
+            .map(|output| output.0)
+            .map_err(|_| SecureError)
     }
 }
 
@@ -376,7 +401,7 @@ pub fn decrypt_armored<R: Read>(
 /// Streaming ASCII-armored age envelope for the Markdown body of a protected
 /// note. The YAML front matter is deliberately written outside this envelope.
 pub struct BodyEnvelopeWriter<W: Write> {
-    inner: age::stream::StreamWriter<age::armor::ArmoredWriter<W>>,
+    inner: age::stream::StreamWriter<age::armor::ArmoredWriter<LfArmorOutput<W>>>,
     remaining: u64,
 }
 
@@ -404,8 +429,11 @@ impl<W: Write> BodyEnvelopeWriter<W> {
         if password.is_empty() || body_len > MAX_PAYLOAD_BYTES {
             return Err(SecureError);
         }
-        let armor = age::armor::ArmoredWriter::wrap_output(output, age::armor::Format::AsciiArmor)
-            .map_err(|_| SecureError)?;
+        let armor = age::armor::ArmoredWriter::wrap_output(
+            LfArmorOutput(output),
+            age::armor::Format::AsciiArmor,
+        )
+        .map_err(|_| SecureError)?;
         let mut recipient = age::scrypt::Recipient::new(password.secret());
         recipient.set_work_factor(work_factor);
         let encryptor =
@@ -427,6 +455,7 @@ impl<W: Write> BodyEnvelopeWriter<W> {
             .finish()
             .map_err(|_| SecureError)?
             .finish()
+            .map(|output| output.0)
             .map_err(|_| SecureError)
     }
 }
@@ -547,7 +576,7 @@ pub fn decrypt_body<R: Read>(
 }
 
 pub fn is_armored_age_prefix(prefix: &[u8]) -> bool {
-    prefix.starts_with(ARMORED_AGE_PREFIX)
+    prefix.starts_with(ARMORED_AGE_PREFIX) || prefix.starts_with(ARMORED_AGE_CRLF_PREFIX)
 }
 
 pub fn is_age_prefix(prefix: &[u8]) -> bool {
@@ -810,6 +839,33 @@ mod tests {
         reader.read_to_end(&mut decrypted).unwrap();
         assert_eq!(reader.body_len(), payload.len() as u64);
         assert_eq!(decrypted, payload);
+    }
+
+    #[test]
+    fn armor_writes_lf_and_reads_both_platform_line_endings() {
+        let password = password("portable armor");
+        let payload = b"body with original CRLF\r\nand LF\n";
+        let encoded = encrypt_body_test(&password, payload);
+        assert!(encoded.starts_with(ARMORED_AGE_PREFIX));
+        assert!(!encoded.contains(&b'\r'));
+        let crlf = String::from_utf8(encoded.clone())
+            .unwrap()
+            .replace('\n', "\r\n");
+        for bytes in [encoded.as_slice(), crlf.as_bytes()] {
+            assert!(is_armored_age_prefix(bytes));
+            assert_eq!(decrypt_body_all(bytes, &password).unwrap(), payload);
+        }
+        for invalid in [
+            b"-----BEGIN AGE ENCRYPTED FILE-----\rX".as_slice(),
+            b"-----BEGIN AGE ENCRYPTED FILE-----X\n",
+        ] {
+            assert!(!is_armored_age_prefix(invalid));
+        }
+        let mut output = LfArmorOutput(Vec::new());
+        for part in [b"first\r".as_slice(), b"\nsecond\r\n", b"third\n"] {
+            output.write_all(part).unwrap();
+        }
+        assert_eq!(output.0, b"first\nsecond\nthird\n");
     }
 
     #[test]

@@ -228,16 +228,27 @@ impl Metadata {
         // Hash through this handle to detect same-size writes with restored mtime.
         // The reader excludes concurrent writers and uses bounded memory.
         if inner.is_file() && !super::is_link(&inner) {
-            let mut offset = 0;
-            let mut buffer = [0; 65_536];
-            loop {
-                let count = file.seek_read(&mut buffer, offset)?;
-                if count == 0 {
-                    break;
+            // Unlike Unix pread, Windows seek_read changes the shared cursor.
+            // Metadata must leave the caller's next read/write at its original offset,
+            // including when hashing fails partway through the file.
+            let mut reader = file;
+            let position = reader.stream_position()?;
+            let hashed = (|| -> io::Result<()> {
+                let mut offset = 0;
+                let mut buffer = [0; 65_536];
+                loop {
+                    let count = file.seek_read(&mut buffer, offset)?;
+                    if count == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..count]);
+                    offset += count as u64;
                 }
-                hasher.update(&buffer[..count]);
-                offset += count as u64;
-            }
+                Ok(())
+            })();
+            let restored = reader.seek(SeekFrom::Start(position));
+            hashed?;
+            restored?;
         }
         Ok(Self {
             inner,

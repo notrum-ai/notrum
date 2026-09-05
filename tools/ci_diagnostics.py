@@ -16,6 +16,13 @@ def safe_line(line):
         return line
     if re.fullmatch(r"test result: (ok|FAILED)\. [0-9a-z ;.]+", line):
         return line
+    if re.fullmatch(r"Rust failure: (?:stage=[A-Za-z]+(?: os_error=[0-9]+)?|os_error=[0-9]+)", line):
+        return line
+    stage = re.search(r"PreCommit \{ stage: (OpenTarget|Scan|CreateTemp|Write|FileSync|ConflictCheck|Replace|SourceRemove|ParentSync)\b", line)
+    os_error = re.search(r"(?:\(os error |Os \{ code: )([0-9]{1,5})(?:\)|,)", line)
+    if stage or os_error:
+        parts = ([f"stage={stage[1]}"] if stage else []) + ([f"os_error={os_error[1]}"] if os_error else [])
+        return "Rust failure: " + " ".join(parts)
     match = re.fullmatch(r"(FAIL|ERROR): (test_[a-zA-Z0-9_]+) \(([a-zA-Z0-9_.]+)\)", line)
     if match:
         return f"Python test {match[1]}: {match[3]}"

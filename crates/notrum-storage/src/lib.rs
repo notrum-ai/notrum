@@ -28,9 +28,9 @@ use notrum_frontmatter::{
     MetadataPatch, PatchError, patch_front_matter, scan_reader,
 };
 use notrum_secure::{
-    AGE_PREFIX, ARMORED_AGE_PREFIX, BodyEnvelopeWriter, EnvelopeKind, EnvelopeMetadata,
-    EnvelopeWriter, MasterPassword, decrypt, decrypt_body, is_age_prefix, is_armored_age_prefix,
-    is_scrypt_age_envelope, opaque_note_filename,
+    AGE_PREFIX, ARMORED_AGE_CRLF_PREFIX, ARMORED_AGE_PREFIX, BodyEnvelopeWriter, EnvelopeKind,
+    EnvelopeMetadata, EnvelopeWriter, MasterPassword, decrypt, decrypt_body, is_age_prefix,
+    is_armored_age_prefix, is_scrypt_age_envelope, opaque_note_filename,
 };
 use pulldown_cmark::{Event, Parser};
 
@@ -193,7 +193,7 @@ pub fn scan_note(path: impl AsRef<Path>) -> io::Result<NoteScanResult> {
     }
     let mut file = File::open(path)?;
     let version = FileVersion::from_metadata(&file.metadata()?);
-    let mut prefix = vec![0_u8; ARMORED_AGE_PREFIX.len().max(AGE_PREFIX.len())];
+    let mut prefix = vec![0_u8; ARMORED_AGE_CRLF_PREFIX.len().max(AGE_PREFIX.len())];
     let mut read = 0;
     while read < prefix.len() {
         let count = file.read(&mut prefix[read..])?;
@@ -230,7 +230,7 @@ pub fn scan_note(path: impl AsRef<Path>) -> io::Result<NoteScanResult> {
     if let FrontMatterStatus::Parsed(parsed) = &frontmatter.status {
         let body_offset = parsed.body_offset;
         file.seek(SeekFrom::Start(body_offset))?;
-        let mut armored_prefix = vec![0_u8; ARMORED_AGE_PREFIX.len()];
+        let mut armored_prefix = vec![0_u8; ARMORED_AGE_CRLF_PREFIX.len()];
         let mut armored_read = 0;
         while armored_read < armored_prefix.len() {
             let count = file.read(&mut armored_prefix[armored_read..])?;
@@ -239,8 +239,7 @@ pub fn scan_note(path: impl AsRef<Path>) -> io::Result<NoteScanResult> {
             }
             armored_read += count;
         }
-        let has_armor =
-            armored_read == armored_prefix.len() && is_armored_age_prefix(&armored_prefix);
+        let has_armor = is_armored_age_prefix(&armored_prefix[..armored_read]);
         return match (parsed.metadata.encryption, has_armor) {
             (Some(EncryptionFormat::AgeBodyV1), true) => {
                 Ok(NoteScanResult::Protected(ScannedProtectedNote {
@@ -262,7 +261,7 @@ pub fn scan_note(path: impl AsRef<Path>) -> io::Result<NoteScanResult> {
         let mut looks_protected = false;
         if let Some(body_offset) = body_offset {
             file.seek(SeekFrom::Start(*body_offset))?;
-            let mut armor = vec![0_u8; ARMORED_AGE_PREFIX.len()];
+            let mut armor = vec![0_u8; ARMORED_AGE_CRLF_PREFIX.len()];
             looks_protected = file.read_exact(&mut armor).is_ok() && is_armored_age_prefix(&armor);
         }
         file.seek(SeekFrom::Start(0))?;
@@ -1123,6 +1122,8 @@ fn protect_note_with(
         return Err(NoteOperationError::Conflict);
     }
 
+    #[cfg(windows)]
+    drop(input);
     drop(temp);
     checkpoint.check(OperationStage::Publish)?;
     journal_guard.disarm();
@@ -2884,6 +2885,9 @@ fn rewrite_note_to_destination_internal(
         .map_err(|error| precommit(SaveStage::Write, error))?;
     temp.sync_all()
         .map_err(|error| precommit(SaveStage::FileSync, error))?;
+    // Release the exclusive Windows writer before verification reopens the
+    // completed ciphertext. TempGuard continues to own cleanup on any error.
+    drop(temp);
     let expected_sha256 = hash_output
         .then(|| secure_backups::hash_file(guard.path()))
         .transpose()
@@ -2900,8 +2904,9 @@ fn rewrite_note_to_destination_internal(
             .is_some_and(|metadata| {
                 FileVersion::from_metadata(&metadata).same_file_as(expected_version)
             });
+    #[cfg(windows)]
+    drop(input);
     if destination == source || destination_aliases_source {
-        drop(temp);
         fs::rename(guard.path(), source).map_err(|error| precommit(SaveStage::Replace, error))?;
         guard.disarm();
         sync_directory_io(parent).map_err(|error| SaveError::PostReplaceSync {
@@ -2936,7 +2941,6 @@ fn rewrite_note_to_destination_internal(
         ));
     }
 
-    drop(temp);
     publish_temp(&mut guard, destination).map_err(|error| match error {
         NoteOperationError::Collision(_) => SaveError::Conflict,
         error => SaveError::PreCommit {
@@ -3072,6 +3076,8 @@ fn rewrite_note_with(
     checkpoint
         .check(SaveStage::Replace)
         .map_err(|error| precommit(SaveStage::Replace, error))?;
+    #[cfg(windows)]
+    drop(input);
     drop(temp);
     fs::rename(guard.path(), path).map_err(|error| precommit(SaveStage::Replace, error))?;
     guard.disarm();
@@ -3182,6 +3188,8 @@ fn rewrite_metadata_with(
     checkpoint
         .check(SaveStage::Replace)
         .map_err(|error| precommit(SaveStage::Replace, error))?;
+    #[cfg(windows)]
+    drop(input);
     drop(temp);
     fs::rename(guard.path(), path).map_err(|error| precommit(SaveStage::Replace, error))?;
     guard.disarm();
@@ -3585,6 +3593,39 @@ mod tests {
             project_body_title(&"a".repeat(BODY_TITLE_SCAN_BYTES + 1)),
             None
         );
+    }
+
+    #[test]
+    fn scan_recognizes_crlf_armor_without_rewriting_it() {
+        let workspace = TestWorkspace::new();
+        let source = workspace.note(
+            "Portable.md",
+            b"---\ntitle: Portable\n---\nprivate\r\nbody\n",
+        );
+        let password = MasterPassword::new("portable note".to_owned());
+        let version = open_versioned(&source).unwrap().1;
+        protect_note_body(&source, &version, &password, "Portable").unwrap();
+        let NoteScanResult::Protected(scan) = scan_note(&source).unwrap() else {
+            panic!("expected protected note");
+        };
+        let bytes = fs::read(&source).unwrap();
+        let armor = String::from_utf8(bytes[scan.body_offset as usize..].to_vec())
+            .unwrap()
+            .replace('\n', "\r\n");
+        let mut crlf = bytes[..scan.body_offset as usize].to_vec();
+        crlf.extend_from_slice(armor.as_bytes());
+        fs::write(&source, &crlf).unwrap();
+        let NoteScanResult::Protected(scan) = scan_note(&source).unwrap() else {
+            panic!("expected CRLF protected note");
+        };
+        assert_eq!(fs::read(&source).unwrap(), crlf);
+        assert_eq!(&crlf[scan.body_offset as usize..], armor.as_bytes());
+        let mut file = File::open(&source).unwrap();
+        file.seek(SeekFrom::Start(scan.body_offset)).unwrap();
+        let mut reader = decrypt_body(file, &password).unwrap();
+        let mut body = Vec::new();
+        reader.read_to_end(&mut body).unwrap();
+        assert_eq!(body, b"private\r\nbody\n");
     }
 
     #[test]
@@ -5145,6 +5186,7 @@ mod tests {
         file.seek(SeekFrom::Start(999_999_999)).unwrap();
         file.write_all(b"\n").unwrap();
         file.sync_all().unwrap();
+        drop(file);
         assert_eq!(fs::metadata(&path).unwrap().len(), 1_000_000_000);
 
         let scan = scan_workspace(&workspace.root).unwrap();

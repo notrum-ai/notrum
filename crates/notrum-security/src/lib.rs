@@ -15,7 +15,7 @@ use notrum_engine::{
     EngineError, EngineId, ItemId, ReferencedSecret, SecretRef, SecretResolver, SecretValue,
 };
 use notrum_secure::{
-    ARMORED_AGE_PREFIX, ArmoredEnvelopeWriter, EnvelopeKind, EnvelopeMetadata, MasterPassword,
+    ARMORED_AGE_CRLF_PREFIX, ArmoredEnvelopeWriter, EnvelopeKind, EnvelopeMetadata, MasterPassword,
     decrypt_armored,
 };
 use rand::RngCore;
@@ -518,12 +518,12 @@ fn validate_file(path: &Path, metadata: &fs::Metadata) -> Result<(), SecurityErr
 }
 
 fn validate_armored_prefix(path: &Path) -> Result<(), SecurityError> {
-    let mut prefix = vec![0_u8; ARMORED_AGE_PREFIX.len()];
+    let mut prefix = vec![0_u8; ARMORED_AGE_CRLF_PREFIX.len()];
     let mut file = File::open(path).map_err(security_io)?;
     file.read_exact(&mut prefix).map_err(|_| {
         SecurityError::Blocked(format!("{} is not an armored age file", path.display()))
     })?;
-    if prefix != ARMORED_AGE_PREFIX {
+    if !notrum_secure::is_armored_age_prefix(&prefix) {
         return Err(SecurityError::Blocked(format!(
             "{} is not an armored age file",
             path.display()
@@ -771,6 +771,19 @@ mod tests {
             store.inspect(false).unwrap().state,
             WorkspaceSecurityState::ConfiguredLocked
         );
+    }
+
+    #[test]
+    fn verifier_accepts_windows_armor_without_rewriting_it() {
+        let workspace = TestWorkspace::new();
+        let store = SecurityStore::new(&workspace.0);
+        let password = MasterPassword::new("portable verifier".to_owned());
+        let vault = store.configure(&password).unwrap();
+        let path = store.verifier_path();
+        let crlf = fs::read_to_string(&path).unwrap().replace('\n', "\r\n");
+        fs::write(&path, &crlf).unwrap();
+        assert_eq!(store.unlock(&password).unwrap(), vault);
+        assert_eq!(fs::read_to_string(&path).unwrap(), crlf);
     }
 
     #[test]

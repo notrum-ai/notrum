@@ -48,6 +48,12 @@ class CITests(unittest.TestCase):
         self.assertEqual(ci.safe_line(f"subprocess.CalledProcessError: {secret}"),
                          "Python exception: CalledProcessError (details omitted)")
         self.assertIsNone(ci.safe_line(f"FAIL: test_icon (__main__.PackageMacosTests.test_icon) {secret}"))
+        self.assertEqual(ci.safe_line(f'PreCommit {{ stage: Replace, message: "{secret} (os error 5)" }}'),
+                         "Rust failure: stage=Replace os_error=5")
+        self.assertEqual(ci.safe_line(f'Os {{ code: 32, kind: PermissionDenied, message: "{secret}" }}'),
+                         "Rust failure: os_error=32")
+        self.assertEqual(ci.safe_line("Rust failure: stage=Replace os_error=5"),
+                         "Rust failure: stage=Replace os_error=5")
 
     def test_failed_command_retains_only_safe_report(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, SOURCE_REVISION=SHA):

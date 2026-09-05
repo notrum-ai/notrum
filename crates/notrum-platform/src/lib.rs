@@ -184,7 +184,8 @@ pub fn preserve_permissions(source: &File, destination: &File) -> io::Result<()>
     }
 }
 
-/// Atomic replacement. Callers must close writers first and retain recovery on error.
+/// Atomic replacement. Callers must close writers and their own Windows target
+/// readers first, and retain recovery on error.
 /// Unix callers perform their existing parent-directory sync after this operation.
 /// Windows uses MoveFileExW with WRITE_THROUGH, including its error result.
 pub fn replace(source: &Path, destination: &Path) -> io::Result<()> {
@@ -303,8 +304,25 @@ mod tests {
         assert_eq!(after.links, 2);
         let temporary = directory.0.join("replacement.md");
         std_fs::write(&temporary, b"replacement").unwrap();
+        #[cfg(windows)]
+        {
+            // MoveFileEx cannot replace this still-open target. It must leave
+            // both files intact so the caller can close its reader and retry.
+            assert!(replace(&temporary, &path).is_err());
+            assert_eq!(std_fs::read(&path).unwrap(), b"original");
+            assert_eq!(std_fs::read(&temporary).unwrap(), b"replacement");
+            assert_eq!(file_information(&opened).unwrap().identity, before.identity);
+            drop(opened);
+        }
         replace(&temporary, &path).unwrap();
+        #[cfg(unix)]
         assert_eq!(file_information(&opened).unwrap().identity, before.identity);
+        assert_eq!(
+            file_information(&File::open(link).unwrap())
+                .unwrap()
+                .identity,
+            before.identity
+        );
         assert_ne!(
             file_information(&File::open(path).unwrap())
                 .unwrap()
@@ -344,6 +362,45 @@ mod tests {
                 index: 2
             }
         );
+    }
+
+    #[test]
+    fn metadata_preserves_the_open_read_and_write_position() {
+        use std::io::{Read, Seek, SeekFrom};
+        let directory = TestDirectory::new();
+        let path = directory.0.join("cursor.md");
+        std_fs::write(&path, b"0123456789").unwrap();
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        file.seek(SeekFrom::Start(3)).unwrap();
+        assert_eq!(file.metadata().unwrap().len(), 10);
+        assert_eq!(file.stream_position().unwrap(), 3);
+        let mut bytes = [0; 2];
+        file.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"34");
+        file.metadata().unwrap();
+        file.write_all(b"XX").unwrap();
+        drop(file);
+        assert_eq!(std_fs::read(path).unwrap(), b"01234XX789");
+    }
+
+    #[test]
+    fn replacement_preserves_inherited_permissions_through_handles() {
+        let directory = TestDirectory::new();
+        let source = directory.0.join("inherited.md");
+        let candidate = directory.0.join("candidate.md");
+        std_fs::write(&source, b"original").unwrap();
+        let expected = fs::metadata(&source).unwrap().permissions();
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        let candidate_file = options.open(&candidate).unwrap();
+        candidate_file.set_permissions(expected.clone()).unwrap();
+        drop(candidate_file);
+        #[cfg(windows)]
+        assert_eq!(fs::metadata(&candidate).unwrap().permissions(), expected);
     }
     #[test]
     fn replacement_preserves_private_permissions_through_handles() {

@@ -1756,6 +1756,7 @@ mod tests {
         let mut file = File::create(&path).unwrap();
         write_header(&mut file, &collision, 7, 1, 0, FNV_OFFSET_1).unwrap();
         file.sync_all().unwrap();
+        drop(file);
         let original = fs::read(&path).unwrap();
 
         let error = store
@@ -2100,15 +2101,19 @@ mod tests {
             output.sync_all().unwrap();
         }
 
-        fn make_stale(path: &Path) {
+        fn stale_times() -> FileTimes {
             let stale_at = std::time::SystemTime::now()
                 .checked_sub(PROTECTED_TEMP_STALE_AFTER + std::time::Duration::from_secs(60))
                 .unwrap();
+            FileTimes::new().set_modified(stale_at)
+        }
+
+        fn make_stale(path: &Path) {
             File::options()
                 .write(true)
                 .open(path)
                 .unwrap()
-                .set_times(FileTimes::new().set_modified(stale_at))
+                .set_times(stale_times())
                 .unwrap();
         }
 
@@ -2156,7 +2161,7 @@ mod tests {
             .unwrap();
         active_file.flush().unwrap();
         active_file.sync_all().unwrap();
-        make_stale(&active);
+        active_file.set_times(stale_times()).unwrap();
 
         let scan = store.scan_protected();
         assert!(scan.diagnostics.is_empty());

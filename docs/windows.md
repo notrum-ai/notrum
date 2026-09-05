@@ -77,6 +77,14 @@ reparse-point ancestors and non-local Windows prefixes, and retains Windows
 ACL entries when replacing a file. A new private file is opened exclusively,
 receives a protected DACL for the current user, Administrators, and SYSTEM,
 and only then becomes available to the writer. ACL failures are returned.
+Metadata fingerprints preserve the open handle's read/write position. Notrum
+closes its own target readers at the replacement boundary; another program's
+incompatible open handle still causes a reported failure with recovery retained.
+
+Age armor written by Notrum uses LF on every OS; readers also accept CRLF armor
+from Windows tools. Original plaintext line endings remain unchanged. Search
+generation publication completes Tantivy merges and releases its file handles
+before renaming the directory, and persisted search paths use `/` on every OS.
 
 Replacement uses the checked `MoveFileExW` write-through operation supplied by
 `atomicwrites`. Namespace synchronization uses an empty private marker, flushes

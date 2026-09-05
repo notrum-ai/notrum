@@ -201,6 +201,10 @@ class CITests(unittest.TestCase):
                          "Rust failure: os_error=32")
         self.assertEqual(ci.safe_line("Rust failure: stage=Replace os_error=5"),
                          "Rust failure: stage=Replace os_error=5")
+        acl = "WINDOWS_ACL_MISMATCH expected_count=3 actual_count=3 index=0 expected_flags=16 actual_flags=0"
+        self.assertEqual(ci.safe_line(acl), acl)
+        self.assertIsNone(ci.safe_line(acl + " " + secret))
+        self.assertIsNone(ci.safe_line(acl.replace("expected_flags=16", "expected_flags=" + secret)))
 
     def test_failed_command_retains_only_safe_report(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, SOURCE_REVISION=SHA):

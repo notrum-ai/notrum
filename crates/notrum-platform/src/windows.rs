@@ -11,6 +11,8 @@ use std::path::Path;
 
 use windows_acl::acl::{ACL, AceType};
 use windows_acl::helper::{current_user, name_to_sid, sid_to_string, string_to_sid};
+use windows_permissions::constants::{SeObjectType, SecurityInformation};
+use windows_permissions::{LocalBox, SecurityDescriptor, wrappers};
 
 const READ_CONTROL: u32 = 0x0002_0000;
 const WRITE_DAC: u32 = 0x0004_0000;
@@ -19,7 +21,6 @@ const GENERIC_WRITE: u32 = 0x4000_0000;
 const FILE_ALL_ACCESS: u32 = 0x001f_01ff;
 const BACKUP_SEMANTICS: u32 = 0x0200_0000;
 const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-const INHERITED_ACE: u8 = 0x10;
 const ADMINISTRATORS: &str = "S-1-5-32-544";
 const SYSTEM: &str = "S-1-5-18";
 
@@ -189,53 +190,91 @@ pub(super) fn apply_permissions(
             "source is read-only",
         ));
     }
-    let mut access = acl(file)?;
-    for entry in access.all().map_err(error)? {
-        let sid = string_to_sid(&entry.string_sid).map_err(error)?;
-        access
-            .remove_entry(sid.as_ptr().cast_mut().cast(), None, None)
-            .map_err(error)?;
-    }
-    // windows-acl 0.3.0 inserts every new ACE before the first inherited ACE.
-    // Rebuild the inherited suffix backwards, then add explicit rules in their
-    // original order. Replaying all rules forwards reverses inherited access
-    // checks; the exact comparison below must continue rejecting any other loss.
-    let inherited = permissions
-        .rules
-        .iter()
-        .rev()
-        .filter(|rule| rule.flags & INHERITED_ACE != 0);
-    let explicit = permissions
-        .rules
-        .iter()
-        .filter(|rule| rule.flags & INHERITED_ACE == 0);
-    for rule in inherited.chain(explicit) {
-        let sid = string_to_sid(&rule.sid).map_err(error)?;
-        ensure_applied(
-            access
-                .add_entry(
-                    sid.as_ptr().cast_mut().cast(),
-                    if rule.allow {
-                        AceType::AccessAllow
-                    } else {
-                        AceType::AccessDeny
-                    },
-                    rule.flags,
-                    rule.mask,
-                )
-                .map_err(error)?,
-        )?;
-    }
+    let descriptor = permissions_descriptor(permissions)?;
+    let dacl = descriptor.dacl().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "replacement DACL is missing")
+    })?;
+    // Install the complete ordered ACL through the existing handle. windows-acl
+    // applies PROTECTED_DACL at every add/remove, converting inherited entries
+    // and potentially replacing rules with the same SID. Only replace the DACL;
+    // do not request another inheritance transition on our private temporary.
+    wrappers::SetSecurityInfo(
+        &mut file.try_clone()?,
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl,
+        None,
+        None,
+        Some(dacl),
+        None,
+    )?;
     let mut flags = file.metadata()?.permissions();
     flags.set_readonly(permissions.readonly);
     file.set_permissions(flags)?;
-    if capture_permissions(file)? != *permissions {
+    let actual = capture_permissions(file)?;
+    if actual != *permissions {
+        #[cfg(test)]
+        {
+            let index = permissions
+                .rules
+                .iter()
+                .zip(&actual.rules)
+                .position(|(expected, actual)| expected != actual)
+                .unwrap_or(permissions.rules.len().min(actual.rules.len()));
+            let flags = |rules: &[super::fs::AccessRule]| {
+                rules.get(index).map_or(256, |rule| u16::from(rule.flags))
+            };
+            // Only structural numbers enter CI diagnostics, never SIDs or paths.
+            eprintln!(
+                "WINDOWS_ACL_MISMATCH expected_count={} actual_count={} index={} expected_flags={} actual_flags={}",
+                permissions.rules.len(),
+                actual.rules.len(),
+                index,
+                flags(&permissions.rules),
+                flags(&actual.rules)
+            );
+        }
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Windows did not preserve the complete ACL",
         ));
     }
     Ok(())
+}
+
+fn permissions_descriptor(
+    permissions: &super::fs::Permissions,
+) -> io::Result<LocalBox<SecurityDescriptor>> {
+    use std::fmt::Write;
+
+    let mut sddl = String::from("D:");
+    for rule in &permissions.rules {
+        if rule.flags & 0x20 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "cannot preserve this Windows ACL flag",
+            ));
+        }
+        // Canonicalize through the SID parser before embedding a journal's SID
+        // in SDDL, so it cannot inject another access rule or descriptor section.
+        let sid = string_to_sid(&rule.sid).map_err(error)?;
+        let sid = sid_to_string(sid.as_ptr().cast_mut().cast()).map_err(error)?;
+        sddl.push_str(if rule.allow { "(A;" } else { "(D;" });
+        for (bit, flag) in [
+            (0x01, "OI"),
+            (0x02, "CI"),
+            (0x04, "NP"),
+            (0x08, "IO"),
+            (0x10, "ID"),
+            (0x40, "SA"),
+            (0x80, "FA"),
+        ] {
+            if rule.flags & bit != 0 {
+                sddl.push_str(flag);
+            }
+        }
+        write!(sddl, ";0x{:08x};;;{sid})", rule.mask).map_err(io::Error::other)?;
+    }
+    sddl.parse()
 }
 
 /// NTFS namespace barrier: flush an empty file and move it with WRITE_THROUGH.

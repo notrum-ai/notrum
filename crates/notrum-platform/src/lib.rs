@@ -412,44 +412,62 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn replacement_preserves_mixed_acl_order_and_rejects_unrepresentable_order() {
+    fn replacement_preserves_mixed_and_noncanonical_acl_order() {
         use std::os::windows::fs::OpenOptionsExt;
-        use std::os::windows::io::AsRawHandle;
-        use windows_acl::acl::{ACL, AceType};
-        use windows_acl::helper::string_to_sid;
+        use windows_permissions::constants::{SeObjectType, SecurityInformation};
+        use windows_permissions::{LocalBox, SecurityDescriptor, wrappers};
 
         let directory = TestDirectory::new();
         let source = directory.0.join("mixed.md");
         std_fs::write(&source, b"original").unwrap();
         // Build the source fixture directly through the dependency, independently
         // of our permission copier. Keep inherited rules from the private parent.
-        let source_file = OpenOptions::new()
+        let mut source_file = OpenOptions::new()
             .access_mode(0x0006_0000)
             .open(&source)
             .unwrap();
-        let mut acl = ACL::from_file_handle(source_file.as_raw_handle().cast(), false).unwrap();
-        for (sid, kind, mask) in [
-            ("S-1-5-32-546", AceType::AccessDeny, 0x0000_0002),
-            ("S-1-5-18", AceType::AccessAllow, 0x0002_0000),
-        ] {
-            let sid = string_to_sid(sid).unwrap();
-            assert!(
-                acl.add_entry(sid.as_ptr().cast_mut().cast(), kind, 0, mask)
-                    .unwrap()
-            );
-        }
+        let inherited = wrappers::GetSecurityInfo(
+            &source_file,
+            SeObjectType::SE_FILE_OBJECT,
+            SecurityInformation::Dacl,
+        )
+        .unwrap();
+        let inherited = wrappers::ConvertSecurityDescriptorToStringSecurityDescriptor(
+            &inherited,
+            SecurityInformation::Dacl,
+        )
+        .unwrap()
+        .into_string()
+        .unwrap();
+        let entries = &inherited[inherited.find('(').unwrap()..];
+        // Duplicate explicit SYSTEM entries must not be merged or overwrite
+        // each other, nor the inherited SYSTEM entry that follows them.
+        let mixed: LocalBox<SecurityDescriptor> =
+            format!("D:(D;;0x2;;;BG)(A;;0x20000;;;SY)(A;;0x100000;;;SY){entries}")
+                .parse()
+                .unwrap();
+        wrappers::SetSecurityInfo(
+            &mut source_file,
+            SeObjectType::SE_FILE_OBJECT,
+            SecurityInformation::Dacl,
+            None,
+            None,
+            Some(mixed.dacl().unwrap()),
+            None,
+        )
+        .unwrap();
         drop(source_file);
         let expected = fs::metadata(&source).unwrap().permissions();
-        assert!(expected.rules.len() >= 5);
+        assert!(expected.rules.len() >= 6);
         assert!(!expected.rules[0].allow);
         assert!(expected.rules[1].allow);
         assert!(
-            expected.rules[..2]
+            expected.rules[..3]
                 .iter()
                 .all(|rule| rule.flags & 0x10 == 0)
         );
         assert!(
-            expected.rules[2..]
+            expected.rules[3..]
                 .iter()
                 .all(|rule| rule.flags & 0x10 != 0)
         );
@@ -462,12 +480,15 @@ mod tests {
         drop(candidate_file);
         assert_eq!(fs::metadata(&candidate).unwrap().permissions(), expected);
 
-        // The dependency canonicalizes explicit deny/allow ordering. Never
-        // accept a requested ACL whose access-check order cannot be reproduced.
+        // Unlike the old per-entry API, a complete DACL installation must also
+        // preserve access-check order when explicit rules are not canonical.
         let rejected = directory.0.join("rejected.md");
         let rejected_file = create_private_file(&rejected).unwrap();
-        let mut unsupported = expected;
-        unsupported.rules.swap(0, 1);
+        let mut noncanonical = expected;
+        noncanonical.rules.swap(0, 1);
+        windows::apply_permissions(&rejected_file, &noncanonical).unwrap();
+        let mut unsupported = noncanonical.clone();
+        unsupported.rules[0].flags |= 0x20;
         assert_eq!(
             windows::apply_permissions(&rejected_file, &unsupported)
                 .unwrap_err()
@@ -475,6 +496,7 @@ mod tests {
             io::ErrorKind::Unsupported
         );
         drop(rejected_file);
+        assert_eq!(fs::metadata(&rejected).unwrap().permissions(), noncanonical);
         std_fs::remove_file(rejected).unwrap();
         assert_eq!(std_fs::read(source).unwrap(), b"original");
     }
@@ -524,14 +546,13 @@ mod tests {
         assert!(replace(&candidate, &destination).is_err());
         drop(lock);
         assert_eq!(std_fs::read(&destination).unwrap(), b"original");
-        let mut permissions = std_fs::metadata(&destination).unwrap().permissions();
+        let original_permissions = std_fs::metadata(&destination).unwrap().permissions();
+        let mut permissions = original_permissions.clone();
         permissions.set_readonly(true);
         std_fs::set_permissions(&destination, permissions).unwrap();
         assert!(replace(&candidate, &destination).is_err());
         assert_eq!(std_fs::read(&candidate).unwrap(), b"candidate");
-        let mut permissions = std_fs::metadata(&destination).unwrap().permissions();
-        permissions.set_readonly(false);
-        std_fs::set_permissions(&destination, permissions).unwrap();
+        std_fs::set_permissions(&destination, original_permissions).unwrap();
         replace(&candidate, &destination).unwrap();
         assert_eq!(std_fs::read(&destination).unwrap(), b"candidate");
     }
@@ -543,7 +564,8 @@ mod tests {
         let source = directory.0.join("source.md");
         let candidate = directory.0.join("candidate.md");
         drop(create_private_file(&source).unwrap());
-        let mut attributes = std_fs::metadata(&source).unwrap().permissions();
+        let original_attributes = std_fs::metadata(&source).unwrap().permissions();
+        let mut attributes = original_attributes.clone();
         attributes.set_readonly(true);
         std_fs::set_permissions(&source, attributes).unwrap();
         let source_file = File::open(&source).unwrap();
@@ -558,9 +580,7 @@ mod tests {
         drop(candidate_file);
         std_fs::remove_file(&candidate).unwrap();
         drop(source_file);
-        let mut attributes = std_fs::metadata(&source).unwrap().permissions();
-        attributes.set_readonly(false);
-        std_fs::set_permissions(&source, attributes).unwrap();
+        std_fs::set_permissions(&source, original_attributes).unwrap();
     }
 
     #[cfg(windows)]

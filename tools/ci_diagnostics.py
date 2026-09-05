@@ -58,6 +58,8 @@ def safe_line(line):
         return line
     if re.fullmatch(r"test result: (ok|FAILED)\. [0-9a-z ;.]+", line):
         return line
+    if re.fullmatch(r"WINDOWS_ACL_MISMATCH expected_count=[0-9]{1,5} actual_count=[0-9]{1,5} index=[0-9]{1,5} expected_flags=[0-9]{1,3} actual_flags=[0-9]{1,3}", line):
+        return line
     if re.fullmatch(r"Rust failure: (?:stage=[A-Za-z]+(?: os_error=[0-9]+)?|os_error=[0-9]+)", line):
         return line
     stage = re.search(r"PreCommit \{ stage: (OpenTarget|Scan|CreateTemp|Write|FileSync|ConflictCheck|Replace|SourceRemove|ParentSync)\b", line)

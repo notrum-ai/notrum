@@ -472,7 +472,7 @@ fn connection_summary(controller: Controller, palette: Palette) -> impl IntoView
         .style(|style| rtl_column(style).width_full().gap(4.0)),
         actions((
             action_button(
-                move || tr!(AiChangeKey),
+                move || tr!(AiChangeCredential),
                 IconButtonTone::Secondary,
                 palette,
                 move || !busy.get(),
@@ -590,7 +590,7 @@ fn connection_form(controller: Controller, palette: Palette) -> impl IntoView {
                     if busy.get() && operation.get() == Operation::Connect {
                         tr!(AiConnecting)
                     } else if settings.get().connection.is_some() {
-                        tr!(AiSaveKey)
+                        tr!(AiSaveCredential)
                     } else {
                         tr!(AiVerify)
                     }

@@ -24,6 +24,44 @@ SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    def test_post_replace_diagnostics_keep_stage_thread_and_os_code_only(self):
+        accepted = [
+            f"NATIVE_POST_REPLACE thread=ThreadId(7) stage={stage} kind=PermissionDenied os_error=32"
+            for stage in ("CommittedInspect", "ParentCheckpoint", "ParentSync")
+        ] + [
+            "NATIVE_POST_REPLACE thread=ThreadId(7) stage=CommittedIdentity kind=IdentityMismatch os_error=0",
+        ] + [
+            f"NATIVE_DIRECTORY_SYNC thread=ThreadId(7) stage={stage} kind=PermissionDenied os_error=5"
+            for stage in ("Validate", "Create", "FileSync", "Publish", "Remove", "Cleanup", "Exhausted")
+        ]
+        rejected = [
+            accepted[0].replace("ThreadId(7)", "ThreadId(0)"),
+            accepted[0].replace("ThreadId(7)", "ThreadId(18446744073709551616)"),
+            accepted[0].replace("ThreadId(7)", "worker"),
+            accepted[0].replace("CommittedInspect", "Unknown"),
+            accepted[0].replace("CommittedInspect", "Publish"),
+            accepted[0].replace("PermissionDenied", "IdentityMismatch"),
+            accepted[0].replace("os_error=32", "os_error=2147483648"),
+            accepted[0].replace("os_error=32", "os_error=-2147483649"),
+            accepted[3].replace("os_error=0", "os_error=32"),
+            accepted[3].replace("IdentityMismatch", "Other"),
+            accepted[4].replace("Validate", "ParentSync"),
+            accepted[4].replace("PermissionDenied", "IdentityMismatch"),
+        ]
+        secrets = ["SYNTHETIC_SECRET", r"C:\Users\secret\note.md", "body (os error 5)"]
+        for line in accepted:
+            self.assertEqual(ci.safe_line(ci.safe_line(line)), line)
+            for secret in secrets:
+                rejected.extend([line + " " + secret, line.replace("=", "=" + secret, 1)])
+        for line in rejected:
+            with self.subTest(line=line):
+                self.assertIsNone(ci.safe_line(line))
+        report = rust_test_report(accepted + rejected)
+        self.assertEqual(report["diagnostics"], accepted)
+        self.assertEqual(rust_test_report(report["diagnostics"]), report)
+        for secret in secrets:
+            self.assertNotIn(secret, json.dumps(report))
+
     def test_native_diagnostics_are_strict_private_and_idempotent(self):
         accepted = [
             "NATIVE_IO operation=Lock stage=Create kind=PermissionDenied os_error=5",

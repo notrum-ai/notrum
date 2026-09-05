@@ -3098,30 +3098,57 @@ fn rewrite_note_with(
     drop(temp);
     fs::rename(guard.path(), path).map_err(|error| precommit(SaveStage::Replace, error))?;
     guard.disarm();
-    let committed_metadata =
-        fs::symlink_metadata(path).map_err(|error| SaveError::PostReplaceSync {
-            message: error.to_string(),
-        })?;
+    let committed_metadata = fs::symlink_metadata(path)
+        .map_err(|error| post_replace_failure("CommittedInspect", Some(error)))?;
     let committed_version = FileVersion::from_metadata(&committed_metadata);
     if !committed_version.same_file_as(&temp_version) {
-        return Err(SaveError::PostReplaceSync {
-            message: "target changed immediately after atomic replace".to_owned(),
-        });
+        return Err(post_replace_failure("CommittedIdentity", None));
     }
 
     checkpoint
         .check(SaveStage::ParentSync)
-        .map_err(|error| SaveError::PostReplaceSync {
-            message: error.to_string(),
-        })?;
-    notrum_platform::sync_directory(parent).map_err(|error| SaveError::PostReplaceSync {
-        message: error.to_string(),
-    })?;
+        .map_err(|error| post_replace_failure("ParentCheckpoint", Some(error)))?;
+    notrum_platform::sync_directory(parent)
+        .map_err(|error| post_replace_failure("ParentSync", Some(error)))?;
     Ok(SaveCommit {
         outcome: SaveOutcome::Committed,
         version: committed_version,
         path: path.to_path_buf(),
     })
+}
+
+#[cfg(any(unix, windows))]
+fn post_replace_failure(_stage: &'static str, error: Option<io::Error>) -> SaveError {
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        let kind = match error.as_ref().map(io::Error::kind) {
+            None => "IdentityMismatch",
+            Some(io::ErrorKind::NotFound) => "NotFound",
+            Some(io::ErrorKind::PermissionDenied) => "PermissionDenied",
+            Some(io::ErrorKind::AlreadyExists) => "AlreadyExists",
+            Some(io::ErrorKind::InvalidInput) => "InvalidInput",
+            Some(io::ErrorKind::InvalidData) => "InvalidData",
+            Some(io::ErrorKind::Unsupported) => "Unsupported",
+            Some(io::ErrorKind::WouldBlock) => "WouldBlock",
+            Some(io::ErrorKind::Interrupted) => "Interrupted",
+            Some(io::ErrorKind::UnexpectedEof) => "UnexpectedEof",
+            _ => "Other",
+        };
+        eprintln!(
+            "NATIVE_POST_REPLACE thread={:?} stage={_stage} kind={kind} os_error={}",
+            std::thread::current().id(),
+            error
+                .as_ref()
+                .and_then(io::Error::raw_os_error)
+                .unwrap_or(0),
+        );
+    }
+    SaveError::PostReplaceSync {
+        message: error.map_or_else(
+            || "target changed immediately after atomic replace".to_owned(),
+            |error| error.to_string(),
+        ),
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -5504,6 +5531,59 @@ mod tests {
             assert_eq!(fs::read(&path).unwrap(), original);
             assert_no_temp_files(&workspace);
         }
+    }
+
+    #[test]
+    fn post_replace_diagnostics_preserve_failure_messages() {
+        for stage in ["CommittedInspect", "ParentCheckpoint", "ParentSync"] {
+            let error = io::Error::from_raw_os_error(32);
+            let message = error.to_string();
+            assert_eq!(
+                post_replace_failure(stage, Some(error)),
+                SaveError::PostReplaceSync { message },
+            );
+            assert_eq!(
+                post_replace_failure(stage, Some(io::Error::other("SYNTHETIC_SECRET"))),
+                SaveError::PostReplaceSync {
+                    message: "SYNTHETIC_SECRET".to_owned(),
+                },
+            );
+        }
+        assert_eq!(
+            post_replace_failure("CommittedIdentity", None),
+            SaveError::PostReplaceSync {
+                message: "target changed immediately after atomic replace".to_owned(),
+            },
+        );
+    }
+
+    #[test]
+    fn versioned_rewrite_reports_post_replace_failure_without_undoing_commit() {
+        let workspace = TestWorkspace::new();
+        let path = workspace.note("note.md", b"---\ntitle: Original\n---\nbody\n");
+        let (_, version) = open_versioned(&path).unwrap();
+        let result = rewrite_note_with(
+            &path,
+            &version,
+            &MetadataPatch {
+                deleted: Some(true),
+                ..MetadataPatch::default()
+            },
+            |writer| writer.write_all(b"body\n"),
+            &mut FailAt {
+                stage: SaveStage::ParentSync,
+            },
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            SaveError::PostReplaceSync {
+                message: "injected ParentSync failure".to_owned(),
+            },
+        );
+        let output = fs::read_to_string(&path).unwrap();
+        assert!(output.contains("deleted: true\n"));
+        assert!(output.ends_with("body\n"));
+        assert_no_temp_files(&workspace);
     }
 
     #[test]

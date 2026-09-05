@@ -69,6 +69,20 @@ DELETE_ERRORS = frozenset({
 
 
 def native_line(line):
+    post_replace = re.fullmatch(
+        r"NATIVE_(POST_REPLACE|DIRECTORY_SYNC) thread=ThreadId\(([1-9][0-9]{0,19})\) "
+        r"stage=([A-Za-z]+) kind=([A-Za-z]+) os_error=(-?[0-9]{1,10})", line,
+    )
+    if post_replace:
+        operation, thread, stage, kind, os_error = post_replace.groups()
+        if int(thread) > 2**64 - 1 or not -(2**31) <= int(os_error) < 2**31:
+            return None
+        if operation == "POST_REPLACE" and stage == "CommittedIdentity":
+            return line if kind == "IdentityMismatch" and os_error == "0" else None
+        stages = ({"CommittedInspect", "ParentCheckpoint", "ParentSync"}
+                  if operation == "POST_REPLACE" else
+                  {"Validate", "Create", "FileSync", "Publish", "Remove", "Cleanup", "Exhausted"})
+        return line if stage in stages and kind in NATIVE_IO_KINDS else None
     deletion = re.fullmatch(
         r"NATIVE_DELETE stage=([A-Za-z]+) outcome=(Success|Failed) "
         r"error=([A-Za-z/]+) error_stage=([A-Za-z]+)", line,

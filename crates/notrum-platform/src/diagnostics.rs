@@ -86,3 +86,49 @@ pub fn io_result<T>(_operation: Operation, _stage: Stage, result: io::Result<T>)
     }
     result
 }
+
+/// Correlate namespace-barrier failures with their caller without exposing paths.
+#[cfg(any(windows, test))]
+pub(crate) fn directory_sync_result<T>(
+    _stage: &'static str,
+    result: io::Result<T>,
+) -> io::Result<T> {
+    #[cfg(any(test, feature = "test-utils"))]
+    if let Err(error) = &result {
+        let kind = match error.kind() {
+            io::ErrorKind::NotFound => "NotFound",
+            io::ErrorKind::PermissionDenied => "PermissionDenied",
+            io::ErrorKind::AlreadyExists => "AlreadyExists",
+            io::ErrorKind::InvalidInput => "InvalidInput",
+            io::ErrorKind::InvalidData => "InvalidData",
+            io::ErrorKind::Unsupported => "Unsupported",
+            io::ErrorKind::WouldBlock => "WouldBlock",
+            io::ErrorKind::Interrupted => "Interrupted",
+            io::ErrorKind::UnexpectedEof => "UnexpectedEof",
+            _ => "Other",
+        };
+        eprintln!(
+            "NATIVE_DIRECTORY_SYNC thread={:?} stage={_stage} kind={kind} os_error={}",
+            std::thread::current().id(),
+            error.raw_os_error().unwrap_or(0),
+        );
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_sync_diagnostics_preserve_results_and_error_payloads() {
+        assert_eq!(directory_sync_result("FileSync", Ok(42)).unwrap(), 42);
+        let error = directory_sync_result::<()>("Publish", Err(io::Error::from_raw_os_error(32)))
+            .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(32));
+        let error =
+            directory_sync_result::<()>("Create", Err(io::Error::other("SYNTHETIC_SECRET")))
+                .unwrap_err();
+        assert_eq!(error.to_string(), "SYNTHETIC_SECRET");
+    }
+}

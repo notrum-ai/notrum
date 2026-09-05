@@ -288,26 +288,27 @@ fn permissions_descriptor(
 /// NTFS namespace barrier: flush an empty file and move it with WRITE_THROUGH.
 /// A crash may leave an empty marker; it never contains note data.
 pub(super) fn sync_directory(path: &Path) -> io::Result<()> {
+    use crate::diagnostics::directory_sync_result;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    super::validate_real_path(path)?;
+    directory_sync_result("Validate", super::validate_real_path(path))?;
     for _ in 0..32 {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let source = path.join(format!(".notrum-sync-{}-{id}.tmp", std::process::id()));
         let destination = source.with_extension("done");
-        let file = match create_private_file(&source) {
+        let file = match directory_sync_result("Create", create_private_file(&source)) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         };
         let result = (|| {
-            file.sync_all()?;
+            directory_sync_result("FileSync", file.sync_all())?;
             drop(file);
-            atomicwrites::move_atomic(&source, &destination)?;
-            fs::remove_file(&destination)
+            directory_sync_result("Publish", atomicwrites::move_atomic(&source, &destination))?;
+            directory_sync_result("Remove", fs::remove_file(&destination))
         })();
         if result.is_err() {
-            let _ = fs::remove_file(&source);
+            let _ = directory_sync_result("Cleanup", fs::remove_file(&source));
         }
         if result
             .as_ref()
@@ -317,8 +318,11 @@ pub(super) fn sync_directory(path: &Path) -> io::Result<()> {
         }
         return result;
     }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "cannot allocate namespace barrier",
-    ))
+    directory_sync_result(
+        "Exhausted",
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "cannot allocate namespace barrier",
+        )),
+    )
 }

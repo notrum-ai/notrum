@@ -2,7 +2,23 @@
 
 [Back to README](../README.md)
 
-The current interface is in Russian. Labels below match the application.
+The interface defaults to English, independently of your operating system.
+
+## Language
+
+Choose **Settings → General → Language**. Language names are displayed in their
+own language. The choice applies immediately and is remembered for all workspaces
+in `~/.notrum.cfg`. Existing installations without a saved choice use English.
+
+Available languages are English, Spanish, Russian, Simplified and Traditional
+Chinese, Brazilian and European Portuguese, Hindi, Arabic, French, Bengali,
+Indonesian, Urdu, German, Japanese, Turkish, and Korean. Arabic and Urdu place
+the navigation sidebar on the right. Notes, tags, filenames, and RSS articles
+retain their original content. New notes receive a title in the selected language.
+
+Translations are included in the application and work offline. System-owned
+file dialog controls follow the operating system's language. Technical diagnostic
+details remain in English.
 
 ## Workspaces and settings
 
@@ -22,7 +38,7 @@ moving or backing up a workspace.
 
 Notes use UTF-8 Markdown with YAML front matter compatible with Notable.
 Categories come from YAML tags. Notes can be favorited, pinned, and soft-deleted.
-Categories and `Избранное` (Favorites) support manual order and automatic sorting.
+Categories and Favorites support manual order and automatic sorting.
 Editing uses autosave; recovery and conflict handling help preserve work after
 a crash or an external edit. Local search indexes workspace notes.
 
@@ -37,7 +53,7 @@ parsing YAML front matter. They remain at their original locations and are not
 copied into `notes/` or added to the workspace search index. Their ordered list
 is saved separately for each workspace.
 
-The close control in `Внешние` (External) removes only the sidebar reference;
+The close control in External removes only the sidebar reference;
 it never deletes the external file.
 
 The macOS bundle declares support for these extensions, but does not replace
@@ -49,7 +65,7 @@ appears in the active workspace's External group.
 
 ## RSS and Atom
 
-Choose `+` → `RSS лента` and enter a direct HTTPS feed URL. RSS 1.0, RSS 2.0,
+Choose `+` → RSS feed and enter a direct HTTPS feed URL. RSS 1.0, RSS 2.0,
 and Atom are supported. Subscriptions appear alongside notes; entries open in
 a native, read-only feed view. A feed refreshes when opened and through its
 toolbar button. There is no background refresh schedule.
@@ -75,8 +91,7 @@ cached entries, and read status have different storage roles; see the
 
 Protected notes encrypt their Markdown body, while the filename and YAML
 metadata stay readable. They require the workspace master password.
-The password can be changed under `Настройки` → `Шифрование`
-(Settings → Encryption).
+The password can be changed under Settings → Encryption.
 
 Changing the password does not re-encrypt existing backup history. Keep the
 previous password if you need to read older encrypted backups. See

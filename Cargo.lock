@@ -3205,6 +3205,8 @@ dependencies = [
  "copypasta",
  "floem",
  "floem-winit",
+ "floem_renderer",
+ "fluent-bundle",
  "notrum-core",
  "notrum-editor",
  "notrum-search",

@@ -376,8 +376,8 @@ CONTROLS = {
     "open_file": (116, 97),
     "create_rss": (116, 131),
     "rss_back": (54, 161),
-    "settings_path": (610, 237),
-    "settings_apply": (475, 283),
+    "settings_path": (610, 418),
+    "settings_apply": (475, 464),
     "settings_back": (36, 42),
     "settings_encryption": (100, 163),
     "startup_primary": (785, 495),
@@ -428,9 +428,9 @@ CONTROLS = {
     # The fixed 390px password card is centered in the 1240x800 client. Setup
     # includes warning/confirmation content and therefore places its primary
     # field lower than the compact unlock card.
-    "password_setup_primary": (760, 425),
+    "password_setup_primary": (760, 402),
     "password_unlock_primary": (760, 405),
-    "password_confirmation": (760, 465),
+    "password_confirmation": (760, 448),
     "password_unlock_cancel": (620, 474),
     "password_unlock_submit": (735, 474),
     "footer_retry": (1_176, 784),
@@ -2215,6 +2215,8 @@ def protect_selected_note(
     *,
     verify_password_caret: bool = False,
 ) -> Path:
+    driver.wait_for_stable_frame("workspace toolbar before protection",
+                                 crop=(256, 0, 984, 56), stable_for=0.2, timeout=10)
     driver.click("protection")
     time.sleep(0.2)
     if verify_password_caret:
@@ -2400,6 +2402,7 @@ def workspace_scenario(driver: WindowDriver, workspace: Path) -> None:
     saved_default = json.loads(global_config.read_text(encoding="utf-8"))
     if saved_default != {
         "version": 1,
+        "locale": "en",
         "last_workspace": str(default_workspace.resolve()),
     }:
         raise AcceptanceFailure(
@@ -2408,7 +2411,7 @@ def workspace_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.close_app()
 
     driver.start_app(None, "first-run-restart")
-    first_note = default_workspace / "notes" / "Новая заметка.md"
+    first_note = default_workspace / "notes" / "New note.md"
     driver.click("create_menu")
     driver.click("create_note")
     wait_until("remembered first-run workspace without picker", first_note.is_file)
@@ -2471,7 +2474,7 @@ def workspace_scenario(driver: WindowDriver, workspace: Path) -> None:
 
     empty = create_workspace(driver.temporary_root, "empty-workspace")
     driver.start_app(empty, "empty")
-    created = empty / "notes" / "Новая заметка.md"
+    created = empty / "notes" / "New note.md"
     driver.click("create_menu")
     driver.click("create_note")
     wait_until("first note in an empty workspace", created.is_file)
@@ -2487,6 +2490,7 @@ def workspace_scenario(driver: WindowDriver, workspace: Path) -> None:
     saved_global = json.loads(global_config.read_text(encoding="utf-8"))
     if saved_global != {
         "version": 1,
+        "locale": "en",
         "last_workspace": str(empty.resolve()),
     }:
         raise AcceptanceFailure(f"unexpected global workspace config: {saved_global}")
@@ -2715,8 +2719,8 @@ def lifecycle_scenario(driver: WindowDriver, workspace: Path) -> None:
     if project.read_bytes() != project_before or weekly.read_bytes() != weekly_before:
         raise AcceptanceFailure("selecting Reading List modified an untouched note")
 
-    default_note = notes / "Новая заметка.md"
-    second_note = notes / "Новая заметка (2).md"
+    default_note = notes / "New note.md"
+    second_note = notes / "New note (2).md"
     driver.click("create_menu")
     driver.click("create_note")
     wait_until("default note creation", default_note.is_file)
@@ -4041,7 +4045,7 @@ def categories_scenario(driver: WindowDriver, workspace: Path) -> None:
         category_order=nested_order,
     )
 
-    created_parent_note = hierarchical_notes / "Новая заметка.md"
+    created_parent_note = hierarchical_notes / "New note.md"
     driver.click("create_menu")
     driver.click("create_note")
     wait_until("note created in virtual Parent", created_parent_note.is_file)
@@ -6583,7 +6587,7 @@ def resize_scenario(driver: WindowDriver, workspace: Path) -> None:
 
 
 def creation_scenario(driver: WindowDriver, workspace: Path) -> None:
-    created = workspace / "notes" / "Новая заметка.md"
+    created = workspace / "notes" / "New note.md"
     driver.start_app(workspace, "creation")
     closed = driver.wait_for_stable_frame("creation menu closed")
 
@@ -6952,7 +6956,140 @@ def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.close_app()
 
 
+def localization_scenario(driver: WindowDriver, workspace: Path) -> None:
+    def open_language_picker(rtl: bool) -> int:
+        # Locate the dropdown arrow independently of each script's line metrics.
+        frame = driver.capture("language-control")
+        arrow_x = 271 if rtl else 577
+        pixels = run_command(["convert", str(frame), "-crop", f"12x120+{arrow_x}+180",
+                              "+repage", "-depth", "8", "txt:-"]).stdout
+        rows = []
+        for line in pixels.splitlines():
+            match = re.match(r"\d+,(\d+): \(\s*(\d+),\s*(\d+),\s*(\d+)", line)
+            if match and max(map(int, match.groups()[1:])) < 170:
+                rows.append(int(match[1]) + 180)
+        if not rows:
+            raise AcceptanceFailure("language dropdown arrow is not visible")
+        driver.click_point(411 if rtl else 448, max(rows))
+        return max(rows)
+
+    languages = ("en", "es", "ru", "zh/hans", "zh/hant", "pt/br", "pt/pt", "hi",
+                 "ar", "fr", "bn", "id", "ur", "de", "ja", "tr", "ko")
+    driver.start_app(workspace, "languages")
+    driver.wait_for_stable_frame("initial English interface", crop=(0, 0, 256, 400), timeout=10)
+    original_notes = {path.name: path.read_bytes() for path in (workspace / "notes").iterdir()}
+    driver.click("settings")
+    driver.wait_for_stable_frame("language settings", stable_for=0.3, timeout=10)
+    driver.resize_window(860, 560)
+    baseline = driver.wait_for_stable_frame("English language control", stable_for=0.3, timeout=10)
+    config = driver.home / ".notrum.cfg"
+    preserved_config = config.with_suffix(".preserved")
+    original_config = config.read_bytes()
+    config.rename(preserved_config)
+    config.mkdir()
+    try:
+        control_y = open_language_picker(False)
+        driver.key("Home")
+        driver.key("Down")
+        driver.key("Return")
+        driver.wait_for_visual_change("language write error", baseline,
+                                      crop=(298, 220, 495, 100), timeout=10)
+        failed = driver.wait_for_stable_frame("rejected language retains English", stable_for=0.3)
+        if near_color_pixel_count(failed, (164, 69, 69), crop=(298, 220, 495, 100)) < 20:
+            raise AcceptanceFailure("language write failure did not show an error")
+        if image_difference(baseline, failed, crop=(310, control_y - 12, 180, 23)) != 0:
+            raise AcceptanceFailure("failed language save changed the displayed selection")
+        if not config.is_dir() or preserved_config.read_bytes() != original_config:
+            raise AcceptanceFailure("failed language save changed the previous configuration")
+    finally:
+        config.rmdir()
+        preserved_config.rename(config)
+    driver.click_point(448, control_y)
+    driver.key("Home")
+    driver.key("Return")
+    wait_until("cleared language write error",
+               lambda: near_color_pixel_count(driver.capture("clear-language-error"),
+                   (164, 69, 69), crop=(298, 220, 495, 100)) == 0, timeout=10)
+    driver.wait_for_stable_frame("cleared language error", stable_for=0.3, timeout=10)
+    current = "en"
+    for index, locale in enumerate(languages):
+        rtl = current in {"ar", "ur"}
+        previous = driver.capture("before-language-change")
+        open_language_picker(rtl)
+        driver.key("Home")
+        for _ in range(index):
+            driver.key("Down")
+        driver.key("Return")
+        wait_until("persisted language " + locale,
+                   lambda: json.loads((driver.home / ".notrum.cfg").read_text()).get("locale") == locale)
+        if locale != current:
+            driver.wait_for_visual_change("rendered language " + locale, previous,
+                                          crop=(0, 0, 860, 100), timeout=10)
+        rtl = locale in {"ar", "ur"}
+        sidebar_x = 628 if rtl else 0
+        wait_until("sidebar direction " + locale,
+                   lambda: near_color_pixel_count(driver.capture("language-direction"),
+                       (35, 42, 51), crop=(sidebar_x, 0, 232, 540)) >= 50000, timeout=10)
+        frame = driver.wait_for_stable_frame("translated settings " + locale,
+                                             stable_for=0.3, timeout=10)
+        if near_color_pixel_count(frame, (35, 42, 51), crop=(sidebar_x, 0, 232, 540)) < 50000:
+            raise AcceptanceFailure("settings sidebar did not follow language direction: " + locale)
+        if {path.name: path.read_bytes() for path in (workspace / "notes").iterdir()} != original_notes:
+            raise AcceptanceFailure("changing language modified notes")
+        if rtl:
+            # Exercise the mirrored native resize handle and a menu near the right edge.
+            def wait_rtl_boundary(edge: int) -> None:
+                def positioned() -> bool:
+                    pixels = crop_luminances(driver.capture("rtl-resize"), (edge - 2, 530, 12, 1))
+                    return pixels[(edge - 2, 530)] > 220 and pixels[(edge + 8, 530)] < 100
+                wait_until("mirrored sidebar boundary", positioned, timeout=10)
+
+            driver.click_point(824, 42)
+            wait_rtl_boundary(604)
+            driver.press_point(606, 400)
+            driver.drag_point(526, 400)
+            driver.release()
+            wait_rtl_boundary(524)
+            before_menu = driver.capture("before-rtl-menu")
+            driver.click_point(590, 27)
+            driver.wait_for_visual_change("RTL creation menu", before_menu,
+                                          crop=(524, 45, 336, 300), timeout=10)
+            driver.key("Escape")
+            driver.press_point(526, 400)
+            driver.drag_point(606, 400)
+            driver.release()
+            wait_rtl_boundary(604)
+            driver.click_point(632, 27)
+            driver.wait_for_stable_frame("return to RTL settings", stable_for=0.3, timeout=10)
+        current = locale
+    driver.resize_window(SCREEN_WIDTH, SCREEN_HEIGHT)
+    driver.close_app()
+    driver.start_app(workspace, "Korean-language-restart")
+    driver.wait_for_stable_frame("Korean after restart", crop=(0, 0, 256, 400), timeout=10)
+    if json.loads(config.read_text())["locale"] != "ko":
+        raise AcceptanceFailure("non-English language did not survive restart")
+    driver.click("settings")
+    driver.resize_window(860, 560)
+    driver.wait_for_stable_frame("Korean settings after restart", stable_for=0.3, timeout=10)
+    # Return to English using the same control, then check that the choice survives launch.
+    open_language_picker(False)
+    driver.key("Home")
+    driver.key("Return")
+    wait_until("English restored", lambda: json.loads((driver.home / ".notrum.cfg").read_text())["locale"] == "en")
+    driver.resize_window(SCREEN_WIDTH, SCREEN_HEIGHT)
+    driver.click("settings_back")
+    driver.close_app()
+    driver.start_app(workspace, "language-restart")
+    driver.wait_for_stable_frame("English after restart", crop=(0, 0, 256, 400), timeout=10)
+    if json.loads((driver.home / ".notrum.cfg").read_text())["locale"] != "en":
+        raise AcceptanceFailure("language did not survive restart")
+    if {path.name: path.read_bytes() for path in (workspace / "notes").iterdir()} != original_notes:
+        raise AcceptanceFailure("language restart modified notes")
+    driver.close_app()
+
+
 SCENARIOS: dict[str, Callable[[WindowDriver, Path], None]] = {
+    "localization": localization_scenario,
     "rss_cards": rss_cards_scenario,
     "rss_keyboard": rss_keyboard_scenario,
     "creation": creation_scenario,

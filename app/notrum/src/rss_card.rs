@@ -6,6 +6,7 @@
 
 use std::ops::Range;
 
+use crate::i18n::{Key, tr};
 use chrono::{DateTime, Datelike, Local, Timelike};
 use floem::peniko::Color;
 use floem::text::{Attrs, AttrsList, FamilyOwned, LineHeightValue, Style, TextLayout, Weight};
@@ -49,16 +50,21 @@ pub fn date_label(value: Option<&str>) -> String {
     };
     let date = date.with_timezone(&Local);
     let months = [
-        "янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек",
+        Key::Month1,
+        Key::Month2,
+        Key::Month3,
+        Key::Month4,
+        Key::Month5,
+        Key::Month6,
+        Key::Month7,
+        Key::Month8,
+        Key::Month9,
+        Key::Month10,
+        Key::Month11,
+        Key::Month12,
     ];
-    format!(
-        "{} {} {} · {:02}:{:02}",
-        date.day(),
-        months[date.month0() as usize],
-        date.year(),
-        date.hour(),
-        date.minute()
-    )
+    tr!(Date, "day" => date.day() as usize, "month" => months[date.month0() as usize].message(),
+        "year" => date.year().to_string(), "time" => format!("{:02}:{:02}", date.hour(), date.minute()))
 }
 
 // Old caches flattened html2text's reference definitions onto the same line.
@@ -251,7 +257,7 @@ mod tests {
 
     #[test]
     fn dates_are_human_readable_and_missing_metadata_stays_empty() {
-        assert!(date_label(Some("2026-09-04T12:40:53Z")).contains("сен 2026 ·"));
+        assert!(date_label(Some("2026-09-04T12:40:53Z")).contains("Sep 2026 ·"));
         assert_eq!(date_label(None), "");
         assert_eq!(date_label(Some("invalid")), "");
     }

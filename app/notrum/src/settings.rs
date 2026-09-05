@@ -10,6 +10,7 @@ use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::i18n::Locale;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const SETTINGS_VERSION: u32 = 1;
@@ -26,6 +27,8 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct GlobalSettings {
     pub(crate) version: u32,
+    #[serde(default)]
+    pub(crate) locale: Locale,
     pub(crate) last_workspace: Option<String>,
     #[serde(flatten)]
     pub(crate) additional: BTreeMap<String, serde_json::Value>,
@@ -35,6 +38,7 @@ impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
+            locale: Locale::default(),
             last_workspace: None,
             additional: BTreeMap::new(),
         }
@@ -62,6 +66,24 @@ pub(crate) struct GlobalSettingsStore {
 }
 
 impl GlobalSettingsStore {
+    pub(crate) fn locale(&self) -> Locale {
+        self.settings.locale
+    }
+
+    pub(crate) fn set_locale(&mut self, locale: Locale) -> Result<(), SettingsError> {
+        if self.settings.locale == locale {
+            return Ok(());
+        }
+        let home = self.home.as_deref().ok_or_else(|| {
+            SettingsError::UnsafePath("HOME is unavailable; global config is disabled".to_owned())
+        })?;
+        let mut settings = self.settings.clone();
+        settings.locale = locale;
+        atomic_write_global_settings(home, &settings)?;
+        self.settings = settings;
+        Ok(())
+    }
+
     pub(crate) fn load(home: Option<&Path>) -> GlobalSettingsLoad {
         let Some(home) = home else {
             return GlobalSettingsLoad {
@@ -587,6 +609,69 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn language_defaults_and_reads_do_not_rewrite_settings() {
+        let home = TestWorkspace::new();
+        let path = home.0.join(".notrum.cfg");
+        assert_eq!(
+            GlobalSettingsStore::load(Some(&home.0)).settings.locale,
+            Locale::English
+        );
+        assert!(!path.exists());
+        for raw in [
+            r#"{"version":1,"last_workspace":null}"#,
+            r#"{"version":1,"last_workspace":null,"locale":"future/language"}"#,
+        ] {
+            fs::write(&path, raw).unwrap();
+            let loaded = GlobalSettingsStore::load(Some(&home.0));
+            assert_eq!(loaded.settings.locale, Locale::English);
+            assert_eq!(fs::read_to_string(&path).unwrap(), raw);
+        }
+    }
+
+    #[test]
+    fn all_languages_persist_without_changing_workspace_or_unknown_fields() {
+        let home = TestWorkspace::new();
+        let path = home.0.join(".notrum.cfg");
+        fs::write(
+            &path,
+            r#"{"version":1,"last_workspace":"/notes","future":{"enabled":true}}"#,
+        )
+        .unwrap();
+        let mut store = GlobalSettingsStore::load(Some(&home.0)).store;
+        for locale in Locale::ALL {
+            store.set_locale(*locale).unwrap();
+            let loaded = GlobalSettingsStore::load(Some(&home.0));
+            assert_eq!(loaded.settings.locale, *locale);
+            assert_eq!(loaded.settings.last_workspace.as_deref(), Some("/notes"));
+            assert_eq!(
+                loaded.settings.additional["future"],
+                serde_json::json!({"enabled":true})
+            );
+        }
+        store
+            .remember_workspace(Path::new("/another/workspace"))
+            .unwrap();
+        assert_eq!(
+            GlobalSettingsStore::load(Some(&home.0)).settings.locale,
+            Locale::Korean
+        );
+    }
+
+    #[test]
+    fn failed_language_save_retains_previous_choice() {
+        let mut unbound = GlobalSettingsStore::load(None).store;
+        assert!(unbound.set_locale(Locale::Russian).is_err());
+        assert_eq!(unbound.locale(), Locale::English);
+        let home = TestWorkspace::new();
+        let mut store = GlobalSettingsStore::load(Some(&home.0)).store;
+        store.set_locale(Locale::Russian).unwrap();
+        fs::remove_file(home.0.join(".notrum.cfg")).unwrap();
+        fs::create_dir(home.0.join(".notrum.cfg")).unwrap();
+        assert!(store.set_locale(Locale::Arabic).is_err());
+        assert_eq!(store.locale(), Locale::Russian);
     }
 
     #[test]

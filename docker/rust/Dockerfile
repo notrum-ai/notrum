@@ -6,6 +6,8 @@ FROM rust:1.88.0-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f9
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         clang \
+        fonts-noto-core \
+        fonts-noto-cjk \
         imagemagick \
         libegl1-mesa-dev \
         libgtk-3-dev \

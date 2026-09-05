@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::i18n::{self, msg};
 use std::backtrace::Backtrace;
 use std::io::Write;
 use std::path::Path;
@@ -21,7 +22,9 @@ impl Report {
             || "unknown location".to_owned(),
             |location| location.to_string(),
         );
-        let summary = format!("В Notrum произошла ошибка.\nМесто сбоя: {location}");
+        let summary =
+            msg!(CrashSummary, "location" => location.clone()).render_for(i18n::crash_locale());
+        let technical_summary = format!("An error occurred in Notrum.\nLocation: {location}");
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_secs());
@@ -29,7 +32,7 @@ impl Report {
         let text = format!(
             "\n=== Notrum panic: unix={timestamp} pid={} ===\n\
              Version: {}\nPlatform: {} / {}\nThread: {:?}\n\
-             {summary}\nPanic payload omitted for privacy.\nBacktrace:\n{backtrace}\n",
+             {technical_summary}\nPanic payload omitted for privacy.\nBacktrace:\n{backtrace}\n",
             std::process::id(),
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS,
@@ -108,26 +111,25 @@ pub(super) fn install() {
 
 #[cfg(target_os = "macos")]
 fn show_native(summary: &str, copy_failed: bool) -> Choice {
-    const COPY: &str = "Скопировать трейс и закрыть";
+    let locale = i18n::crash_locale();
+    let copy = msg!(CopyTrace).render_for(locale);
     let description = if copy_failed {
-        format!(
-            "{summary}\n\nНе удалось скопировать трейс. Попробуйте ещё раз или закройте приложение."
-        )
+        format!("{summary}\n\n{}", msg!(CopyTraceFailed).render_for(locale))
     } else {
-        format!("{summary}\n\nСкопируйте отчёт и передайте разработчику. Приложение будет закрыто.")
+        summary.to_owned()
     };
     // No Floem window parent: RFD owns the modal dialog and main-thread dispatch.
     let result = rfd::MessageDialog::new()
-        .set_title("Ошибка Notrum")
+        .set_title(msg!(CrashTitle).render_for(locale))
         .set_description(description)
         .set_level(rfd::MessageLevel::Error)
         .set_buttons(rfd::MessageButtons::OkCancelCustom(
-            COPY.to_owned(),
-            "Закрыть".to_owned(),
+            copy.clone(),
+            msg!(Close).render_for(locale),
         ))
         .show();
     match result {
-        rfd::MessageDialogResult::Custom(label) if label == COPY => Choice::Copy,
+        rfd::MessageDialogResult::Custom(label) if label == copy => Choice::Copy,
         _ => Choice::Close,
     }
 }

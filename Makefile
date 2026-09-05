@@ -16,7 +16,7 @@ SOURCE_REVISION ?=
 DEMO_WORKSPACE ?= /workspace/examples/demo-workspace
 UI_JOBS ?= 2
 
-UI_ACCEPTANCE_STANDARD := ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
+UI_ACCEPTANCE_STANDARD := ui-click-localization ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
 UI_ACCEPTANCE_SECURE := ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
 
 .PHONY: all help check clean build build-macos build-linux build-linux-smoke build-container native-smoke native-external-smoke demo-data test-demo-data check-macos test test-release lint fmt fmt-check lock tree audit audit-source audit-dependencies audit-vulnerabilities \
@@ -211,6 +211,10 @@ ui-click-lifecycle: ui-build
 
 ui-click-tags: ui-build
 	$(RUN) python3 -B tools/ui_acceptance.py tags
+
+.PHONY: ui-click-localization
+ui-click-localization: ui-build
+	$(RUN) python3 -B tools/ui_acceptance.py localization
 
 ui-click-workspace: ui-build
 	$(RUN) python3 -B tools/ui_acceptance.py workspace

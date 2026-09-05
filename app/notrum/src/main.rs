@@ -6,6 +6,8 @@
 #[cfg(any(target_os = "macos", test))]
 mod crash_dialog;
 mod editor_geometry;
+mod i18n;
+mod localized_input;
 mod rss_card;
 mod settings;
 
@@ -35,6 +37,7 @@ use floem::reactive::create_effect;
 use floem::style::{CursorStyle, Style};
 use floem::window::WindowConfig;
 use floem::{AnyView, Application, Clipboard, View, ViewId, quit_app};
+use i18n::{Locale, UiText, msg, tr};
 use notrum_core::{
     CatalogOrderItem, CoreError, DocumentTarget, EditorCommand, ExternalFileSummary, ExternalPoll,
     ExternalPollStart, FAVORITED_ORDER_KEY, IntegrityResolution, ItemId, NoteProtection,
@@ -52,6 +55,36 @@ use settings::{
     UiSettingsStore, WindowSettings, relative_note_path, resolve_note_path,
 };
 use zeroize::{Zeroize, Zeroizing};
+
+fn text(value: impl fmt::Display + 'static) -> floem::views::Label {
+    label(move || value.to_string())
+}
+
+fn note_caption(note: &notrum_core::NoteSummary) -> UiText {
+    if matches!(&note.availability, notrum_core::NoteAvailability::IoError(reason)
+        if reason == "unsupported legacy protected format")
+    {
+        msg!(UnsupportedProtectedNote).into()
+    } else {
+        note.title.clone().into()
+    }
+}
+
+fn rtl_row(style: Style) -> Style {
+    style.flex_direction(if i18n::current().is_rtl() {
+        floem::taffy::FlexDirection::RowReverse
+    } else {
+        floem::taffy::FlexDirection::Row
+    })
+}
+
+fn rtl_column(style: Style) -> Style {
+    if i18n::current().is_rtl() {
+        style.items_end()
+    } else {
+        style
+    }
+}
 
 const SAVE_POLL_MS: u64 = 25;
 const EXTERNAL_POLL_MS: u64 = 1_000;
@@ -133,7 +166,7 @@ const RSS_FORM_STATUS_HEIGHT_PX: f64 = 16.0;
 /// Pressed-in shade of `Palette::accent` for the primary form button hover.
 const RSS_FORM_ACCENT_HOVER: Color = Color::rgb8(42, 74, 103);
 const MAX_PASSWORD_BYTES: usize = 1_024;
-const UI_FONT_FAMILY: &str = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', Arial, 'DejaVu Sans', sans-serif";
+const UI_FONT_FAMILY: &str = "sans-serif";
 /// Monospace families probed in order at startup. Floem applies only the
 /// first family of a CSS-style list, so the editor picks one that is actually
 /// installed and measures its real advance width instead of assuming one.
@@ -300,6 +333,7 @@ fn main() -> Result<(), LaunchError> {
         settings: global_settings,
         diagnostic: global_diagnostic,
     } = GlobalSettingsStore::load(home.as_deref());
+    i18n::set_current(global_store.locale());
     if let Some(diagnostic) = global_diagnostic.as_deref() {
         eprintln!("Notrum: {diagnostic}");
     }
@@ -421,16 +455,16 @@ enum StartupCandidateState {
 }
 
 impl StartupCandidateState {
-    fn primary_label(&self) -> &'static str {
+    fn primary_label(&self) -> String {
         match self {
-            Self::NeedsInitialization(_) => "Создать и открыть",
-            Self::Ready | Self::Invalid(_) => "Открыть",
+            Self::NeedsInitialization(_) => tr!(CreateOpen),
+            Self::Ready | Self::Invalid(_) => tr!(Open),
         }
     }
 
     fn detail(&self) -> String {
         match self {
-            Self::Ready => "Рабочая папка готова к открытию.".to_owned(),
+            Self::Ready => tr!(WorkspaceReady),
             Self::NeedsInitialization(detail) | Self::Invalid(detail) => detail.clone(),
         }
     }
@@ -472,10 +506,9 @@ fn resolve_startup_workspace(
         }
         return StartupWorkspace::Choose(StartupWorkspacePrompt {
             candidate: default_workspace_path(home),
-            diagnostic: Some(format!(
-                "Сохранённая рабочая папка недоступна: {}",
-                remembered.display()
-            )),
+            diagnostic: Some(
+                tr!(SavedWorkspaceUnavailable , "value" => remembered.display() .to_string()),
+            ),
         });
     }
     StartupWorkspace::Choose(StartupWorkspacePrompt {
@@ -512,69 +545,54 @@ fn startup_candidate_state(
     may_create_root: bool,
 ) -> StartupCandidateState {
     let Some(candidate) = candidate else {
-        return StartupCandidateState::Invalid(
-            "Не удалось определить системную папку Downloads. Выберите другую папку.".to_owned(),
-        );
+        return StartupCandidateState::Invalid(tr!(DownloadsUnavailable));
     };
     if !candidate.is_absolute() {
-        return StartupCandidateState::Invalid(
-            "Рабочая папка должна иметь абсолютный путь.".to_owned(),
-        );
+        return StartupCandidateState::Invalid(tr!(AbsoluteWorkspace));
     }
     match fs::symlink_metadata(candidate) {
         Ok(metadata) if !metadata.file_type().is_dir() => {
-            return StartupCandidateState::Invalid(
-                "Выбранный путь не является обычной папкой.".to_owned(),
-            );
+            return StartupCandidateState::Invalid(tr!(NotDirectory));
         }
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && may_create_root => {
             let Some(parent) = candidate.parent() else {
-                return StartupCandidateState::Invalid(
-                    "У рабочей папки нет родительского каталога.".to_owned(),
-                );
+                return StartupCandidateState::Invalid(tr!(NoParent));
             };
             return match fs::symlink_metadata(parent) {
                 Ok(metadata) if metadata.file_type().is_dir() => {
-                    StartupCandidateState::NeedsInitialization(format!(
-                        "Notrum создаст папку {} и вложенный каталог notes.",
-                        candidate.display()
-                    ))
+                    StartupCandidateState::NeedsInitialization(
+                        tr!(CreateWorkspaceInfo , "value" => candidate.display() .to_string()),
+                    )
                 }
-                Ok(_) => StartupCandidateState::Invalid(
-                    "Родительский путь не является обычной папкой.".to_owned(),
+                Ok(_) => StartupCandidateState::Invalid(tr!(ParentNotDirectory)),
+                Err(error) => StartupCandidateState::Invalid(
+                    tr!(ParentUnavailable , "error" => error.to_string()),
                 ),
-                Err(error) => StartupCandidateState::Invalid(format!(
-                    "Родительская папка недоступна: {error}"
-                )),
             };
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return StartupCandidateState::Invalid(
-                "Выбранная папка больше не существует. Выберите её снова.".to_owned(),
-            );
+            return StartupCandidateState::Invalid(tr!(FolderGone));
         }
         Err(error) => {
-            return StartupCandidateState::Invalid(format!(
-                "Не удалось проверить рабочую папку: {error}"
-            ));
+            return StartupCandidateState::Invalid(
+                tr!(CheckWorkspaceFailed , "error" => error.to_string()),
+            );
         }
     }
     let notes = candidate.join("notes");
     match fs::symlink_metadata(&notes) {
         Ok(metadata) if metadata.file_type().is_dir() => StartupCandidateState::Ready,
-        Ok(_) => StartupCandidateState::Invalid(format!(
-            "Путь {} уже существует и не является обычной папкой.",
-            notes.display()
-        )),
+        Ok(_) => StartupCandidateState::Invalid(
+            tr!(PathExists , "value" => notes.display() .to_string()),
+        ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            StartupCandidateState::NeedsInitialization(format!(
-                "Notrum создаст вложенный каталог {}. Остальные файлы не изменятся.",
-                notes.display()
-            ))
+            StartupCandidateState::NeedsInitialization(
+                tr!(CreateNotesInfo , "value" => notes.display() .to_string()),
+            )
         }
         Err(error) => {
-            StartupCandidateState::Invalid(format!("Не удалось проверить каталог notes: {error}"))
+            StartupCandidateState::Invalid(tr!(CheckNotesFailed , "error" => error.to_string()))
         }
     }
 }
@@ -647,16 +665,27 @@ enum LaunchError {
 impl fmt::Display for LaunchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingValue(flag) => write!(formatter, "для {flag} требуется значение"),
+            Self::MissingValue(flag) => {
+                write!(formatter, "{}", tr!(FlagValue, "flag" => flag.to_string()))
+            }
             Self::InvalidSmokeExit(value) => {
                 write!(
                     formatter,
-                    "--smoke-exit-ms ожидает целое число, получено: {value}"
+                    "{}",
+                    tr!(SmokeInteger, "value" => value.to_string())
                 )
             }
-            Self::UnknownFlag(flag) => write!(formatter, "неизвестный флаг: {flag}"),
+            Self::UnknownFlag(flag) => write!(
+                formatter,
+                "{}",
+                tr!(UnknownFlag, "flag" => flag.to_string())
+            ),
             Self::UnexpectedArgument(argument) => {
-                write!(formatter, "лишний позиционный аргумент: {argument}")
+                write!(
+                    formatter,
+                    "{}",
+                    tr!(ExtraArgument, "argument" => argument.to_string())
+                )
             }
         }
     }
@@ -920,16 +949,16 @@ struct SecurityUi {
     busy: RwSignal<bool>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum PasswordFeedback {
-    Status(String),
-    Error(String),
+    Status(UiText),
+    Error(UiText),
 }
 
 impl PasswordFeedback {
-    fn message(&self) -> &str {
+    fn message(&self) -> String {
         match self {
-            Self::Status(message) | Self::Error(message) => message,
+            Self::Status(message) | Self::Error(message) => message.to_string(),
         }
     }
 
@@ -975,12 +1004,12 @@ impl SecurityUi {
         self.feedback.set(None);
     }
 
-    fn set_error(&self, message: impl Into<String>) {
+    fn set_error(&self, message: impl Into<UiText>) {
         self.feedback
             .set(Some(PasswordFeedback::Error(message.into())));
     }
 
-    fn set_status(&self, message: impl Into<String>) {
+    fn set_status(&self, message: impl Into<UiText>) {
         self.feedback
             .set(Some(PasswordFeedback::Status(message.into())));
     }
@@ -988,7 +1017,7 @@ impl SecurityUi {
     fn authentication_failed(&self) {
         self.busy.set(false);
         self.entry.borrow_mut().clear();
-        self.set_error("Не удалось подтвердить мастер-пароль");
+        self.set_error(msg!(AuthenticationFailed));
         self.entry_revision.update(|value| *value += 1);
     }
 }
@@ -1012,7 +1041,7 @@ struct AppModel {
     editor_content_width: f64,
     editor_padding_x: f64,
     editor_wheel_remainder: f64,
-    error: Option<String>,
+    error: Option<UiText>,
     started_at: Instant,
     save_sender: Sender<PersistenceCompletion>,
     save_receiver: Receiver<PersistenceCompletion>,
@@ -1023,7 +1052,7 @@ struct AppModel {
     secure_operation_id: Option<u64>,
     secure_progress: Option<SecureProgress>,
     pending_password_change: Option<PendingPasswordChange>,
-    password_change_error: Option<String>,
+    password_change_error: Option<UiText>,
     password_change_result: Option<(usize, usize, usize)>,
     blocked_password_change_workspace: Option<PathBuf>,
     secure_ui_operation: Option<SecureUiOperation>,
@@ -1043,7 +1072,7 @@ struct AppModel {
     search_operation_generation: u64,
     search_ready: bool,
     search_indexing: bool,
-    search_error: Option<String>,
+    search_error: Option<UiText>,
     search_query_generation: u64,
     search_results: Vec<SearchResult>,
     rss_sender: Sender<RssWorkerEvent>,
@@ -1243,7 +1272,7 @@ impl AppModel {
                     editor_content_width: EDITOR_DEFAULT_COLUMNS as f64 * EDITOR_CHARACTER_WIDTH_PX,
                     editor_padding_x: EDITOR_LINE_NUMBER_MIN_WIDTH_PX + EDITOR_LINE_NUMBER_GAP_PX,
                     editor_wheel_remainder: 0.0,
-                    error,
+                    error: error.map(|details| UiText::Failure { details }),
                     started_at,
                     save_sender,
                     save_receiver,
@@ -1298,7 +1327,9 @@ impl AppModel {
                 editor_content_width: EDITOR_DEFAULT_COLUMNS as f64 * EDITOR_CHARACTER_WIDTH_PX,
                 editor_padding_x: EDITOR_LINE_NUMBER_MIN_WIDTH_PX + EDITOR_LINE_NUMBER_GAP_PX,
                 editor_wheel_remainder: 0.0,
-                error: Some(error.to_string()),
+                error: Some(UiText::Failure {
+                    details: error.to_string(),
+                }),
                 started_at,
                 save_sender,
                 save_receiver,
@@ -1358,7 +1389,9 @@ impl AppModel {
                 true
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -1385,12 +1418,12 @@ impl AppModel {
             Err(error) => {
                 let message = error.to_string();
                 self.error = Some(if message.contains("source/url") {
-                    "Введите прямой HTTPS URL RSS или Atom-ленты".to_owned()
+                    UiText::from(msg!(FeedUrlRequired))
                 } else if matches!(error, CoreError::Workspace(ref value) if value.contains("conflict"))
                 {
-                    "Эта RSS-лента уже добавлена или была изменена в другом окне".to_owned()
+                    UiText::from(msg!(FeedAlreadyExists))
                 } else {
-                    message
+                    UiText::Failure { details: message }
                 });
                 None
             }
@@ -1402,7 +1435,7 @@ impl AppModel {
             return false;
         }
         let Some(workspace) = self.workspace.as_ref() else {
-            self.error = Some("workspace is not open".to_owned());
+            self.error = Some(("workspace is not open".to_owned()).into());
             return false;
         };
         if workspace
@@ -1415,7 +1448,9 @@ impl AppModel {
         let request = match workspace.rss_refresh_request(&item_id) {
             Ok(request) => request,
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 return false;
             }
         };
@@ -1454,10 +1489,14 @@ impl AppModel {
                     if let Some(workspace) = self.workspace.as_mut()
                         && let Err(error) = workspace.finish_rss_refresh(result)
                     {
-                        self.error = Some(error.to_string());
+                        self.error = Some(UiText::Failure {
+                            details: error.to_string(),
+                        });
                     }
                 }
-                Err(error) => self.error = Some(format!("Не удалось обновить RSS: {error}")),
+                Err(error) => {
+                    self.error = Some((msg!(RefreshFailed , "error" => error.to_string())).into())
+                }
             }
         }
         changed
@@ -1477,7 +1516,9 @@ impl AppModel {
                 true
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -1574,7 +1615,7 @@ impl AppModel {
 
     fn start_secure_job(&mut self, job: SecureJob, operation: SecureUiOperation) -> bool {
         if self.secure_worker_active || self.secure_ui_operation.is_some() {
-            self.error = Some("Защищённая операция уже выполняется".to_owned());
+            self.error = Some((msg!(SecureBusy)).into());
             return false;
         }
         self.secure_worker_active = true;
@@ -1601,7 +1642,9 @@ impl AppModel {
         match result {
             Ok(job) => self.start_secure_job(job, SecureUiOperation::Integrity),
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -1613,7 +1656,7 @@ impl AppModel {
         new: MasterPassword,
     ) -> bool {
         if self.pending_password_change.is_some() || self.secure_worker_active {
-            self.password_change_error = Some("Смена мастер-пароля уже выполняется".to_owned());
+            self.password_change_error = Some((msg!(PasswordChangeBusy)).into());
             return false;
         }
         if self
@@ -1627,8 +1670,7 @@ impl AppModel {
                 )
             })
         {
-            self.password_change_error =
-                Some("Сначала устраните ошибку сохранения или конфликт текущей заметки".to_owned());
+            self.password_change_error = Some((msg!(ResolveSaveFirst)).into());
             return false;
         }
         self.password_change_error = None;
@@ -1661,9 +1703,7 @@ impl AppModel {
                 SaveStatus::Dirty { .. } | SaveStatus::Saving { .. } => return false,
                 SaveStatus::Error { .. } | SaveStatus::Conflict { .. } => {
                     self.pending_password_change = None;
-                    self.password_change_error = Some(
-                        "Смена пароля отменена из-за ошибки сохранения или конфликта".to_owned(),
-                    );
+                    self.password_change_error = Some((msg!(PasswordChangeCancelled)).into());
                     return true;
                 }
             }
@@ -1693,8 +1733,7 @@ impl AppModel {
             .is_err()
         {
             self.pending_password_change = None;
-            self.password_change_error =
-                Some("Не удалось приостановить поисковый индекс".to_owned());
+            self.password_change_error = Some((msg!(PauseSearchFailed)).into());
             return true;
         }
         if let Some(request) = self.pending_password_change.as_mut() {
@@ -1732,7 +1771,9 @@ impl AppModel {
         match result {
             Ok(job) => self.start_secure_job(job, SecureUiOperation::ChangeMasterPassword),
             Err(error) => {
-                self.password_change_error = Some(error.to_string());
+                self.password_change_error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 let _ = self.search_sender.send(SearchCommand::Resume);
                 true
             }
@@ -1746,7 +1787,7 @@ impl AppModel {
         self.secure_worker_active = false;
         self.secure_operation_id = None;
         let Some(operation) = self.secure_ui_operation.take() else {
-            self.error = Some("Получен результат неизвестной защищённой операции".to_owned());
+            self.error = Some((msg!(UnknownSecureResult)).into());
             return true;
         };
         let password_dialog_operation = matches!(&operation, SecureUiOperation::Unlock { .. });
@@ -1793,7 +1834,9 @@ impl AppModel {
             }
             (SecureUiOperation::ChangeMasterPassword, Err(error)) => {
                 self.secure_progress = None;
-                self.password_change_error = Some(error.to_string());
+                self.password_change_error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 self.error = None;
                 let _ = self.search_sender.send(SearchCommand::Resume);
             }
@@ -1817,8 +1860,12 @@ impl AppModel {
                         Some(Ok(job)) => {
                             self.start_secure_job(job, SecureUiOperation::RestoreRecovery);
                         }
-                        Some(Err(error)) => self.error = Some(error.to_string()),
-                        None => self.error = Some("Заметка для восстановления потеряна".to_owned()),
+                        Some(Err(error)) => {
+                            self.error = Some(UiText::Failure {
+                                details: error.to_string(),
+                            })
+                        }
+                        None => self.error = Some((msg!(RecoveryNoteMissing)).into()),
                     }
                 }
             }
@@ -1889,7 +1936,7 @@ impl AppModel {
             (SecureUiOperation::Unlock { .. }, Err(error))
                 if error.is_master_password_authentication_failure() =>
             {
-                self.error = Some("Не удалось подтвердить мастер-пароль".to_owned());
+                self.error = Some((msg!(AuthenticationFailed)).into());
                 if let Some(security) = &self.security_ui {
                     security.authentication_failed();
                 }
@@ -1897,11 +1944,15 @@ impl AppModel {
             (SecureUiOperation::OpenProtected, Err(error))
                 if error.is_master_password_authentication_failure() =>
             {
-                self.error = Some("Не удалось подтвердить мастер-пароль".to_owned());
+                self.error = Some((msg!(AuthenticationFailed)).into());
             }
-            (_, Err(error)) => self.error = Some(error.to_string()),
+            (_, Err(error)) => {
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                })
+            }
             (_, Ok(_)) => {
-                self.error = Some("Защищённая операция завершилась неожиданно".to_owned());
+                self.error = Some((msg!(SecureUnexpectedEnd)).into());
             }
         }
         if password_dialog_operation && let Some(security) = &self.security_ui {
@@ -1969,11 +2020,11 @@ impl AppModel {
         self.pending_external_target = None;
         let now_ms = self.now_ms();
         let Some(workspace) = self.workspace.as_mut() else {
-            self.error = Some("workspace is not open".to_owned());
+            self.error = Some(("workspace is not open".to_owned()).into());
             return;
         };
         let Some(target_path) = workspace.notes().get(index).map(|note| note.path.clone()) else {
-            self.error = Some(format!("unknown note index {index}"));
+            self.error = Some((format!("unknown note index {index}")).into());
             return;
         };
         let protected_requires_prompt = workspace.notes().get(index).is_some_and(|note| {
@@ -1985,7 +2036,9 @@ impl AppModel {
         });
         if protected_requires_prompt {
             if let Err(error) = workspace.select_protected_note(index) {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 return;
             }
             self.unlock_request = Some(index);
@@ -2014,7 +2067,11 @@ impl AppModel {
                     self.pending_note_path = None;
                     self.error = None;
                 }
-                Err(error) => self.error = Some(error.to_string()),
+                Err(error) => {
+                    self.error = Some(UiText::Failure {
+                        details: error.to_string(),
+                    })
+                }
             }
             return;
         }
@@ -2038,7 +2095,11 @@ impl AppModel {
                 self.pending_note_path = None;
                 self.error = None;
             }
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => {
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                })
+            }
         }
     }
 
@@ -2046,7 +2107,7 @@ impl AppModel {
     fn open_external_path(&mut self, path: &Path) -> bool {
         let now_ms = self.now_ms();
         let Some(workspace) = self.workspace.as_mut() else {
-            self.error = Some("workspace is not open".to_owned());
+            self.error = Some(("workspace is not open".to_owned()).into());
             return false;
         };
         let known = workspace
@@ -2057,7 +2118,9 @@ impl AppModel {
         let target = match workspace.attach_external_file(path) {
             Ok(target) => target,
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 return false;
             }
         };
@@ -2089,7 +2152,9 @@ impl AppModel {
                 if !known.contains(&(engine_id.clone(), item_id.clone())) {
                     let _ = workspace.close_external_file(engine_id, item_id);
                 }
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -2105,7 +2170,7 @@ impl AppModel {
         let mut changed = false;
         {
             let Some(workspace) = self.workspace.as_mut() else {
-                self.error = Some("workspace is not open".to_owned());
+                self.error = Some(("workspace is not open".to_owned()).into());
                 return false;
             };
             for path in paths {
@@ -2134,7 +2199,8 @@ impl AppModel {
                             if !known.contains(&(engine_id.clone(), item_id.clone())) {
                                 let _ = workspace.close_external_file(engine_id, item_id);
                             }
-                            diagnostics.push(format!("Не удалось открыть {}", path.display()));
+                            diagnostics
+                                .push(tr!(OpenFailed , "value" => path.display() .to_string()));
                         }
                     }
                     Err(error) => diagnostics.push(format!("{}: {error}", path.display())),
@@ -2150,7 +2216,7 @@ impl AppModel {
             None => false,
         };
         if !diagnostics.is_empty() {
-            self.error = Some(diagnostics.join("; "));
+            self.error = Some((diagnostics.join("; ")).into());
         }
         changed || opened
     }
@@ -2161,7 +2227,7 @@ impl AppModel {
         };
         let now_ms = self.now_ms();
         let Some(workspace) = self.workspace.as_mut() else {
-            self.error = Some("workspace is not open".to_owned());
+            self.error = Some(("workspace is not open".to_owned()).into());
             return false;
         };
         match workspace.open_external_item(engine_id, item_id) {
@@ -2183,7 +2249,9 @@ impl AppModel {
             }
             Err(error) => {
                 self.pending_external_target = None;
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -2202,7 +2270,7 @@ impl AppModel {
         };
         let now_ms = self.now_ms();
         let Some(workspace) = self.workspace.as_mut() else {
-            self.error = Some("workspace is not open".to_owned());
+            self.error = Some(("workspace is not open".to_owned()).into());
             return false;
         };
         let selected = workspace.selected_target().as_ref() == Some(&target);
@@ -2212,7 +2280,7 @@ impl AppModel {
         if selected && has_recovery {
             self.pending_external_close = Some(target);
             workspace.retry_autosave(now_ms);
-            self.error = Some("Внешний файл не закрыт: сохранена recovery-копия".to_owned());
+            self.error = Some((msg!(ExternalRecoveryKept)).into());
             return false;
         }
         match workspace.close_external_file(engine_id, item_id) {
@@ -2235,7 +2303,9 @@ impl AppModel {
                 false
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -2338,7 +2408,7 @@ impl AppModel {
         let now_ms = self.now_ms();
         let Some(workspace) = self.workspace.as_mut() else {
             self.pending_note_path = None;
-            self.error = Some("workspace is not open".to_owned());
+            self.error = Some(("workspace is not open".to_owned()).into());
             return true;
         };
         let Some(index) = workspace
@@ -2347,7 +2417,7 @@ impl AppModel {
             .position(|note| note.path == target_path)
         else {
             self.pending_note_path = None;
-            self.error = Some("queued note no longer exists".to_owned());
+            self.error = Some(("queued note no longer exists".to_owned()).into());
             return true;
         };
         let protected_requires_prompt = workspace.notes().get(index).is_some_and(|note| {
@@ -2360,7 +2430,9 @@ impl AppModel {
         if protected_requires_prompt {
             if let Err(error) = workspace.select_protected_note(index) {
                 self.pending_note_path = None;
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 return true;
             }
             self.unlock_request = Some(index);
@@ -2397,7 +2469,9 @@ impl AppModel {
                 }
                 Err(error) => {
                     self.pending_note_path = None;
-                    self.error = Some(error.to_string());
+                    self.error = Some(UiText::Failure {
+                        details: error.to_string(),
+                    });
                     true
                 }
             };
@@ -2429,7 +2503,9 @@ impl AppModel {
             }
             Err(error) => {
                 self.pending_note_path = None;
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 true
             }
         }
@@ -2461,7 +2537,9 @@ impl AppModel {
                 outcome.clipboard
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 None
             }
         }
@@ -2649,19 +2727,22 @@ impl AppModel {
                 Some(value)
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 None
             }
         }
     }
 
     fn request_note_creation(&mut self, active: SidebarFilter) -> bool {
-        const TITLE: &str = "Новая заметка";
+        let title = tr!(NewNote);
+        let title = title.as_str();
         let result = format_utc_timestamp(SystemTime::now()).and_then(|timestamp| {
             self.workspace
                 .as_mut()
                 .ok_or_else(|| CoreError::Workspace("workspace is not open".to_owned()))?
-                .create_note(TITLE, &timestamp)
+                .create_note(title, &timestamp)
         });
         match result {
             Ok(_) => {
@@ -2683,7 +2764,7 @@ impl AppModel {
                 }
                 self.apply(EditorCommand::SetSelection {
                     anchor: 2,
-                    focus: 2 + TITLE.len(),
+                    focus: 2 + title.len(),
                 });
                 self.note_creation_focus_pending = true;
                 true
@@ -2699,7 +2780,9 @@ impl AppModel {
             }
             Err(error) => {
                 self.pending_note_creation = None;
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -2726,7 +2809,9 @@ impl AppModel {
                 Some(changed)
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 None
             }
         }
@@ -2749,7 +2834,9 @@ impl AppModel {
                 Some(changed)
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 None
             }
         }
@@ -2768,7 +2855,9 @@ impl AppModel {
                 Some(changed)
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 None
             }
         }
@@ -2875,7 +2964,9 @@ impl AppModel {
                 false
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -2885,7 +2976,9 @@ impl AppModel {
         match result {
             Ok(job) => self.start_secure_job(job, SecureUiOperation::Metadata),
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 false
             }
         }
@@ -2925,13 +3018,13 @@ impl AppModel {
             .send(SearchCommand::Query { generation, query })
             .is_err()
         {
-            self.search_error = Some("поисковый индекс остановлен".to_owned());
+            self.search_error = Some((msg!(SearchStopped)).into());
         }
     }
 
     fn request_search_reconcile(&mut self) {
         if self.search_sender.send(SearchCommand::Reconcile).is_err() {
-            self.search_error = Some("поисковый индекс остановлен".to_owned());
+            self.search_error = Some((msg!(SearchStopped)).into());
         }
     }
 
@@ -2953,13 +3046,13 @@ impl AppModel {
             .send(SearchCommand::SuspendAndPurge { paths })
             .is_err()
         {
-            self.search_error = Some("поисковый индекс остановлен".to_owned());
+            self.search_error = Some((msg!(SearchStopped)).into());
         }
     }
 
     fn resume_search_after_integrity(&mut self) {
         if self.search_sender.send(SearchCommand::Resume).is_err() {
-            self.search_error = Some("поисковый индекс остановлен".to_owned());
+            self.search_error = Some((msg!(SearchStopped)).into());
         }
     }
 
@@ -2982,8 +3075,8 @@ impl AppModel {
             })
             .is_err()
         {
-            self.search_error = Some("поисковый индекс остановлен".to_owned());
-            self.error = Some("Не удалось безопасно исключить заметку из поиска".to_owned());
+            self.search_error = Some((msg!(SearchStopped)).into());
+            self.error = Some((msg!(ExcludeSearchFailed)).into());
             return SecurityActionOutcome::OperationFailed;
         }
         self.pending_security_action = Some(action);
@@ -3002,11 +3095,8 @@ impl AppModel {
             })
             .is_err()
         {
-            self.search_error = Some("поисковый индекс остановлен".to_owned());
-            self.finish_restore_completion(
-                completion,
-                Err("поисковый индекс остановлен".to_owned()),
-            );
+            self.search_error = Some((msg!(SearchStopped)).into());
+            self.finish_restore_completion(completion, Err(tr!(SearchStopped)));
             return;
         }
         self.search_security_operation = Some(SearchSecurityOperation::Restoring {
@@ -3027,7 +3117,7 @@ impl AppModel {
         }
         self.search_security_operation = None;
         let Some(action) = self.pending_security_action.take() else {
-            self.error = Some("Ожидаемая операция защиты потеряна".to_owned());
+            self.error = Some((msg!(SecureActionMissing)).into());
             return true;
         };
         let note_path = action.note_path().to_path_buf();
@@ -3067,27 +3157,25 @@ impl AppModel {
         restore_result: Result<(), String>,
     ) {
         if let Err(error) = &restore_result {
-            self.search_error = Some(format!("восстановление поискового индекса: {error}"));
+            self.search_error =
+                Some((msg!(RestoreSearchFailed , "error" => error.to_string())).into());
         }
         match completion {
             RestoreCompletion::Protected => {
                 if restore_result.is_ok() {
                     self.error = None;
                 } else {
-                    self.error = Some(
-                        "Заметка защищена, но её открытые метаданные пока недоступны в поиске"
-                            .to_owned(),
-                    );
+                    self.error = Some((msg!(ProtectedMetadataPending).to_owned()).into());
                 }
             }
             RestoreCompletion::PurgeFailed(purge_error) => {
                 self.search_error = Some(match restore_result {
-                    Ok(()) => purge_error,
+                    Ok(()) => UiText::from(purge_error),
                     Err(restore_error) => {
-                        format!("{purge_error}; восстановление поискового индекса: {restore_error}")
+                        msg!(PurgeRestoreFailed , "purge_error" => purge_error, "restore_error" => restore_error).into()
                     }
                 });
-                self.error = Some("Не удалось безопасно исключить заметку из поиска".to_owned());
+                self.error = Some((msg!(ExcludeSearchFailed)).into());
             }
             RestoreCompletion::RetryProtect(action) if restore_result.is_ok() => {
                 self.pending_security_action = Some(action);
@@ -3098,10 +3186,10 @@ impl AppModel {
                 self.error = None;
             }
             RestoreCompletion::RetryProtect(_) | RestoreCompletion::ProtectFailed => {
-                self.error = Some("Не удалось защитить заметку".to_owned());
+                self.error = Some((msg!(ProtectFailed)).into());
             }
             RestoreCompletion::AuthenticationFailed => {
-                self.error = Some("Не удалось подтвердить мастер-пароль".to_owned());
+                self.error = Some((msg!(AuthenticationFailed)).into());
                 if let Some(security) = &self.security_ui
                     && security.dialog.get_untracked()
                         == Some(PasswordDialogKind::ExistingProtection)
@@ -3120,7 +3208,7 @@ impl AppModel {
                 .map(|note| note.path.clone())
         });
         let Some(note_path) = note_path else {
-            self.error = Some("Заметка не выбрана".to_owned());
+            self.error = Some((msg!(NoSelection)).into());
             return SecurityActionOutcome::OperationFailed;
         };
 
@@ -3150,7 +3238,7 @@ impl AppModel {
         }
     }
 
-    fn security_action_is_ready(&self, action: &PendingSecurityAction) -> Result<bool, String> {
+    fn security_action_is_ready(&self, action: &PendingSecurityAction) -> Result<bool, UiText> {
         let workspace = self
             .workspace
             .as_ref()
@@ -3158,26 +3246,24 @@ impl AppModel {
         if self.secure_worker_active || workspace.secure_operation_pending() {
             return Ok(false);
         }
-        let note_index = workspace
-            .selected_note()
-            .ok_or_else(|| "Заметка не выбрана".to_owned())?;
+        let note_index = workspace.selected_note().ok_or_else(|| msg!(NoSelection))?;
         let note = workspace
             .notes()
             .get(note_index)
-            .ok_or_else(|| "Выбранная заметка недоступна".to_owned())?;
+            .ok_or_else(|| msg!(SelectionUnavailable))?;
         if note.path != action.note_path() {
-            return Err("Выбранная заметка изменилась".to_owned());
+            return Err(msg!(SelectionChanged).into());
         }
         let document = workspace
             .document()
             .filter(|document| document.note_index() == note_index)
-            .ok_or_else(|| "Выбранная заметка не открыта".to_owned())?;
+            .ok_or_else(|| msg!(SelectionNotOpen))?;
         let canonical_clean = matches!(document.save_status(), SaveStatus::Clean { .. });
         if canonical_clean
             && note.recovery_available
             && matches!(action, PendingSecurityAction::Protect { .. })
         {
-            return Err("Сначала обработайте несохранённое восстановление".to_owned());
+            return Err(msg!(ResolveRecoveryFirst).into());
         }
         let recovery_write_active =
             matches!(document.recovery_status(), RecoveryStatus::Saving { .. });
@@ -3195,7 +3281,7 @@ impl AppModel {
             Ok(true) => {
                 let outcome = self.execute_security_action(action);
                 if outcome == SecurityActionOutcome::AuthenticationFailed {
-                    self.error = Some("Не удалось подтвердить мастер-пароль".to_owned());
+                    self.error = Some((msg!(AuthenticationFailed)).into());
                 }
                 true
             }
@@ -3243,7 +3329,9 @@ impl AppModel {
                         SecurityActionOutcome::Pending
                     }
                     Err(error) => {
-                        self.error = Some(error.to_string());
+                        self.error = Some(UiText::Failure {
+                            details: error.to_string(),
+                        });
                         SecurityActionOutcome::OperationFailed
                     }
                 }
@@ -3272,7 +3360,9 @@ impl AppModel {
                         SecurityActionOutcome::Pending
                     }
                     Err(error) => {
-                        self.error = Some(error.to_string());
+                        self.error = Some(UiText::Failure {
+                            details: error.to_string(),
+                        });
                         SecurityActionOutcome::OperationFailed
                     }
                 }
@@ -3294,7 +3384,7 @@ impl AppModel {
             PendingSecurityAction::Protect { password, .. } => password.clone(),
             PendingSecurityAction::Lock { .. }
             | PendingSecurityAction::DisableProtection { .. } => {
-                self.error = Some("Некорректная операция защиты после очистки поиска".to_owned());
+                self.error = Some((msg!(InvalidSecureAction)).into());
                 return;
             }
         };
@@ -3357,7 +3447,9 @@ impl AppModel {
                 UnlockOutcome::AuthenticationFailed
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 UnlockOutcome::OperationFailed
             }
         }
@@ -3371,7 +3463,7 @@ impl AppModel {
                 .map(|note| note.path.clone())
         });
         let Some(note_path) = note_path else {
-            self.error = Some("Заметка не выбрана".to_owned());
+            self.error = Some((msg!(NoSelection)).into());
             return SecurityActionOutcome::OperationFailed;
         };
         self.request_security_action(PendingSecurityAction::Lock { note_path })
@@ -3385,7 +3477,7 @@ impl AppModel {
                 .map(|note| note.path.clone())
         });
         let Some(note_path) = note_path else {
-            self.error = Some("Заметка не выбрана".to_owned());
+            self.error = Some((msg!(NoSelection)).into());
             return SecurityActionOutcome::OperationFailed;
         };
         self.request_security_action(PendingSecurityAction::DisableProtection { note_path })
@@ -3473,7 +3565,7 @@ impl AppModel {
 
     fn open_search_result(&mut self, relative_path: &str) -> bool {
         let Some(workspace) = self.workspace.as_ref() else {
-            self.error = Some("workspace is not open".to_owned());
+            self.error = Some(("workspace is not open".to_owned()).into());
             return false;
         };
         let absolute_path = workspace.root().join(relative_path);
@@ -3482,7 +3574,7 @@ impl AppModel {
             .iter()
             .position(|note| note.path == absolute_path)
         else {
-            self.error = Some("search result is no longer present".to_owned());
+            self.error = Some(("search result is no longer present".to_owned()).into());
             self.request_search_reconcile();
             return false;
         };
@@ -3513,12 +3605,12 @@ enum WorkspaceSwitchBlocker {
 }
 
 impl WorkspaceSwitchBlocker {
-    fn message(self) -> &'static str {
+    fn message(self) -> i18n::Message {
         match self {
-            Self::Persistence => "Дождитесь завершения сохранения заметки",
-            Self::Security => "Дождитесь завершения защищённой операции",
-            Self::Unsaved => "Сначала дождитесь автосохранения текущей заметки",
-            Self::SaveFailure => "Сначала устраните ошибку сохранения или конфликт текущей заметки",
+            Self::Persistence => msg!(WaitSave),
+            Self::Security => msg!(WaitSecure),
+            Self::Unsaved => msg!(WaitAutosave),
+            Self::SaveFailure => msg!(ResolveSaveFirst),
         }
     }
 }
@@ -3566,15 +3658,15 @@ struct PreparedWorkspaceSwitch {
     diagnostic: Option<String>,
 }
 
-fn prepare_workspace_switch(path: &Path) -> Result<PreparedWorkspaceSwitch, String> {
+fn prepare_workspace_switch(path: &Path) -> Result<PreparedWorkspaceSwitch, UiText> {
     if !path.is_absolute() {
-        return Err("Укажите абсолютный путь к рабочей папке".to_owned());
+        return Err(msg!(EnterAbsoluteWorkspace).into());
     }
     let canonical_path = path
         .canonicalize()
-        .map_err(|error| format!("Не удалось открыть папку: {error}"))?;
+        .map_err(|error| msg!(OpenFolderFailed , "error" => error.to_string()))?;
     if !canonical_path.is_dir() {
-        return Err("Выбранный путь не является папкой".to_owned());
+        return Err(msg!(SelectedNotFolder).into());
     }
     let settings::SettingsLoad {
         store,
@@ -3597,7 +3689,7 @@ fn prepare_workspace_switch(path: &Path) -> Result<PreparedWorkspaceSwitch, Stri
         let error = model
             .error
             .clone()
-            .unwrap_or_else(|| "Не удалось открыть рабочую папку".to_owned());
+            .unwrap_or_else(|| msg!(OpenWorkspaceFailed).into());
         model.request_search_worker_shutdown();
         return Err(error);
     }
@@ -3921,7 +4013,7 @@ fn search_worker(
                     last_reconcile = Instant::now();
                     let result = index
                         .as_mut()
-                        .ok_or_else(|| "поисковый индекс недоступен".to_owned())
+                        .ok_or_else(|| tr!(SearchUnavailable))
                         .and_then(|index| {
                             index.purge(note_path).map_err(|error| error.to_string())
                         });
@@ -3941,7 +4033,7 @@ fn search_worker(
                     last_reconcile = Instant::now();
                     let result = index
                         .as_mut()
-                        .ok_or_else(|| "поисковый индекс недоступен".to_owned())
+                        .ok_or_else(|| tr!(SearchUnavailable))
                         .and_then(|index| {
                             index
                                 .restore_after_failed_purge(note_path)
@@ -4052,7 +4144,9 @@ fn autosave_tick(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>, generati
                         .map_err(|error| error.to_string())
                 });
             if let Err(error) = result {
-                model.error = Some(error);
+                model.error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
             } else if model
                 .workspace
                 .as_ref()
@@ -4124,13 +4218,17 @@ fn autosave_tick(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>, generati
                         }
                         Ok(Some(None)) | Ok(None) => {}
                         Err(error) => {
-                            model.error = Some(error.to_string());
+                            model.error = Some(UiText::Failure {
+                                details: error.to_string(),
+                            });
                             changed = true;
                         }
                     }
                 }
                 Err(error) => {
-                    model.error = Some(error.to_string());
+                    model.error = Some(UiText::Failure {
+                        details: error.to_string(),
+                    });
                     changed = true;
                 }
             }
@@ -4188,7 +4286,9 @@ fn schedule_external_poll(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>)
             }
             Ok(Some(ExternalPoll::Unchanged | ExternalPoll::Deferred)) | Ok(None) => {}
             Err(error) => {
-                model.borrow_mut().error = Some(error.to_string());
+                model.borrow_mut().error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 revision.update(|value| *value += 1);
             }
         }
@@ -4300,7 +4400,9 @@ fn schedule_search_poll(
                     }
                     SearchEvent::Error(error) => {
                         model.search_indexing = false;
-                        model.search_error = Some(error);
+                        model.search_error = Some(UiText::Failure {
+                            details: error.to_string(),
+                        });
                         changed = true;
                     }
                 }
@@ -4438,7 +4540,7 @@ struct WorkspaceSwitchContext {
 fn switch_workspace(
     requested_path: &Path,
     context: &WorkspaceSwitchContext,
-) -> Result<(PathBuf, Option<String>), String> {
+) -> Result<(PathBuf, Option<UiText>), UiText> {
     let blocker = {
         let model = context.model.borrow();
         workspace_switch_blocker(&model)
@@ -4447,12 +4549,12 @@ fn switch_workspace(
         if blocker == WorkspaceSwitchBlocker::Unsaved {
             schedule_autosave(context.model.clone(), context.revision);
         }
-        return Err(blocker.message().to_owned());
+        return Err(blocker.message().into());
     }
 
     let canonical_path = requested_path
         .canonicalize()
-        .map_err(|error| format!("Не удалось открыть папку: {error}"))?;
+        .map_err(|error| msg!(OpenFolderFailed , "error" => error.to_string()))?;
     if context
         .model
         .borrow()
@@ -4460,18 +4562,13 @@ fn switch_workspace(
         .as_ref()
         .is_some_and(|workspace| workspace.root() == canonical_path)
     {
-        return Ok((
-            canonical_path,
-            Some("Эта рабочая папка уже открыта".to_owned()),
-        ));
+        return Ok((canonical_path, Some(msg!(WorkspaceAlreadyOpen).into())));
     }
 
     let mut prepared = prepare_workspace_switch(&canonical_path)?;
     if let Err(error) = context.settings_store.borrow_mut().flush() {
         prepared.model.request_search_worker_shutdown();
-        return Err(format!(
-            "Не удалось сохранить настройки текущей папки: {error}"
-        ));
+        return Err(msg!(SaveSettingsFailed , "error" => error.to_string()).into());
     }
 
     let editor_font = {
@@ -4531,11 +4628,13 @@ fn switch_workspace(
         .borrow_mut()
         .remember_workspace(&prepared.canonical_path)
         .err()
-        .map(|error| format!("Папка открыта, но не сохранена для следующего запуска: {error}"));
+        .map(|error| msg!(RememberWorkspaceFailed , "error" => error.to_string()));
     let diagnostic = match (prepared.diagnostic, remember_warning) {
-        (Some(settings), Some(global)) => Some(format!("{settings}. {global}")),
-        (Some(settings), None) => Some(settings),
-        (None, warning) => warning,
+        (Some(settings), Some(global)) => {
+            Some(UiText::Joined(vec![settings.into(), global.into()]))
+        }
+        (Some(settings), None) => Some(settings.into()),
+        (None, warning) => warning.map(UiText::from),
     };
     Ok((prepared.canonical_path, diagnostic))
 }
@@ -4726,7 +4825,9 @@ fn app_view(
                 })
             };
             if let Err(error) = result {
-                restore_model.borrow_mut().error = Some(error);
+                restore_model.borrow_mut().error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
             }
             revision.update(|value| *value += 1);
             schedule_autosave(restore_model, revision);
@@ -4766,7 +4867,7 @@ fn app_view(
             };
             if !succeeded && operations_model.borrow().error.is_none() {
                 operations_model.borrow_mut().error =
-                    Some("operations smoke did not complete".to_owned());
+                    Some(("operations smoke did not complete".to_owned()).into());
             }
             revision.update(|value| *value += 1);
         });
@@ -4779,7 +4880,7 @@ fn app_view(
     let workspace_switch = WorkspaceSwitchContext {
         model: model.clone(),
         settings_store: settings_store.clone(),
-        global_settings_store,
+        global_settings_store: global_settings_store.clone(),
         revision,
         settings_generation,
         sidebar_width,
@@ -4800,9 +4901,7 @@ fn app_view(
                     .path
                     .set(canonical_path.to_string_lossy().into_owned());
                 settings_page.feedback.set(Some(SettingsFeedback {
-                    message: diagnostic.unwrap_or_else(|| {
-                        "Рабочая папка изменена. Её настройки загружены.".to_owned()
-                    }),
+                    message: diagnostic.unwrap_or_else(|| msg!(WorkspaceChanged).into()),
                     is_error: false,
                 }));
             }
@@ -4886,7 +4985,7 @@ fn app_view(
         ),
     ))
     .style(move |style| {
-        style
+        rtl_row(style)
             .size_full()
             .min_size(860.0, 560.0)
             .background(palette.canvas)
@@ -4897,6 +4996,7 @@ fn app_view(
     });
     let settings_overlay = settings_page_view(
         settings_page,
+        global_settings_store.clone(),
         model.clone(),
         revision,
         apply_workspace,
@@ -5028,12 +5128,103 @@ fn app_view(
 
 fn settings_page_view(
     signals: SettingsPageSignals,
+    global_settings_store: Rc<RefCell<GlobalSettingsStore>>,
     model: Rc<RefCell<AppModel>>,
     revision: RwSignal<u64>,
     apply_workspace: Rc<dyn Fn(PathBuf)>,
     close_settings: Rc<dyn Fn()>,
     palette: Palette,
 ) -> impl IntoView {
+    let language_feedback = create_rw_signal(None::<i18n::Message>);
+    let language_picker =
+        floem::views::dropdown::Dropdown::new(i18n::current, Locale::ALL.iter().copied())
+            .main_view(|_| {
+                h_stack((
+                    label(|| i18n::current().native_name()).style(|style| style.font_size(13.0)),
+                    svg(ICON_CHEVRON_DOWN).style(|style| style.size(12.0, 12.0)),
+                ))
+                .style(|style| {
+                    rtl_row(style)
+                        .width_full()
+                        .items_center()
+                        .justify_between()
+                        .gap(8.0)
+                        .font_family("sans-serif".to_owned())
+                })
+                .into_any()
+            })
+            .list_item_view(move |locale| {
+                text(locale.native_name())
+                    .style(move |style| {
+                        style
+                            .width_full()
+                            .min_height(30.0)
+                            .padding_horiz(10.0)
+                            .padding_vert(6.0)
+                            .font_family("sans-serif".to_owned())
+                            .font_size(13.0)
+                            .color(palette.ink)
+                            .background(palette.paper)
+                            .hover(move |style| style.background(palette.accent_soft))
+                            .focus(move |style| style.background(palette.accent_soft))
+                    })
+                    .into_any()
+            })
+            .on_accept(
+                move |locale| match global_settings_store.borrow_mut().set_locale(locale) {
+                    Ok(()) => {
+                        language_feedback.set(None);
+                        i18n::set_current(locale);
+                    }
+                    Err(error) => language_feedback
+                        .set(Some(msg!(LanguageSaveFailed, "error" => error.to_string()))),
+                },
+            )
+            .style(move |style| {
+                style
+                    .width(300.0)
+                    .min_height(36.0)
+                    .padding_horiz(10.0)
+                    .padding_vert(6.0)
+                    .background(palette.paper)
+                    .color(palette.ink)
+                    .border(1.0)
+                    .border_color(palette.divider)
+                    .border_radius(6.0)
+                    .class(floem::views::scroll::ScrollClass, |style| {
+                        style
+                            .width(300.0)
+                            .max_height(280.0)
+                            .background(palette.paper)
+                            .border(1.0)
+                            .border_color(palette.divider)
+                            .border_radius(6.0)
+                    })
+            });
+    let language_card = v_stack((
+        text(msg!(Language)).style(move |style| style.font_size(15.0).color(palette.ink)),
+        text(msg!(LanguageDescription))
+            .style(move |style| style.font_size(12.5).color(palette.muted)),
+        language_picker,
+        label(move || {
+            language_feedback
+                .get()
+                .map(|message| message.render())
+                .unwrap_or_default()
+        })
+        .style(move |style| style.font_size(12.5).color(palette.danger)),
+    ))
+    .style(move |style| {
+        rtl_column(style)
+            .width_full()
+            .max_width(720.0)
+            .padding(22.0)
+            .gap(10.0)
+            .background(palette.paper)
+            .border(1.0)
+            .border_color(palette.divider)
+            .border_radius(8.0)
+    });
     let close_action = close_settings.clone();
     let general_navigation_model = model.clone();
     let encryption_navigation_model = model.clone();
@@ -5041,12 +5232,12 @@ fn settings_page_view(
         h_stack((
             icon_button(
                 ICON_BACK,
-                || "Вернуться к заметкам".to_owned(),
+                || tr!(BackToNotes),
                 IconButtonTone::Sidebar,
                 palette,
                 move || close_action(),
             ),
-            text("Настройки").style(move |style| {
+            label(move || tr!(Settings)).style(move |style| {
                 style
                     .font_size(18.0)
                     .font_weight(floem::text::Weight::SEMIBOLD)
@@ -5054,9 +5245,9 @@ fn settings_page_view(
                     .selectable(false)
             }),
         ))
-        .style(|style| style.height(44.0).items_center().gap(10.0)),
+        .style(|style| rtl_row(style).height(44.0).items_center().gap(10.0)),
         empty().style(|style| style.height(22.0)),
-        text("РАЗДЕЛЫ").style(move |style| {
+        label(move || tr!(Sections)).style(move |style| {
             style
                 .font_size(10.0)
                 .color(palette.sidebar_muted)
@@ -5066,9 +5257,9 @@ fn settings_page_view(
         reliable_button(
             h_stack((
                 svg(ICON_SETTINGS).style(|style| style.size(16.0, 16.0)),
-                text("Общие").style(|style| style.font_size(13.5).selectable(false)),
+                label(move || tr!(General)).style(|style| style.font_size(13.5).selectable(false)),
             ))
-            .style(|style| style.items_center().gap(10.0)),
+            .style(|style| rtl_row(style).items_center().gap(10.0)),
             move || {
                 if !password_change_busy(&general_navigation_model.borrow()) {
                     signals.section.set(SettingsSection::General);
@@ -5076,7 +5267,7 @@ fn settings_page_view(
             },
         )
         .style(move |style| {
-            style
+            rtl_row(style)
                 .width_full()
                 .height(38.0)
                 .items_center()
@@ -5092,9 +5283,10 @@ fn settings_page_view(
         reliable_button(
             h_stack((
                 svg(ICON_LOCK).style(|style| style.size(16.0, 16.0)),
-                text("Шифрование").style(|style| style.font_size(13.5).selectable(false)),
+                label(move || tr!(Encryption))
+                    .style(|style| style.font_size(13.5).selectable(false)),
             ))
-            .style(|style| style.items_center().gap(10.0)),
+            .style(|style| rtl_row(style).items_center().gap(10.0)),
             move || {
                 if !password_change_busy(&encryption_navigation_model.borrow()) {
                     signals.section.set(SettingsSection::Encryption);
@@ -5102,7 +5294,7 @@ fn settings_page_view(
             },
         )
         .style(move |style| {
-            style
+            rtl_row(style)
                 .width_full()
                 .height(38.0)
                 .items_center()
@@ -5118,7 +5310,7 @@ fn settings_page_view(
         empty().style(|style| style.flex_grow(1.0)),
     ))
     .style(move |style| {
-        style
+        rtl_column(style)
             .width(232.0)
             .height_full()
             .flex_shrink(0.0)
@@ -5126,21 +5318,22 @@ fn settings_page_view(
             .background(palette.sidebar)
     });
 
-    let path_input = text_input(signals.path)
-        .placeholder("/путь/к/рабочей/папке")
-        .style(move |style| {
-            text_input_affordance(style, palette.muted, palette.accent)
-                .width_full()
-                .height(40.0)
-                .items_center()
-                .padding_horiz(12.0)
-                .background(palette.paper)
-                .color(palette.ink)
-                .border(1.0)
-                .border_color(palette.divider)
-                .border_radius(6.0)
-                .font_size(13.0)
-        });
+    let path_input =
+        localized_input::LocalizedInput::new(signals.path, i18n::Key::WorkspacePlaceholder).style(
+            move |style| {
+                text_input_affordance(style, palette.muted, palette.accent)
+                    .width_full()
+                    .height(40.0)
+                    .items_center()
+                    .padding_horiz(12.0)
+                    .background(palette.paper)
+                    .color(palette.ink)
+                    .border(1.0)
+                    .border_color(palette.divider)
+                    .border_radius(6.0)
+                    .font_size(13.0)
+            },
+        );
 
     let picker_apply = apply_workspace.clone();
     let picker_action = move || {
@@ -5151,7 +5344,7 @@ fn settings_page_view(
         signals.feedback.set(None);
         let mut options = FileDialogOptions::new()
             .select_directories()
-            .title("Выберите рабочую папку Notrum");
+            .title(tr!(ChooseNotrumWorkspace));
         let current = PathBuf::from(signals.path.get_untracked());
         if current.is_dir() {
             options = options.force_starting_directory(current);
@@ -5171,7 +5364,7 @@ fn settings_page_view(
         let path = signals.path.get_untracked();
         if path.trim().is_empty() {
             signals.feedback.set(Some(SettingsFeedback {
-                message: "Укажите путь к рабочей папке".to_owned(),
+                message: msg!(EnterWorkspace).into(),
                 is_error: true,
             }));
             return;
@@ -5180,14 +5373,14 @@ fn settings_page_view(
     };
     let controls = h_stack((
         text_button(
-            "Выбрать папку…",
+            msg!(ChooseFolder),
             IconButtonTone::Secondary,
             palette,
             picker_action,
         ),
-        text_button("Применить", IconButtonTone::Primary, palette, apply_action),
+        text_button(msg!(Apply), IconButtonTone::Primary, palette, apply_action),
     ))
-    .style(|style| style.items_center().gap(8.0));
+    .style(|style| rtl_row(style).items_center().gap(8.0));
 
     let feedback = dyn_container(
         move || signals.feedback.get(),
@@ -5213,22 +5406,22 @@ fn settings_page_view(
         h_stack((
             svg(ICON_FOLDER).style(move |style| style.size(20.0, 20.0).color(palette.accent)),
             v_stack((
-                text("Рабочая папка").style(move |style| {
+                label(move || tr!(Workspace)).style(move |style| {
                     style
                         .font_size(15.0)
                         .font_weight(floem::text::Weight::SEMIBOLD)
                         .color(palette.ink)
                         .selectable(false)
                 }),
-                text("Здесь Notrum читает Markdown-заметки и хранит локальные настройки.").style(
-                    move |style| style.font_size(12.5).color(palette.muted).selectable(false),
-                ),
+                label(move || tr!(WorkspaceDescription)).style(move |style| {
+                    style.font_size(12.5).color(palette.muted).selectable(false)
+                }),
             ))
-            .style(|style| style.gap(3.0)),
+            .style(|style| rtl_column(style).gap(3.0)),
         ))
-        .style(|style| style.items_start().gap(12.0)),
+        .style(|style| rtl_row(style).items_start().gap(12.0)),
         empty().style(|style| style.height(20.0)),
-        text("ПУТЬ")
+        label(move || tr!(Path))
             .style(move |style| style.font_size(10.0).color(palette.muted).selectable(false)),
         empty().style(|style| style.height(7.0)),
         path_input,
@@ -5238,7 +5431,7 @@ fn settings_page_view(
         feedback,
     ))
     .style(move |style| {
-        style
+        rtl_column(style)
             .width_full()
             .max_width(720.0)
             .padding(22.0)
@@ -5250,7 +5443,7 @@ fn settings_page_view(
 
     let general_content = scroll(
         v_stack((
-            text("Общие настройки").style(move |style| {
+            label(move || tr!(GeneralSettings)).style(move |style| {
                 style
                     .font_size(26.0)
                     .font_weight(floem::text::Weight::SEMIBOLD)
@@ -5258,12 +5451,19 @@ fn settings_page_view(
                     .selectable(false)
             }),
             empty().style(|style| style.height(7.0)),
-            text("Основные параметры приложения и текущего пространства заметок.")
+            label(move || tr!(GeneralDescription))
                 .style(move |style| style.font_size(13.5).color(palette.muted).selectable(false)),
             empty().style(|style| style.height(28.0)),
+            language_card,
+            empty().style(|style| style.height(20.0)),
             workspace_card,
         ))
-        .style(|style| style.width_full().padding_horiz(44.0).padding_vert(38.0)),
+        .style(|style| {
+            rtl_column(style)
+                .width_full()
+                .padding_horiz(44.0)
+                .padding_vert(38.0)
+        }),
     )
     .style(move |style| {
         style
@@ -5293,7 +5493,7 @@ fn settings_page_view(
     .style(|style| style.min_width(0.0).height_full().flex_grow(1.0));
 
     h_stack((navigation, content)).style(move |style| {
-        let style = style
+        let style = rtl_row(style)
             .absolute()
             .size_full()
             .min_size(860.0, 560.0)
@@ -5320,7 +5520,7 @@ fn startup_workspace_modal(
         picker_signals.picker_active.set(true);
         let mut options = FileDialogOptions::new()
             .select_directories()
-            .title("Выберите рабочую папку Notrum");
+            .title(tr!(ChooseNotrumWorkspace));
         if let Some(candidate) = picker_signals.candidate.get_untracked() {
             let starting_directory = if candidate.is_dir() {
                 Some(candidate)
@@ -5363,9 +5563,9 @@ fn startup_workspace_modal(
         if state.needs_initialization()
             && let Err(error) = initialize_workspace(&candidate)
         {
-            open_signals
-                .diagnostic
-                .set(Some(format!("Не удалось создать рабочую папку: {error}")));
+            open_signals.diagnostic.set(Some(
+                tr!(CreateWorkspaceFailed , "error" => error.to_string()),
+            ));
             return;
         }
         open_signals.may_create_root.set(false);
@@ -5380,7 +5580,7 @@ fn startup_workspace_modal(
                         .update(|value| *value = value.saturating_add(1));
                 }
             }
-            Err(error) => open_signals.diagnostic.set(Some(error)),
+            Err(error) => open_signals.diagnostic.set(Some(error.to_string())),
         }
     };
 
@@ -5448,10 +5648,10 @@ fn startup_workspace_modal(
     );
     let path_signals = signals;
     let path = label(move || {
-        path_signals.candidate.get().map_or_else(
-            || "Путь не определён".to_owned(),
-            |path| path.display().to_string(),
-        )
+        path_signals
+            .candidate
+            .get()
+            .map_or_else(|| tr!(PathUnknown), |path| path.display().to_string())
     })
     .style(move |style| {
         style
@@ -5493,10 +5693,11 @@ fn startup_workspace_modal(
     let card = v_stack((
         h_stack((
             svg(ICON_FOLDER).style(move |style| style.size(24.0, 24.0).color(palette.accent)),
-            text("Выберите рабочую папку").style(|style| style.font_size(18.0).selectable(false)),
+            label(move || tr!(ChooseWorkspace))
+                .style(|style| style.font_size(18.0).selectable(false)),
         ))
         .style(|style| style.items_center().gap(10.0)),
-        text("Notrum хранит Markdown-заметки во вложенном каталоге notes.").style(move |style| {
+        label(move || tr!(NotesDirectoryInfo)).style(move |style| {
             style
                 .font_size(13.0)
                 .line_height(1.4)
@@ -5509,7 +5710,7 @@ fn startup_workspace_modal(
         h_stack((
             empty().style(|style| style.flex_grow(1.0)),
             text_button(
-                "Выбрать другую…",
+                msg!(ChooseAnother),
                 IconButtonTone::Secondary,
                 palette,
                 picker_action,
@@ -5578,7 +5779,7 @@ fn password_change_progress_text(message: String, progress: SecureProgress) -> S
 }
 
 fn password_change_success_text(notes: usize) -> String {
-    format!("100% · Заменено {notes} из {notes}")
+    tr!(PasswordChangeComplete , "notes" => notes)
 }
 
 fn submit_master_password_change(
@@ -5598,28 +5799,28 @@ fn submit_master_password_change(
     });
     if current.is_empty() {
         signals.encryption_feedback.set(Some(SettingsFeedback {
-            message: "Введите текущий пароль".to_owned(),
+            message: msg!(EnterCurrentPassword).into(),
             is_error: true,
         }));
         return;
     }
     if new_password.is_empty() || confirmation.is_empty() {
         signals.encryption_feedback.set(Some(SettingsFeedback {
-            message: "Введите и повторите новый пароль".to_owned(),
+            message: msg!(EnterRepeatNewPassword).into(),
             is_error: true,
         }));
         return;
     }
     if new_password.as_str() != confirmation.as_str() {
         signals.encryption_feedback.set(Some(SettingsFeedback {
-            message: "Новые пароли не совпадают".to_owned(),
+            message: msg!(NewPasswordsMismatch).into(),
             is_error: true,
         }));
         return;
     }
     if current.as_str() == new_password.as_str() {
         signals.encryption_feedback.set(Some(SettingsFeedback {
-            message: "Новый пароль должен отличаться от текущего".to_owned(),
+            message: msg!(PasswordMustDiffer).into(),
             is_error: true,
         }));
         return;
@@ -5636,7 +5837,7 @@ fn submit_master_password_change(
         .update(|value| *value = value.saturating_add(1));
     if accepted {
         signals.encryption_feedback.set(Some(SettingsFeedback {
-            message: "0% · Подготавливаем смену мастер-пароля…".to_owned(),
+            message: msg!(PreparingPasswordChange).into(),
             is_error: false,
         }));
         schedule_autosave(model.clone(), revision);
@@ -5645,7 +5846,7 @@ fn submit_master_password_change(
             .borrow()
             .password_change_error
             .clone()
-            .unwrap_or_else(|| "Не удалось начать смену мастер-пароля".to_owned());
+            .unwrap_or_else(|| msg!(StartPasswordChangeFailed).into());
         signals.encryption_feedback.set(Some(SettingsFeedback {
             message,
             is_error: true,
@@ -5678,7 +5879,7 @@ fn encryption_settings_view(
     let current = encryption_password_field(
         signals,
         EncryptionField::Current,
-        "Текущий пароль",
+        i18n::Key::CurrentPassword,
         model.clone(),
         field_ids.clone(),
         revision,
@@ -5688,7 +5889,7 @@ fn encryption_settings_view(
     let new_password = encryption_password_field(
         signals,
         EncryptionField::New,
-        "Новый пароль",
+        i18n::Key::NewPassword,
         model.clone(),
         field_ids.clone(),
         revision,
@@ -5698,7 +5899,7 @@ fn encryption_settings_view(
     let confirmation = encryption_password_field(
         signals,
         EncryptionField::Confirmation,
-        "Повторите новый пароль",
+        i18n::Key::RepeatNewPassword,
         model.clone(),
         field_ids.clone(),
         revision,
@@ -5723,11 +5924,9 @@ fn encryption_settings_view(
             )
         });
         if secrets == 0 {
-            format!("Защищённых заметок: {notes} · Recovery-файлов: {recovery}")
+            tr!(ProtectedCounts , "notes" => notes, "recovery" => recovery)
         } else {
-            format!(
-                "Защищённых заметок: {notes} · Recovery-файлов: {recovery} · Секретов: {secrets}"
-            )
+            tr!(ProtectedSecretCounts , "notes" => notes, "recovery" => recovery, "secrets" => secrets)
         }
     })
     .style(move |style| style.font_size(13.0).color(palette.ink));
@@ -5735,7 +5934,7 @@ fn encryption_settings_view(
     let submit_model = model.clone();
     let disabled_model = model.clone();
     let submit = text_button(
-        "Сменить мастер-пароль",
+        msg!(ChangeMasterPassword),
         IconButtonTone::Primary,
         palette,
         move || submit_master_password_change(signals, &submit_model, revision),
@@ -5764,59 +5963,32 @@ fn encryption_settings_view(
         revision.get();
         let model = status_model.borrow();
         if let Some(error) = &model.password_change_error {
-            return error.clone();
+            return error.to_string();
         }
         if let Some(progress) = model.secure_progress {
             let message = match progress.phase {
                 SecurePhase::Validating => {
-                    format!("Проверено {} из {}", progress.completed, progress.total)
+                    tr!(CheckedProgress , "value" => progress.completed, "total" => progress.total)
                 }
                 SecurePhase::PreparingVerifier => {
-                    format!(
-                        "Verifier: подготовлено {} из {}",
-                        progress.completed, progress.total
-                    )
+                    tr!(VerifierPreparedProgress , "value" => progress.completed, "total" => progress.total)
                 }
-                SecurePhase::PreparingSecrets => format!(
-                    "Секреты: подготовлено {} из {}",
-                    progress.completed, progress.total
-                ),
+                SecurePhase::PreparingSecrets => tr!(SecretsPreparedProgress , "value" => progress.completed, "total" => progress.total),
                 SecurePhase::PreparingNotes => {
-                    format!("Подготовлено {} из {}", progress.completed, progress.total)
+                    tr!(PreparedProgress , "value" => progress.completed, "total" => progress.total)
                 }
-                SecurePhase::PreparingRecovery => format!(
-                    "Recovery: подготовлено {} из {}",
-                    progress.completed, progress.total
-                ),
-                SecurePhase::BackingUpNotes => format!(
-                    "Резервные копии: {} из {}",
-                    progress.completed, progress.total
-                ),
-                SecurePhase::BackingUpSecrets => format!(
-                    "Резервные копии секретов: {} из {}",
-                    progress.completed, progress.total
-                ),
-                SecurePhase::ReplacingRecovery => format!(
-                    "Recovery: заменено {} из {}",
-                    progress.completed, progress.total
-                ),
-                SecurePhase::ReplacingSecrets => format!(
-                    "Секреты: заменено {} из {}",
-                    progress.completed, progress.total
-                ),
+                SecurePhase::PreparingRecovery => tr!(RecoveryPreparedProgress , "value" => progress.completed, "total" => progress.total),
+                SecurePhase::BackingUpNotes => tr!(BackupProgress , "value" => progress.completed, "total" => progress.total),
+                SecurePhase::BackingUpSecrets => tr!(SecretBackupProgress , "value" => progress.completed, "total" => progress.total),
+                SecurePhase::ReplacingRecovery => tr!(RecoveryReplacedProgress , "value" => progress.completed, "total" => progress.total),
+                SecurePhase::ReplacingSecrets => tr!(SecretsReplacedProgress , "value" => progress.completed, "total" => progress.total),
                 SecurePhase::ReplacingNotes => {
-                    format!("Заменено {} из {}", progress.completed, progress.total)
+                    tr!(ReplacedProgress , "value" => progress.completed, "total" => progress.total)
                 }
-                SecurePhase::ReplacingVerifier => format!(
-                    "Verifier: заменено {} из {}",
-                    progress.completed, progress.total
-                ),
-                SecurePhase::Verifying => format!(
-                    "Проверено после замены {} из {}",
-                    progress.completed, progress.total
-                ),
+                SecurePhase::ReplacingVerifier => tr!(VerifierReplacedProgress , "value" => progress.completed, "total" => progress.total),
+                SecurePhase::Verifying => tr!(VerifiedProgress , "value" => progress.completed, "total" => progress.total),
                 SecurePhase::RollingBack => {
-                    format!("Восстановлено {} из {}", progress.completed, progress.total)
+                    tr!(RestoredProgress , "value" => progress.completed, "total" => progress.total)
                 }
             };
             return password_change_progress_text(message, progress);
@@ -5827,10 +5999,10 @@ fn encryption_settings_view(
         if let Some(request) = &model.pending_password_change {
             return match request.state {
                 PendingPasswordChangeState::WaitingPersistence => {
-                    "0% · Ожидаем автосохранение…".to_owned()
+                    tr!(WaitingAutosave)
                 }
                 PendingPasswordChangeState::WaitingSearch { .. } => {
-                    "0% · Приостанавливаем поисковый индекс…".to_owned()
+                    tr!(PausingSearch)
                 }
             };
         }
@@ -5838,12 +6010,12 @@ fn encryption_settings_view(
             model.secure_ui_operation,
             Some(SecureUiOperation::ChangeMasterPassword)
         ) {
-            return "0% · Проверяем зашифрованные файлы…".to_owned();
+            return tr!(CheckingEncrypted);
         }
         signals
             .encryption_feedback
             .get()
-            .map(|feedback| feedback.message)
+            .map(|feedback| feedback.message.to_string())
             .unwrap_or_default()
     })
     .style(move |style| {
@@ -5867,7 +6039,7 @@ fn encryption_settings_view(
         status,
     ))
     .style(move |style| {
-        style
+        rtl_column(style)
             .width_full()
             .max_width(720.0)
             .gap(14.0)
@@ -5880,19 +6052,24 @@ fn encryption_settings_view(
 
     scroll(
         v_stack((
-            text("Шифрование").style(move |style| {
+            label(move || tr!(Encryption)).style(move |style| {
                 style
                     .font_size(26.0)
                     .font_weight(floem::text::Weight::SEMIBOLD)
                     .color(palette.ink)
             }),
             empty().style(|style| style.height(7.0)),
-            text("Смена мастер-пароля для текущей рабочей папки.")
+            label(move || tr!(ChangePasswordDescription))
                 .style(move |style| style.font_size(13.5).color(palette.muted)),
             empty().style(|style| style.height(28.0)),
             card,
         ))
-        .style(|style| style.width_full().padding_horiz(44.0).padding_vert(38.0)),
+        .style(|style| {
+            rtl_column(style)
+                .width_full()
+                .padding_horiz(44.0)
+                .padding_vert(38.0)
+        }),
     )
     .style(move |style| {
         style
@@ -5906,7 +6083,7 @@ fn encryption_settings_view(
 fn encryption_password_field(
     signals: SettingsPageSignals,
     field: EncryptionField,
-    placeholder: &'static str,
+    placeholder: i18n::Key,
     model: Rc<RefCell<AppModel>>,
     field_ids: Rc<Cell<Option<EncryptionFieldIds>>>,
     revision: RwSignal<u64>,
@@ -5917,7 +6094,7 @@ fn encryption_password_field(
         signals.encryption_entry.with(|entry| {
             let length = entry.field(field).chars().count();
             if length == 0 {
-                placeholder.to_owned()
+                placeholder.to_string()
             } else {
                 "•".repeat(length)
             }
@@ -5961,7 +6138,7 @@ fn encryption_password_field(
                     signals.encryption_feedback.set(None);
                 } else {
                     signals.encryption_feedback.set(Some(SettingsFeedback {
-                        message: format!("Пароль не может превышать {MAX_PASSWORD_BYTES} байт"),
+                        message: msg!(PasswordTooLong , "maximum" => MAX_PASSWORD_BYTES).into(),
                         is_error: true,
                     }));
                 }
@@ -6008,7 +6185,7 @@ fn encryption_password_field(
                     match Clipboard::get_contents() {
                         Ok(value) => append(&value),
                         Err(_) => signals.encryption_feedback.set(Some(SettingsFeedback {
-                            message: "Не удалось вставить пароль из буфера обмена".to_owned(),
+                            message: msg!(PastePasswordFailed).into(),
                             is_error: true,
                         })),
                     }
@@ -6084,12 +6261,9 @@ fn password_change_recovery_modal(
     let retry_model = model.clone();
     let error_model = model.clone();
     let card = v_stack((
-        text("Нужно завершить восстановление шифрования")
-            .style(|style| style.font_size(18.0)),
-        text(
-            "Notrum обнаружил незавершённую смену мастер-пароля. Заметки не будут открыты, пока состояние файлов нельзя безопасно подтвердить.",
-        )
-        .style(move |style| style.font_size(13.0).line_height(1.4).color(palette.muted)),
+        label(move || tr!(EncryptionRecoveryRequired)).style(|style| style.font_size(18.0)),
+        text(msg!(EncryptionRecoveryDescription))
+            .style(move |style| style.font_size(13.0).line_height(1.4).color(palette.muted)),
         label(move || {
             revision.get();
             error_model.borrow().error.clone().unwrap_or_default()
@@ -6098,7 +6272,7 @@ fn password_change_recovery_modal(
         h_stack((
             empty().style(|style| style.flex_grow(1.0)),
             text_button(
-                "Повторить восстановление",
+                msg!(RetryRecovery),
                 IconButtonTone::Primary,
                 palette,
                 move || {
@@ -6166,7 +6340,7 @@ fn integrity_modal(
             let restore_disabled_model = model.clone();
             let error_model = model.clone();
             let error_visibility_model = model.clone();
-            let retry = text_button("Повторить", IconButtonTone::Primary, palette, move || {
+            let retry = text_button(msg!(Retry), IconButtonTone::Primary, palette, move || {
                 retry_model
                     .borrow_mut()
                     .start_integrity_resolution(IntegrityResolution::Retry);
@@ -6176,17 +6350,12 @@ fn integrity_modal(
                 revision.get();
                 retry_disabled_model.borrow().secure_worker_active
             });
-            let restore = text_button(
-                "Восстановить",
-                IconButtonTone::Danger,
-                palette,
-                move || {
-                    restore_model
-                        .borrow_mut()
-                        .start_integrity_resolution(IntegrityResolution::Restore);
-                    revision.update(|value| *value += 1);
-                },
-            )
+            let restore = text_button(msg!(Restore), IconButtonTone::Danger, palette, move || {
+                restore_model
+                    .borrow_mut()
+                    .start_integrity_resolution(IntegrityResolution::Restore);
+                revision.update(|value| *value += 1);
+            })
             .disabled(move || {
                 revision.get();
                 restore_disabled_model.borrow().secure_worker_active
@@ -6206,22 +6375,15 @@ fn integrity_modal(
             });
             let card = v_stack((
                 v_stack((
-                    text("Не удалось проверить сохранение").style(|style| style.font_size(18.0)),
-                    text(
-                        "Предыдущая зашифрованная версия сохранена отдельно. Повторите запись или восстановите её.",
-                    )
-                    .style(move |style| {
+                    label(move || tr!(VerifySaveFailed)).style(|style| style.font_size(18.0)),
+                    text(msg!(PreviousEncryptedVersion)).style(move |style| {
                         style.font_size(13.0).line_height(1.4).color(palette.muted)
                     }),
                 ))
                 .style(|style| style.width_full().gap(6.0)),
                 error,
-                h_stack((
-                    empty().style(|style| style.flex_grow(1.0)),
-                    restore,
-                    retry,
-                ))
-                .style(|style| style.width_full().items_center().gap(8.0)),
+                h_stack((empty().style(|style| style.flex_grow(1.0)), restore, retry))
+                    .style(|style| style.width_full().items_center().gap(8.0)),
             ))
             .style(move |style| {
                 style
@@ -6299,26 +6461,26 @@ fn password_dialog_card(
 ) -> impl IntoView {
     let is_setup = kind == PasswordDialogKind::SetupProtection;
     let title = match kind {
-        PasswordDialogKind::SetupProtection => "Создать мастер-пароль",
-        PasswordDialogKind::ExistingProtection => "Подтвердить мастер-пароль",
+        PasswordDialogKind::SetupProtection => msg!(CreateMasterPassword),
+        PasswordDialogKind::ExistingProtection => msg!(ConfirmMasterPassword),
         PasswordDialogKind::Unlock { .. } | PasswordDialogKind::UnlockForRecovery { .. } => {
-            "Разблокировать заметку"
+            msg!(UnlockNote)
         }
     };
     let confirm_label = match kind {
-        PasswordDialogKind::SetupProtection => "Создать",
-        PasswordDialogKind::ExistingProtection => "Подтвердить",
+        PasswordDialogKind::SetupProtection => msg!(Create),
+        PasswordDialogKind::ExistingProtection => msg!(Confirm),
         PasswordDialogKind::Unlock { .. } | PasswordDialogKind::UnlockForRecovery { .. } => {
-            "Разблокировать"
+            msg!(Unlock)
         }
     };
     let detail = match kind {
         PasswordDialogKind::SetupProtection => {
-            "Пароль защищает эту и следующие зашифрованные заметки."
+            msg!(PasswordProtectsNotes)
         }
-        PasswordDialogKind::ExistingProtection => "Введите пароль существующих защищённых заметок.",
+        PasswordDialogKind::ExistingProtection => msg!(ExistingPasswordPrompt),
         PasswordDialogKind::Unlock { .. } | PasswordDialogKind::UnlockForRecovery { .. } => {
-            "Введите мастер-пароль для этой заметки."
+            msg!(NotePasswordPrompt)
         }
     };
 
@@ -6389,7 +6551,7 @@ fn password_dialog_card(
                 .chars()
                 .count();
             if len == 0 {
-                "Введите пароль".to_owned()
+                tr!(EnterPassword)
             } else {
                 "•".repeat(len)
             }
@@ -6511,7 +6673,7 @@ fn password_dialog_card(
                 .chars()
                 .count();
             if len == 0 {
-                "Повторите пароль".to_owned()
+                tr!(RepeatPassword)
             } else {
                 "•".repeat(len)
             }
@@ -6656,19 +6818,17 @@ fn password_dialog_card(
     let submit_security = security.clone();
     let submit_busy = security.busy;
     let submit_model = model.clone();
-    let warning = text("Пароль нельзя восстановить. Храните его отдельно от workspace.").style(
-        move |style| {
-            let style = style
-                .width_full()
-                .padding(10.0)
-                .background(Color::rgb8(250, 246, 235))
-                .color(Color::rgb8(114, 89, 42))
-                .border_radius(6.0)
-                .font_size(12.0)
-                .line_height(1.35);
-            if is_setup { style } else { style.hide() }
-        },
-    );
+    let warning = label(move || tr!(PasswordWarning)).style(move |style| {
+        let style = style
+            .width_full()
+            .padding(10.0)
+            .background(Color::rgb8(250, 246, 235))
+            .color(Color::rgb8(114, 89, 42))
+            .border_radius(6.0)
+            .font_size(12.0)
+            .line_height(1.35);
+        if is_setup { style } else { style.hide() }
+    });
     let card = v_stack((
         v_stack((
             text(title).style(|style| style.font_size(18.0)),
@@ -6681,7 +6841,7 @@ fn password_dialog_card(
         h_stack((
             empty().style(|style| style.flex_grow(1.0)),
             password_dialog_button(
-                "Отмена",
+                msg!(Cancel),
                 IconButtonTone::Secondary,
                 palette,
                 move || cancel_busy.get(),
@@ -6804,7 +6964,7 @@ fn handle_password_key(
             security.entry.borrow_mut().active = field;
             match Clipboard::get_contents() {
                 Ok(value) => append_password_value(security, &value),
-                Err(_) => security.set_error("Не удалось вставить пароль из буфера обмена"),
+                Err(_) => security.set_error(msg!(PastePasswordFailed)),
             }
             security.entry_revision.update(|value| *value += 1);
         }
@@ -6835,9 +6995,7 @@ fn append_password_value(security: &SecurityUi, value: &str) {
     if security.entry.borrow_mut().push(value) {
         security.clear_feedback();
     } else {
-        security.set_error(format!(
-            "Пароль не может превышать {MAX_PASSWORD_BYTES} байт"
-        ));
+        security.set_error(msg!(PasswordTooLong , "maximum" => MAX_PASSWORD_BYTES));
     }
 }
 
@@ -6853,7 +7011,7 @@ fn submit_password_dialog(
     {
         let entry = security.entry.borrow();
         if entry.primary.is_empty() {
-            security.set_error("Введите мастер-пароль");
+            security.set_error(msg!(EnterMasterPassword));
             return Some(PasswordField::Primary);
         }
         if kind == PasswordDialogKind::SetupProtection
@@ -6864,7 +7022,7 @@ fn submit_password_dialog(
             entry.confirmation.zeroize();
             entry.active = PasswordField::Confirmation;
             drop(entry);
-            security.set_error("Пароли не совпадают");
+            security.set_error(msg!(PasswordsMismatch));
             security.entry_revision.update(|value| *value += 1);
             return Some(PasswordField::Confirmation);
         }
@@ -6878,7 +7036,7 @@ fn submit_password_dialog(
     );
     if keeps_dialog_open {
         security.busy.set(true);
-        security.set_status("Проверяем мастер-пароль…");
+        security.set_status(msg!(CheckingPassword));
         security.entry_revision.update(|value| *value += 1);
     }
 
@@ -7469,6 +7627,22 @@ impl AnchoredPopover {
     }
 }
 
+fn popover_left(
+    origin: f64,
+    trigger: f64,
+    width: f64,
+    window: f64,
+    align_start: bool,
+    rtl: bool,
+) -> f64 {
+    let left = if align_start != rtl {
+        origin
+    } else {
+        origin + trigger - width
+    };
+    left.clamp(8.0, (window - width - 8.0).max(8.0))
+}
+
 impl View for AnchoredPopover {
     fn id(&self) -> ViewId {
         self.id
@@ -7489,11 +7663,21 @@ impl View for AnchoredPopover {
                     return;
                 };
                 let layout = self.id.get_layout().unwrap_or_default();
-                let left = if self.align_start {
-                    origin.x.max(8.0)
-                } else {
-                    (origin.x + f64::from(layout.size.width) - self.width).max(8.0)
-                };
+                let mut root = self.id;
+                while let Some(parent) = root.parent() {
+                    root = parent;
+                }
+                let window_width = root
+                    .get_layout()
+                    .map_or(860.0, |layout| f64::from(layout.size.width));
+                let left = popover_left(
+                    origin.x,
+                    f64::from(layout.size.width),
+                    self.width,
+                    window_width,
+                    self.align_start,
+                    i18n::current().is_rtl(),
+                );
                 let top = origin.y + f64::from(layout.size.height) + self.gap;
                 let content = self.content.clone();
                 let dismiss_layer = add_overlay(Point::new(0.0, 0.0), move |_| {
@@ -8064,7 +8248,7 @@ fn sidebar_rows<'a>(
     push_sidebar_group(
         &mut rows,
         favorites.clone(),
-        "Избранное",
+        &tr!(Favorites),
         matching_tag_indices(notes.iter().copied(), &favorites),
         state,
     );
@@ -8078,7 +8262,7 @@ fn sidebar_rows<'a>(
     push_sidebar_group(
         &mut rows,
         all.clone(),
-        "Все",
+        &tr!(All),
         matching_tag_indices(notes.iter().copied(), &all),
         state,
     );
@@ -8086,7 +8270,7 @@ fn sidebar_rows<'a>(
     push_sidebar_group(
         &mut rows,
         trash.clone(),
-        "Корзина",
+        &tr!(Trash),
         matching_tag_indices(notes.iter().copied(), &trash),
         state,
     );
@@ -8726,7 +8910,7 @@ fn activate_sidebar_group(
 }
 
 fn sort_choice_row(
-    title: &'static str,
+    title: i18n::Message,
     selected: impl Fn() -> bool + 'static,
     on_press: impl Fn() + 'static,
     palette: Palette,
@@ -8772,7 +8956,7 @@ fn sort_choice_row(
 }
 
 fn protection_menu_row(
-    title: &'static str,
+    title: i18n::Message,
     danger: bool,
     palette: Palette,
     on_press: impl Fn() + 'static,
@@ -8811,14 +8995,14 @@ fn external_file_picker_spec(extensions: Vec<String>) -> Option<FileSpec> {
         .map(|extension| Box::leak(extension.into_boxed_str()) as &'static str)
         .collect::<Vec<_>>();
     Some(FileSpec {
-        name: "Поддерживаемые файлы",
+        name: i18n::static_filter_name(),
         extensions: Box::leak(extensions.into_boxed_slice()),
     })
 }
 
 fn creation_menu_row(
     icon: &'static str,
-    title: &'static str,
+    title: i18n::Message,
     enabled: bool,
     palette: Palette,
     on_press: impl Fn() + 'static,
@@ -8875,7 +9059,7 @@ fn creation_popover(
 ) -> impl IntoView {
     let rss_mode = create_rw_signal(false);
     let rss_url = create_rw_signal(String::new());
-    let rss_error = create_rw_signal(None::<String>);
+    let rss_error = create_rw_signal(None::<UiText>);
     dyn_container(
         move || rss_mode.get(),
         move |show_rss| {
@@ -8932,31 +9116,32 @@ fn creation_choices(
     picker_active: RwSignal<bool>,
     file_spec: Option<FileSpec>,
     rss_mode: RwSignal<bool>,
-    rss_error: RwSignal<Option<String>>,
+    rss_error: RwSignal<Option<UiText>>,
     palette: Palette,
 ) -> impl IntoView {
     let note_model = model.clone();
     let file_model = model;
     let file_enabled = file_spec.is_some();
     v_stack((
-        creation_menu_row(ICON_NOTE, "Заметка", true, palette, move || {
+        creation_menu_row(ICON_NOTE, msg!(Note), true, palette, move || {
             open.set(false);
             let active = sidebar_state.get_untracked().creation_group;
             note_model.borrow_mut().request_note_creation(active);
             revision.update(|value| *value += 1);
             schedule_autosave(note_model.clone(), revision);
         }),
-        creation_menu_row(ICON_FILE, "Файл", file_enabled, palette, move || {
+        creation_menu_row(ICON_FILE, msg!(File), file_enabled, palette, move || {
             open.set(false);
-            let Some(file_spec) = file_spec else {
+            let Some(mut file_spec) = file_spec else {
                 return;
             };
             if picker_active.get_untracked() {
                 return;
             }
             picker_active.set(true);
+            file_spec.name = i18n::static_filter_name();
             let options = FileDialogOptions::new()
-                .title("Выберите внешний файл")
+                .title(tr!(ChooseExternal))
                 .allowed_types(vec![file_spec]);
             let selected_model = file_model.clone();
             open_file(options, move |selection| {
@@ -8969,7 +9154,7 @@ fn creation_choices(
                 schedule_autosave(selected_model.clone(), revision);
             });
         }),
-        creation_menu_row(ICON_RSS, "RSS лента", true, palette, move || {
+        creation_menu_row(ICON_RSS, msg!(RssFeed), true, palette, move || {
             rss_error.set(None);
             rss_mode.set(true);
         }),
@@ -8985,7 +9170,7 @@ fn rss_creation_form(
     open: RwSignal<bool>,
     rss_mode: RwSignal<bool>,
     rss_url: RwSignal<String>,
-    rss_error: RwSignal<Option<String>>,
+    rss_error: RwSignal<Option<UiText>>,
     palette: Palette,
 ) -> impl IntoView {
     let rss_submit_model = model;
@@ -9042,7 +9227,7 @@ fn rss_creation_form(
                 .color(palette.accent)
                 .flex_shrink(0.0)
         }),
-        text("RSS лента").style(move |style| {
+        label(move || tr!(RssFeed)).style(move |style| {
             style
                 .font_size(13.0)
                 .font_weight(floem::text::Weight::SEMIBOLD)
@@ -9066,7 +9251,7 @@ fn rss_creation_form(
                         .selectable(false)
                 })
                 .into_any(),
-            None => text("Ссылка на RSS или Atom")
+            None => label(move || tr!(FeedLink))
                 .style(move |style| {
                     style
                         .width_full()
@@ -9085,7 +9270,7 @@ fn rss_creation_form(
     });
     let footer = h_stack((
         reliable_button(
-            text("Назад").style(|style| style.font_size(12.5).selectable(false)),
+            label(move || tr!(Back)).style(|style| style.font_size(12.5).selectable(false)),
             move || {
                 rss_mode.set(false);
                 rss_error.set(None);
@@ -9107,7 +9292,7 @@ fn rss_creation_form(
         }),
         empty().style(|style| style.flex_grow(1.0)),
         reliable_button(
-            text("Добавить").style(|style| style.font_size(12.5).selectable(false)),
+            label(move || tr!(Add)).style(|style| style.font_size(12.5).selectable(false)),
             move || button_submit(),
         )
         .disabled(move || submit_enabled.get().trim().is_empty())
@@ -9150,28 +9335,18 @@ fn protection_popover(
     let lock_model = model.clone();
     let disable_model = model;
     v_stack((
-        protection_menu_row(
-            "Заблокировать заметку",
-            false,
-            palette,
-            move || {
-                open.set(false);
-                lock_model.borrow_mut().lock_selected();
-                revision.update(|value| *value += 1);
-                schedule_autosave(lock_model.clone(), revision);
-            },
-        ),
-        protection_menu_row(
-            "Снять шифрование",
-            true,
-            palette,
-            move || {
-                open.set(false);
-                disable_model.borrow_mut().disable_protection_selected();
-                revision.update(|value| *value += 1);
-                schedule_autosave(disable_model.clone(), revision);
-            },
-        ),
+        protection_menu_row(msg!(LockNote), false, palette, move || {
+            open.set(false);
+            lock_model.borrow_mut().lock_selected();
+            revision.update(|value| *value += 1);
+            schedule_autosave(lock_model.clone(), revision);
+        }),
+        protection_menu_row(msg!(RemoveEncryption), true, palette, move || {
+            open.set(false);
+            disable_model.borrow_mut().disable_protection_selected();
+            revision.update(|value| *value += 1);
+            schedule_autosave(disable_model.clone(), revision);
+        }),
     ))
     .style(move |style| {
         style
@@ -9207,23 +9382,23 @@ fn sidebar_sort_popover(
     let apply_scope = scope;
     let apply_model = model;
     v_stack((
-        text("Сортировка заметок")
+        label(move || tr!(SortNotes))
             .style(move |style| style.font_size(13.0).color(palette.ink).selectable(false)),
         v_stack((
             sort_choice_row(
-                "По имени",
+                msg!(ByName),
                 move || name_field.get() == NoteSortField::Name,
                 move || field.set(NoteSortField::Name),
                 palette,
             ),
             sort_choice_row(
-                "По дате создания",
+                msg!(ByCreated),
                 move || created_field.get() == NoteSortField::Created,
                 move || field.set(NoteSortField::Created),
                 palette,
             ),
             sort_choice_row(
-                "По дате обновления",
+                msg!(ByUpdated),
                 move || modified_field.get() == NoteSortField::Modified,
                 move || field.set(NoteSortField::Modified),
                 palette,
@@ -9239,46 +9414,41 @@ fn sidebar_sort_popover(
         }),
         v_stack((
             sort_choice_row(
-                "По возрастанию",
+                msg!(Ascending),
                 move || ascending_direction.get() == SortDirection::Ascending,
                 move || direction.set(SortDirection::Ascending),
                 palette,
             ),
             sort_choice_row(
-                "По убыванию",
+                msg!(Descending),
                 move || descending_direction.get() == SortDirection::Descending,
                 move || direction.set(SortDirection::Descending),
                 palette,
             ),
         ))
         .style(|style| style.width_full().gap(2.0)),
-        text_button(
-            "Применить",
-            IconButtonTone::Primary,
-            palette,
-            move || {
-                let cleared = apply_model
-                    .borrow_mut()
-                    .clear_sidebar_note_order(&apply_scope);
-                if cleared.is_none() {
-                    revision.update(|value| *value = value.saturating_add(1));
-                    return;
-                }
-                if let Some(order_key) = sidebar_note_order_key(&apply_scope) {
-                    sidebar_state.update(|state| {
-                        state.set_note_sort(
-                            order_key.to_owned(),
-                            NoteSort {
-                                field: field.get_untracked(),
-                                direction: direction.get_untracked(),
-                            },
-                        );
-                    });
-                }
-                open.set(false);
+        text_button(msg!(Apply), IconButtonTone::Primary, palette, move || {
+            let cleared = apply_model
+                .borrow_mut()
+                .clear_sidebar_note_order(&apply_scope);
+            if cleared.is_none() {
                 revision.update(|value| *value = value.saturating_add(1));
-            },
-        ),
+                return;
+            }
+            if let Some(order_key) = sidebar_note_order_key(&apply_scope) {
+                sidebar_state.update(|state| {
+                    state.set_note_sort(
+                        order_key.to_owned(),
+                        NoteSort {
+                            field: field.get_untracked(),
+                            direction: direction.get_untracked(),
+                        },
+                    );
+                });
+            }
+            open.set(false);
+            revision.update(|value| *value = value.saturating_add(1));
+        }),
     ))
     .style(move |style| {
         style
@@ -9361,14 +9531,22 @@ fn sidebar_group_row(
                 style.hide()
             }
         }),
-        svg(ICON_CHEVRON_RIGHT).style(move |style| {
-            let style = style.size(13.0, 13.0);
-            if sidebar_state.get().is_expanded(&collapsed_filter) {
-                style.hide()
-            } else {
-                style
-            }
-        }),
+        svg(ICON_CHEVRON_RIGHT)
+            .update_value(move || {
+                if i18n::current().is_rtl() {
+                    ICON_BACK
+                } else {
+                    ICON_CHEVRON_RIGHT
+                }
+            })
+            .style(move |style| {
+                let style = style.size(13.0, 13.0);
+                if sidebar_state.get().is_expanded(&collapsed_filter) {
+                    style.hide()
+                } else {
+                    style
+                }
+            }),
     ))
     .style(move |style| {
         style
@@ -9377,9 +9555,16 @@ fn sidebar_group_row(
             .color(palette.sidebar_muted)
     });
     let style_path = category_path.clone();
+    let title_filter = filter.clone();
     let row = h_stack((
         chevron,
-        text(title).style(move |style| {
+        label(move || match &title_filter {
+            SidebarFilter::All => tr!(All),
+            SidebarFilter::Favorites => tr!(Favorites),
+            SidebarFilter::Trash => tr!(Trash),
+            SidebarFilter::Tag(_) => title.clone(),
+        })
+        .style(move |style| {
             style
                 .font_size(14.0)
                 .color(palette.sidebar_ink)
@@ -9398,7 +9583,13 @@ fn sidebar_group_row(
                 .selectable(false)
         }),
     ))
-    .style(|style| style.width_full().min_width(0.0).items_center().gap(8.0))
+    .style(|style| {
+        rtl_row(style)
+            .width_full()
+            .min_width(0.0)
+            .items_center()
+            .gap(8.0)
+    })
     .style(move |style| {
         let indent = sidebar_tree_indent(depth);
         let mut style = style
@@ -9499,7 +9690,7 @@ fn external_group_row(count: usize, palette: Palette) -> AnyView {
                 .flex_shrink(0.0)
                 .color(palette.sidebar_muted)
         }),
-        text("Внешние").style(move |style| {
+        label(move || tr!(External)).style(move |style| {
             style
                 .font_size(14.0)
                 .color(palette.sidebar_ink)
@@ -9514,7 +9705,7 @@ fn external_group_row(count: usize, palette: Palette) -> AnyView {
         }),
     ))
     .style(move |style| {
-        style
+        rtl_row(style)
             .width_full()
             .height(SIDEBAR_GROUP_ROW_HEIGHT_PX)
             .items_center()
@@ -9543,14 +9734,14 @@ fn external_file_row(
     let selected_model = model;
     let selected_target = target;
     let is_ready = matches!(file.availability, notrum_core::ItemAvailability::Ready);
-    let tooltip = match &file.availability {
-        notrum_core::ItemAvailability::Ready => file.path.display().to_string(),
+    let tooltip: UiText = match &file.availability {
+        notrum_core::ItemAvailability::Ready => file.path.display().to_string().into(),
         notrum_core::ItemAvailability::NeedsUnlock => {
-            format!("{}\nФайл заблокирован", file.path.display())
+            msg!(FileLocked , "value" => file.path.display().to_string()).into()
         }
         notrum_core::ItemAvailability::Invalid(message)
         | notrum_core::ItemAvailability::Unavailable(message) => {
-            format!("{}\n{message}", file.path.display())
+            format!("{}\n{message}", file.path.display()).into()
         }
     };
     let main = reliable_button(
@@ -9570,14 +9761,20 @@ fn external_file_row(
                     .selectable(false)
             }),
         ))
-        .style(|style| style.min_width(0.0).items_center().gap(7.0).flex_grow(1.0)),
+        .style(|style| {
+            rtl_row(style)
+                .min_width(0.0)
+                .items_center()
+                .gap(7.0)
+                .flex_grow(1.0)
+        }),
         move || {
             open_model.borrow_mut().open_external_path(&open_path);
             revision.update(|value| *value = value.saturating_add(1));
             schedule_autosave(open_model.clone(), revision);
         },
     )
-    .tooltip(move || tooltip_label(tooltip.clone(), palette))
+    .tooltip(move || tooltip_label(tooltip.to_string(), palette))
     .style(|style| style.min_width(0.0).flex_grow(1.0).height_full());
     let close = reliable_button(
         svg(ICON_CANCEL).style(|style| style.size(13.0, 13.0)),
@@ -9589,7 +9786,7 @@ fn external_file_row(
             schedule_autosave(close_model.clone(), revision);
         },
     )
-    .tooltip(move || tooltip_label("Убрать из боковой панели".to_owned(), palette))
+    .tooltip(move || tooltip_label(tr!(RemoveSidebar), palette))
     .style(move |style| {
         style
             .size(22.0, 22.0)
@@ -9619,12 +9816,12 @@ fn external_file_row(
                 .and_then(WorkspaceSession::selected_target)
                 .as_ref()
                 == Some(&selected_target);
-            style
+            rtl_row(style)
                 .width_full()
                 .height(SIDEBAR_NOTE_ROW_HEIGHT_PX)
                 .items_center()
-                .padding_left(30.0)
-                .padding_right(5.0)
+                .padding_left(if i18n::current().is_rtl() { 5.0 } else { 30.0 })
+                .padding_right(if i18n::current().is_rtl() { 30.0 } else { 5.0 })
                 .gap(4.0)
                 .background(if selected {
                     palette.accent
@@ -9684,7 +9881,7 @@ fn sidebar_note_row(
         // Navigation labels never own text selection: a selectable label
         // keeps a pending selection when a modal steals its pointer-up and
         // then captures the next click anywhere in the window.
-        text(note.title).style(move |style| {
+        text(note_caption(&note)).style(move |style| {
             style
                 .font_size(13.5)
                 .color(if is_ready {
@@ -9737,12 +9934,20 @@ fn sidebar_note_row(
                 palette.sidebar_muted,
             )
         };
-        let mut style = style
+        let mut style = rtl_row(style)
             .width_full()
             .height(SIDEBAR_NOTE_ROW_HEIGHT_PX)
             .items_center()
-            .padding_left(30.0 + sidebar_tree_indent(depth))
-            .padding_right(8.0)
+            .padding_left(if i18n::current().is_rtl() {
+                8.0
+            } else {
+                30.0 + sidebar_tree_indent(depth)
+            })
+            .padding_right(if i18n::current().is_rtl() {
+                30.0 + sidebar_tree_indent(depth)
+            } else {
+                8.0
+            })
             .background(background)
             .color(foreground)
             .border_radius(6.0)
@@ -9904,7 +10109,7 @@ fn rss_sidebar_row(
                 .as_ref()
                 .and_then(WorkspaceSession::selected_rss)
                 == Some(&selected_id);
-            let mut style = style
+            let mut style = rtl_row(style)
                 .width_full()
                 .height(SIDEBAR_NOTE_ROW_HEIGHT_PX)
                 .min_width(0.0)
@@ -10024,9 +10229,9 @@ fn rss_sidebar_row(
     .into_any()
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct SettingsFeedback {
-    message: String,
+    message: UiText,
     is_error: bool,
 }
 
@@ -10160,7 +10365,16 @@ fn sidebar_resize_handle(sidebar_width: RwSignal<f64>, palette: Palette) -> impl
     .style(|style| {
         style
             .absolute()
-            .inset_right(0.0)
+            .inset_right(if i18n::current().is_rtl() {
+                floem::unit::PxPctAuto::Auto
+            } else {
+                floem::unit::PxPctAuto::Px(0.0)
+            })
+            .inset_left(if i18n::current().is_rtl() {
+                floem::unit::PxPctAuto::Px(0.0)
+            } else {
+                floem::unit::PxPctAuto::Auto
+            })
             .width(8.0)
             .height_full()
             .cursor(CursorStyle::ColResize)
@@ -10211,7 +10425,11 @@ impl View for SidebarResizeView {
                 if let Some(grab_x) = self.grab_x.get_untracked() {
                     let width = resized_sidebar_width(
                         self.sidebar_width.get_untracked(),
-                        pointer.pos.x,
+                        if i18n::current().is_rtl() {
+                            2.0 * grab_x - pointer.pos.x
+                        } else {
+                            pointer.pos.x
+                        },
                         grab_x,
                     );
                     self.sidebar_width.set(width);
@@ -10538,7 +10756,7 @@ fn sidebar_panel(
         .and_then(|workspace| external_file_picker_spec(workspace.external_file_extensions()));
     let create_trigger = icon_button(
         ICON_CREATE,
-        || "Создать заметку или открыть файл".to_owned(),
+        || tr!(CreateOrOpen),
         IconButtonTone::Primary,
         palette,
         move || create_menu_open.set(!create_menu_open.get_untracked()),
@@ -10565,7 +10783,7 @@ fn sidebar_panel(
     let header = h_stack((
         icon_button(
             ICON_SEARCH,
-            || "Поиск по заметкам (⌘K)".to_owned(),
+            || tr!(SearchShortcut),
             IconButtonTone::Sidebar,
             palette,
             move || {
@@ -10576,13 +10794,19 @@ fn sidebar_panel(
         create_action,
         icon_button(
             ICON_SETTINGS,
-            || "Настройки".to_owned(),
+            || tr!(Settings),
             IconButtonTone::Sidebar,
             palette,
             move || open_settings(),
         ),
     ))
-    .style(|style| style.width_full().height(32.0).items_center().gap(6.0));
+    .style(|style| {
+        rtl_row(style)
+            .width_full()
+            .height(32.0)
+            .items_center()
+            .gap(6.0)
+    });
 
     let search_rows_state_model = model.clone();
     let search_rows_view_model = model.clone();
@@ -10602,9 +10826,9 @@ fn sidebar_panel(
             let row_model = search_rows_view_model.clone();
             let relative_path = result.relative_path.clone();
             let kind = match result.match_kind {
-                MatchKind::Title => "Название",
-                MatchKind::Tag => "Тег",
-                MatchKind::Body => "Текст",
+                MatchKind::Title => msg!(Title),
+                MatchKind::Tag => msg!(Tag),
+                MatchKind::Body => msg!(Body),
             };
             let detail = if result.snippet.is_empty() {
                 result.tags.join(" · ")
@@ -10674,8 +10898,7 @@ fn sidebar_panel(
     .style(|style| style.flex_col().gap(2.0).width_full());
     let search_input_model = model.clone();
     let search_key_model = model.clone();
-    let search_input = text_input(search_query)
-        .placeholder("Поиск в заметках")
+    let search_input = localized_input::LocalizedInput::new(search_query, i18n::Key::SearchNotes)
         .style(move |style| {
             text_input_affordance(style, palette.sidebar_muted, palette.sidebar_accent)
                 .min_width(0.0)
@@ -10741,7 +10964,7 @@ fn sidebar_panel(
     let retry_search_state_model = search_input_model.clone();
     let search_retry = icon_button(
         ICON_RETRY,
-        || "Перестроить поисковый индекс".to_owned(),
+        || tr!(RebuildSearch),
         IconButtonTone::Sidebar,
         palette,
         move || {
@@ -10750,7 +10973,7 @@ fn sidebar_panel(
                 model.search_indexing = true;
                 model.search_error = None;
             } else {
-                model.search_error = Some("поисковый индекс остановлен".to_owned());
+                model.search_error = Some((msg!(SearchStopped)).into());
             }
             revision.update(|value| *value += 1);
         },
@@ -10768,7 +10991,7 @@ fn sidebar_panel(
         search_retry,
         icon_button(
             ICON_CANCEL,
-            || "Закрыть поиск".to_owned(),
+            || tr!(CloseSearch),
             IconButtonTone::Sidebar,
             palette,
             move || {
@@ -10793,13 +11016,13 @@ fn sidebar_panel(
         revision.get();
         let model = search_status_model.borrow();
         if model.search_indexing {
-            "Индексируем заметки…".to_owned()
+            tr!(Indexing)
         } else if model.search_error.is_some() {
-            "Поиск временно недоступен".to_owned()
+            tr!(SearchTemporarilyUnavailable)
         } else if search_query.get().trim().is_empty() {
-            "Введите название, тег или текст".to_owned()
+            tr!(SearchPrompt)
         } else if model.search_results.is_empty() {
-            "Ничего не найдено".to_owned()
+            tr!(NoResults)
         } else {
             String::new()
         }
@@ -11127,15 +11350,15 @@ fn rss_panel(
         rename: ToolbarEditBar {
             open: create_rw_signal(false),
             value: create_rw_signal(String::new()),
-            label: "Новое название",
-            placeholder: "Название ленты",
+            label: i18n::Key::NewTitle,
+            placeholder: i18n::Key::FeedTitle,
             field_width: RSS_RENAME_FIELD_WIDTH_PX,
         },
         categories: ToolbarEditBar {
             open: create_rw_signal(false),
             value: create_rw_signal(String::new()),
-            label: "Категории через запятую",
-            placeholder: "Работа, Новости/Технологии",
+            label: i18n::Key::CategoriesPlaceholder,
+            placeholder: i18n::Key::CategoriesExample,
             field_width: RSS_CATEGORIES_FIELD_WIDTH_PX,
         },
     };
@@ -11146,7 +11369,7 @@ fn rss_panel(
         revision.get();
         rss_subscription_summary(&title_model, &title_id)
             .map(|summary| summary.display_title)
-            .unwrap_or_else(|| "RSS лента".to_owned())
+            .unwrap_or_else(|| tr!(RssFeed))
     })
     .style(move |style| {
         style
@@ -11275,24 +11498,22 @@ fn rss_panel(
                 0.42
             };
             let ink = rss_card::faded_ink(Color::rgb8(51, 51, 51), palette.paper, alpha);
-            let date = rss_card::date_label(
-                card.entry
-                    .published
-                    .as_deref()
-                    .or(card.entry.updated.as_deref()),
-            );
-            let metadata = [
-                card.entry
-                    .author
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|author| !author.is_empty()),
-                (!date.is_empty()).then_some(date.as_str()),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
+            let published = card.entry.published.clone().or(card.entry.updated.clone());
+            let author = card.entry.author.clone();
+            let metadata = move || {
+                let date = rss_card::date_label(published.as_deref());
+                [
+                    author
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|author| !author.is_empty()),
+                    (!date.is_empty()).then_some(date.as_str()),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ")
+            };
             let summary_layout = excerpt.layout(ink);
             let select_entry = Rc::new(move || {
                 let selected = select_model.borrow_mut().select_rss_entry(&entry_id);
@@ -11307,8 +11528,9 @@ fn rss_panel(
                     card.entry.title.clone(),
                     move || {
                         if select_title() {
-                            open_model.borrow_mut().error =
-                                open_rss_original(&url).err().map(|error| error.to_string());
+                            open_model.borrow_mut().error = open_rss_original(&url)
+                                .err()
+                                .map(|error| error.to_string().into());
                             revision.update(|value| *value = value.saturating_add(1));
                         }
                     },
@@ -11323,19 +11545,21 @@ fn rss_panel(
             let view = v_stack((
                 title,
                 h_stack((
-                    text(metadata).pointer_events(|| false).style(move |style| {
-                        style
-                            .min_width(0.0)
-                            .flex_grow(1.0)
-                            .font_size(14.0)
-                            .line_height(1.4)
-                            .font_family("sans-serif".to_owned())
-                            .color(rss_card::faded_ink(
-                                Color::rgb8(153, 153, 153),
-                                palette.paper,
-                                alpha,
-                            ))
-                    }),
+                    label(metadata)
+                        .pointer_events(|| false)
+                        .style(move |style| {
+                            style
+                                .min_width(0.0)
+                                .flex_grow(1.0)
+                                .font_size(14.0)
+                                .line_height(1.4)
+                                .font_family("sans-serif".to_owned())
+                                .color(rss_card::faded_ink(
+                                    Color::rgb8(153, 153, 153),
+                                    palette.paper,
+                                    alpha,
+                                ))
+                        }),
                     empty().style(move |style| {
                         style
                             .size(6.0, 6.0)
@@ -11535,7 +11759,7 @@ struct NoteFindKey {
 struct GoToLineSignals {
     open: RwSignal<bool>,
     query: RwSignal<String>,
-    error: RwSignal<Option<String>>,
+    error: RwSignal<Option<GoToLineError>>,
     focus_request: RwSignal<u64>,
 }
 
@@ -11549,10 +11773,14 @@ enum GoToLineError {
 impl fmt::Display for GoToLineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Empty => formatter.write_str("Введите номер строки"),
-            Self::Invalid => formatter.write_str("Номер должен быть целым положительным числом"),
+            Self::Empty => formatter.write_str(&tr!(EnterLine)),
+            Self::Invalid => formatter.write_str(&tr!(PositiveLine)),
             Self::OutOfRange { maximum } => {
-                write!(formatter, "Введите строку от 1 до {maximum}")
+                write!(
+                    formatter,
+                    "{}",
+                    tr!(LineRange, "maximum" => maximum.to_string())
+                )
             }
         }
     }
@@ -11647,7 +11875,7 @@ fn submit_go_to_line(
             revision.update(|value| *value = value.saturating_add(1));
             editor_focus_request.update(|value| *value = value.saturating_add(1));
         }
-        Err(error) => signals.error.set(Some(error.to_string())),
+        Err(error) => signals.error.set(Some(error)),
     }
 }
 
@@ -11665,9 +11893,8 @@ fn go_to_line_prompt(
     });
 
     let key_model = model.clone();
-    let input = text_input(signals.query)
-        .placeholder("Строка")
-        .style(move |style| {
+    let input =
+        localized_input::LocalizedInput::new(signals.query, i18n::Key::Line).style(move |style| {
             let has_error = signals.error.get().is_some();
             text_input_affordance(style, palette.muted, palette.accent)
                 .width(112.0)
@@ -11713,7 +11940,7 @@ fn go_to_line_prompt(
     let range_model = model.clone();
     let submit_model = model;
     let card = v_stack((
-        label(|| "Перейти к строке".to_owned()).style(|style| style.font_size(15.0)),
+        label(|| tr!(GoToLine)).style(|style| style.font_size(15.0)),
         h_stack((
             input,
             label(move || {
@@ -11724,25 +11951,20 @@ fn go_to_line_prompt(
                     .as_ref()
                     .and_then(WorkspaceSession::document)
                     .map_or(0, |document| document.line_count());
-                format!("из {maximum}")
+                tr!(OfMaximum , "maximum" => maximum)
             })
             .style(move |style| style.font_size(12.0).color(palette.muted)),
             empty().style(|style| style.flex_grow(1.0)),
-            text_button(
-                "Перейти",
-                IconButtonTone::Primary,
-                palette,
-                move || {
-                    submit_go_to_line(&submit_model, revision, signals, editor_focus_request);
-                },
-            ),
+            text_button(msg!(Go), IconButtonTone::Primary, palette, move || {
+                submit_go_to_line(&submit_model, revision, signals, editor_focus_request);
+            }),
         ))
         .style(|style| style.width_full().items_center().gap(8.0)),
         label(move || {
             signals
                 .error
                 .get()
-                .unwrap_or_else(|| "Enter — перейти · Esc — закрыть".to_owned())
+                .map_or_else(|| tr!(GoKeys), |error| error.to_string())
         })
         .style(move |style| {
             style
@@ -11968,7 +12190,9 @@ fn editor_panel(
             Err(error) => {
                 find_key.borrow_mut().take();
                 close_note_find(note_find);
-                find_effect_model.borrow_mut().error = Some(error.to_string());
+                find_effect_model.borrow_mut().error = Some(UiText::Failure {
+                    details: error.to_string(),
+                });
                 revision.update(|value| *value += 1);
                 return;
             }
@@ -12027,7 +12251,7 @@ fn editor_panel(
                 let retry_model = retry_model.clone();
                 actions.push(icon_button(
                     ICON_RETRY,
-                    || "Повторить сохранение".to_owned(),
+                    || tr!(RetrySave),
                     IconButtonTone::Status,
                     palette,
                     move || {
@@ -12051,7 +12275,7 @@ fn editor_panel(
                 let recover_security = recover_security.clone();
                 actions.push(icon_button(
                     ICON_RECOVER,
-                    || "Восстановить несохранённые изменения".to_owned(),
+                    || tr!(RestoreUnsaved),
                     IconButtonTone::Status,
                     palette,
                     move || {
@@ -12072,7 +12296,9 @@ fn editor_panel(
                                 }
                             }
                             Err(error) => {
-                                recover_model.borrow_mut().error = Some(error.to_string());
+                                recover_model.borrow_mut().error = Some(UiText::Failure {
+                                    details: error.to_string(),
+                                });
                             }
                         }
                         revision.update(|value| *value += 1);
@@ -12083,7 +12309,7 @@ fn editor_panel(
                 let reload_model = reload_model.clone();
                 actions.push(icon_button(
                     ICON_DISK_VERSION,
-                    || "Загрузить версию с диска".to_owned(),
+                    || tr!(LoadDisk),
                     IconButtonTone::Status,
                     palette,
                     move || {
@@ -12092,7 +12318,9 @@ fn editor_panel(
                             .discard_local_and_reload()
                             .map_err(|error| error.to_string());
                         if let Err(error) = result {
-                            reload_model.borrow_mut().error = Some(error);
+                            reload_model.borrow_mut().error = Some(UiText::Failure {
+                                details: error.to_string(),
+                            });
                         } else {
                             schedule_autosave(reload_model.clone(), revision);
                         }
@@ -12390,7 +12618,7 @@ fn editor_panel(
                 .into_any(),
             ProtectionActionState::Decrypting => icon_button(
                 state.icon().expect("decrypting action has an icon"),
-                || "Расшифровываем заметку".to_owned(),
+                || tr!(Decrypting),
                 IconButtonTone::Secondary,
                 palette,
                 || {},
@@ -12402,7 +12630,7 @@ fn editor_panel(
                 let action_security = protection_security.clone();
                 icon_button(
                     state.icon().expect("protect action has an icon"),
-                    || "Защитить заметку".to_owned(),
+                    || tr!(ProtectNote),
                     IconButtonTone::Secondary,
                     palette,
                     move || {
@@ -12421,7 +12649,7 @@ fn editor_panel(
             }
             ProtectionActionState::Lock => icon_toggle_button(
                 state.icon().expect("lock action has an icon"),
-                || "Заблокировать заметку".to_owned(),
+                || tr!(LockNote),
                 palette,
                 move || protection_menu_open.get(),
                 move || {
@@ -12434,7 +12662,7 @@ fn editor_panel(
                 let action_security = protection_security.clone();
                 icon_button(
                     state.icon().expect("unlock action has an icon"),
-                    || "Разблокировать заметку".to_owned(),
+                    || tr!(UnlockNote),
                     IconButtonTone::Secondary,
                     palette,
                     move || {
@@ -12449,7 +12677,7 @@ fn editor_panel(
                     state
                         .icon()
                         .expect("known-password unlock action has an icon"),
-                    || "Разблокировать заметку".to_owned(),
+                    || tr!(UnlockNote),
                     IconButtonTone::Secondary,
                     palette,
                     move || {
@@ -12477,8 +12705,7 @@ fn editor_panel(
             )
         },
     );
-    let find_input = text_input(note_find.query)
-        .placeholder("Найти в документе")
+    let find_input = localized_input::LocalizedInput::new(note_find.query, i18n::Key::FindDocument)
         .style(move |style| {
             text_input_affordance(style, palette.muted, palette.accent)
                 .min_width(104.0)
@@ -12526,12 +12753,12 @@ fn editor_panel(
             if note_find.query.get().is_empty() {
                 String::new()
             } else if count == 0 {
-                "0 из 0".to_owned()
+                tr!(NoMatches)
             } else if count == NOTE_FIND_MATCH_LIMIT {
                 let position = note_find.selected.get().min(count - 1) + 1;
-                format!("{position} из {NOTE_FIND_MATCH_LIMIT}+")
+                tr!(MoreMatches , "position" => position, "maximum" => NOTE_FIND_MATCH_LIMIT)
             } else {
-                format!("{} из {count}", note_find.selected.get().min(count - 1) + 1)
+                tr!(MatchPosition , "value" => note_find.selected.get().min(count - 1) + 1, "count" => count)
             }
         })
         .style(move |style| {
@@ -12543,21 +12770,21 @@ fn editor_panel(
         }),
         icon_button(
             ICON_ARROW_UP,
-            || "Предыдущее совпадение (Shift+Enter)".to_owned(),
+            || tr!(PreviousMatch),
             IconButtonTone::Status,
             palette,
             move || step_note_find_match(&previous_find_model, revision, note_find, true),
         ),
         icon_button(
             ICON_ARROW_DOWN,
-            || "Следующее совпадение (Enter)".to_owned(),
+            || tr!(NextMatch),
             IconButtonTone::Status,
             palette,
             move || step_note_find_match(&next_find_model, revision, note_find, false),
         ),
         icon_button(
             ICON_CANCEL,
-            || "Закрыть поиск (Escape)".to_owned(),
+            || tr!(CloseFind),
             IconButtonTone::Status,
             palette,
             move || {
@@ -12583,7 +12810,7 @@ fn editor_panel(
     let find_button_disabled_model = model.clone();
     let find_action = icon_toggle_button(
         ICON_SEARCH,
-        || "Найти в документе (⌘F)".to_owned(),
+        || tr!(FindShortcut),
         palette,
         move || note_find.open.get(),
         move || {
@@ -12933,7 +13160,7 @@ fn editor_context_menu(
     let paste_model = model;
     Menu::new("")
         .entry(
-            MenuItem::new("Вырезать")
+            MenuItem::new(tr!(Cut))
                 .enabled(state.can_cut_or_copy)
                 .action(move || {
                     execute_editor_command(&cut_model, revision, EditorCommand::Cut);
@@ -12941,7 +13168,7 @@ fn editor_context_menu(
                 }),
         )
         .entry(
-            MenuItem::new("Копировать")
+            MenuItem::new(tr!(Copy))
                 .enabled(state.can_cut_or_copy)
                 .action(move || {
                     execute_editor_command(&copy_model, revision, EditorCommand::Copy);
@@ -12950,7 +13177,7 @@ fn editor_context_menu(
         )
         .separator()
         .entry(
-            MenuItem::new("Вставить")
+            MenuItem::new(tr!(Paste))
                 .enabled(state.can_paste)
                 .action(move || {
                     if let Ok(contents) = Clipboard::get_contents() {
@@ -13318,17 +13545,17 @@ enum ProtectedPlaceholder {
 }
 
 impl ProtectedPlaceholder {
-    fn title(self) -> &'static str {
+    fn title(self) -> String {
         match self {
-            Self::Locked => "Заметка заблокирована",
-            Self::Decrypting => "Расшифровываем заметку",
+            Self::Locked => tr!(NoteLocked),
+            Self::Decrypting => tr!(Decrypting),
         }
     }
 
-    fn hint(self) -> &'static str {
+    fn hint(self) -> String {
         match self {
-            Self::Locked => "Откройте её значком замка в заголовке.",
-            Self::Decrypting => "Разбираем age-конверт — это займёт мгновение.",
+            Self::Locked => tr!(UnlockHint),
+            Self::Decrypting => tr!(DecryptingHint),
         }
     }
 }
@@ -13442,7 +13669,7 @@ fn protected_placeholder_card(
     let card = v_stack((
         badge,
         empty().style(|style| style.height(18.0)),
-        text("ЗАЩИЩЁННАЯ ЗАМЕТКА").style(move |style| {
+        label(move || tr!(ProtectedNote)).style(move |style| {
             style
                 .font_size(10.0)
                 .font_weight(floem::text::Weight::SEMIBOLD)
@@ -13521,11 +13748,10 @@ fn render_editor(model: &AppModel) -> String {
         .and_then(WorkspaceSession::document)
         .is_none()
     {
-        return "Откройте заметку в списке слева.\n\nТекст останется обычным Markdown-файлом на диске."
-            .to_owned();
+        return tr!(OpenNoteHint).to_owned();
     }
     let Some(layout) = editor_layout(model) else {
-        return "Не удалось построить viewport.".to_owned();
+        return tr!(ViewportFailed);
     };
     let mut rendered = String::with_capacity(layout.snapshot.rendered_bytes.min(300_000));
     if layout.snapshot.truncated_before || model.viewport_first_visual_row > 0 {
@@ -13569,10 +13795,10 @@ fn render_editor_line_numbers(model: &AppModel) -> String {
 
 fn editor_status(model: &AppModel) -> String {
     if let Some(error) = &model.error {
-        return format!("Ошибка · {error}");
+        return tr!(ErrorStatus , "error" => error.to_string());
     }
     if model.secure_worker_active {
-        return "Выполняется защищённая операция…".to_owned();
+        return tr!(SecureRunning);
     }
     let Some(document) = model
         .workspace
@@ -13587,53 +13813,50 @@ fn editor_status(model: &AppModel) -> String {
                     .is_some_and(|note| note.protection == NoteProtection::Protected)
             })
         }) {
-            return "Заметка заблокирована".to_owned();
+            return tr!(NoteLocked);
         }
-        return "Нет открытой заметки".to_owned();
+        return tr!(NoOpenNote);
     };
     let line = document.cursor_line().unwrap_or(0) + 1;
     let column = document.cursor_byte_column().unwrap_or(0) + 1;
     let selection = document.selection().normalized().len();
     let save = match document.save_status() {
-        SaveStatus::Clean { .. } => "Сохранено".to_owned(),
-        SaveStatus::Dirty { .. } => "Изменено".to_owned(),
+        SaveStatus::Clean { .. } => tr!(Saved),
+        SaveStatus::Dirty { .. } => tr!(Modified),
         SaveStatus::Saving {
             dirty_after_start: false,
             ..
-        } => "Сохранение…".to_owned(),
+        } => tr!(Saving),
         SaveStatus::Saving {
             dirty_after_start: true,
             ..
-        } => "Сохранение… · есть новые изменения".to_owned(),
+        } => tr!(SavingMore),
         SaveStatus::Error { message, .. } => {
-            format!("Ошибка сохранения · {}", localize_storage_message(&message))
+            tr!(SaveError , "value" => localize_storage_message(&message))
         }
         SaveStatus::Conflict { message, .. } => {
-            format!("Конфликт · {}", localize_storage_message(&message))
+            tr!(Conflict , "value" => localize_storage_message(&message))
         }
     };
     let recovery = match document.recovery_status() {
-        RecoveryStatus::None => "",
+        RecoveryStatus::None => String::new(),
         RecoveryStatus::Pending { .. }
         | RecoveryStatus::Saving { .. }
-        | RecoveryStatus::Saved { .. } => "",
-        RecoveryStatus::Error { .. } => " · ошибка резервной копии",
+        | RecoveryStatus::Saved { .. } => String::new(),
+        RecoveryStatus::Error { .. } => tr!(RecoveryError),
     };
     let selection = if selection == 0 {
         String::new()
     } else {
-        format!(" · выделено {}", format_byte_count(selection))
+        tr!(SelectionSize , "value" => format_byte_count(selection))
     };
-    format!(
-        "Строка {line}, столбец {column}{selection} · {} · {save}{recovery}",
-        format_byte_count(document.len_bytes()),
-    )
+    tr!(EditorStatus , "line" => line, "column" => column, "selection" => selection, "value" => format_byte_count(document.len_bytes()), "save" => save, "recovery" => recovery)
 }
 
 fn localize_storage_message(message: &str) -> String {
     match message {
         "note changed on disk while local edits were pending; both versions are preserved" => {
-            "файл изменён на диске, пока были несохранённые правки; обе версии сохранены".to_owned()
+            tr!(DiskConflict)
         }
         other => other.to_owned(),
     }
@@ -13641,11 +13864,11 @@ fn localize_storage_message(message: &str) -> String {
 
 fn format_byte_count(bytes: usize) -> String {
     if bytes >= 1_000_000 {
-        format!("{:.1} МБ", bytes as f64 / 1_000_000.0)
+        tr!(Megabytes , "value" => format!("{:.1}", bytes as f64 / 1_000_000.0))
     } else if bytes >= 1_000 {
-        format!("{:.1} КБ", bytes as f64 / 1_000.0)
+        tr!(Kilobytes , "value" => format!("{:.1}", bytes as f64 / 1_000.0))
     } else {
-        format!("{bytes} Б")
+        tr!(Bytes , "bytes" => bytes)
     }
 }
 
@@ -13723,9 +13946,8 @@ fn tag_popover_card(
     tag_button_id: ViewId,
     palette: Palette,
 ) -> impl IntoView {
-    let input = text_input(signals.query)
-        .placeholder("Добавить тег")
-        .style(move |style| {
+    let input = localized_input::LocalizedInput::new(signals.query, i18n::Key::AddTag).style(
+        move |style| {
             text_input_affordance(style, palette.muted, palette.accent)
                 .width_full()
                 .height(TAG_POPOVER_ROW_HEIGHT_PX)
@@ -13737,7 +13959,8 @@ fn tag_popover_card(
                 .border_color(palette.divider)
                 .border_radius(5.0)
                 .font_size(13.0)
-        });
+        },
+    );
     let input_id = input.id();
     let input_key_model = model.clone();
     let input = input.on_event(EventListener::KeyDown, move |event| {
@@ -13788,7 +14011,7 @@ fn tag_popover_card(
     });
 
     let empty_state_model = model.clone();
-    let empty_state = text("Теги не добавлены").style(move |style| {
+    let empty_state = label(move || tr!(NoTags)).style(move |style| {
         revision.get();
         let style = style
             .height(TAG_POPOVER_ROW_HEIGHT_PX)
@@ -13852,7 +14075,7 @@ fn tag_popover_card(
                     })
                     .focus_visible(move |style| style.color(palette.muted))
             })
-            .tooltip(move || tooltip_label(format!("Убрать тег {tooltip_tag}"), palette));
+            .tooltip(move || tooltip_label(tr!(RemoveTag , "tag" => tooltip_tag.clone()), palette));
             h_stack((
                 label(move || label_tag.clone()).style(move |style| {
                     style
@@ -14133,7 +14356,15 @@ fn icon_button(
     };
     let colors = button_colors(tone, palette);
     reliable_button(
-        svg(icon_svg).style(move |style| style.size(icon_size, icon_size)),
+        svg(icon_svg)
+            .update_value(move || {
+                if icon_svg == ICON_BACK && i18n::current().is_rtl() {
+                    ICON_CHEVRON_RIGHT
+                } else {
+                    icon_svg
+                }
+            })
+            .style(move |style| style.size(icon_size, icon_size)),
         action,
     )
     .style(move |style| {
@@ -14184,7 +14415,7 @@ fn sidebar_sort_button(
                     })
                 })
         })
-        .tooltip(move || tooltip_label("Сортировка заметок".to_owned(), palette))
+        .tooltip(move || tooltip_label(tr!(SortNotes), palette))
 }
 
 fn icon_toggle_button(
@@ -14232,7 +14463,7 @@ fn icon_toggle_button(
 }
 
 fn text_button(
-    label_text: &'static str,
+    label_text: i18n::Message,
     tone: IconButtonTone,
     palette: Palette,
     action: impl Fn() + 'static,
@@ -14271,15 +14502,6 @@ enum ToolbarSubject {
     Feed,
 }
 
-impl ToolbarSubject {
-    fn accusative(self) -> &'static str {
-        match self {
-            Self::Note => "заметку",
-            Self::Feed => "ленту",
-        }
-    }
-}
-
 fn toolbar_action_icon(action: ToolbarAction) -> &'static str {
     match action {
         ToolbarAction::Refresh => ICON_RETRY,
@@ -14307,48 +14529,65 @@ fn toolbar_action_is_toggle(action: ToolbarAction) -> bool {
 }
 
 fn toolbar_action_title(action: ToolbarAction, subject: ToolbarSubject, active: bool) -> String {
-    let subject_word = subject.accusative();
     match action {
         ToolbarAction::Refresh => {
             if active {
-                "Обновление…".to_owned()
+                tr!(Refreshing)
             } else {
-                format!("Обновить {subject_word}")
+                match subject {
+                    ToolbarSubject::Note => tr!(RefreshNote),
+                    ToolbarSubject::Feed => tr!(RefreshFeed),
+                }
             }
         }
         ToolbarAction::Rename => {
             if active {
-                "Закрыть переименование".to_owned()
+                tr!(CloseRename)
             } else {
-                format!("Переименовать {subject_word}")
+                match subject {
+                    ToolbarSubject::Note => tr!(RenameNote),
+                    ToolbarSubject::Feed => tr!(RenameFeed),
+                }
             }
         }
         ToolbarAction::Categories => match subject {
-            ToolbarSubject::Note => "Управлять тегами".to_owned(),
+            ToolbarSubject::Note => tr!(ManageTags),
             ToolbarSubject::Feed => {
                 if active {
-                    "Закрыть категории".to_owned()
+                    tr!(CloseCategories)
                 } else {
-                    "Изменить категории ленты".to_owned()
+                    tr!(EditFeedCategories)
                 }
             }
         },
         ToolbarAction::Pin => {
             if active {
-                format!("Открепить {subject_word}")
+                match subject {
+                    ToolbarSubject::Note => tr!(UnpinNote),
+                    ToolbarSubject::Feed => tr!(UnpinFeed),
+                }
             } else {
-                format!("Закрепить {subject_word}")
+                match subject {
+                    ToolbarSubject::Note => tr!(PinNote),
+                    ToolbarSubject::Feed => tr!(PinFeed),
+                }
             }
         }
         ToolbarAction::Favorite => {
             if active {
-                "Убрать из избранного".to_owned()
+                tr!(RemoveFavorite)
             } else {
-                "В избранное".to_owned()
+                tr!(AddFavorite)
             }
         }
-        ToolbarAction::Delete => format!("Переместить {subject_word} в корзину"),
-        ToolbarAction::Restore => format!("Восстановить {subject_word}"),
+        ToolbarAction::Delete => match subject {
+            ToolbarSubject::Note => tr!(TrashNote),
+            ToolbarSubject::Feed => tr!(TrashFeed),
+        },
+        ToolbarAction::Restore => match subject {
+            ToolbarSubject::Note => tr!(RestoreNote),
+            ToolbarSubject::Feed => tr!(RestoreFeed),
+        },
     }
 }
 
@@ -14428,8 +14667,8 @@ fn form_field_style(style: Style, palette: Palette, invalid: bool) -> Style {
 struct ToolbarEditBar {
     open: RwSignal<bool>,
     value: RwSignal<String>,
-    label: &'static str,
-    placeholder: &'static str,
+    label: i18n::Key,
+    placeholder: i18n::Key,
     field_width: f64,
 }
 
@@ -14440,8 +14679,7 @@ fn toolbar_edit_bar(
 ) -> impl IntoView {
     let submit: Rc<dyn Fn()> = Rc::new(on_submit);
     let key_submit = submit.clone();
-    let input = text_input(bar.value)
-        .placeholder(bar.placeholder)
+    let input = localized_input::LocalizedInput::new(bar.value, bar.placeholder)
         .on_event(EventListener::KeyDown, move |event| {
             let Event::KeyDown(key) = event else {
                 return EventPropagation::Continue;
@@ -14473,14 +14711,9 @@ fn toolbar_edit_bar(
         text(bar.label)
             .style(move |style| style.font_size(12.5).color(palette.muted).selectable(false)),
         input,
-        text_button(
-            "Сохранить",
-            IconButtonTone::Primary,
-            palette,
-            move || {
-                submit();
-            },
-        ),
+        text_button(msg!(Save), IconButtonTone::Primary, palette, move || {
+            submit();
+        }),
     ))
     .style(move |style| {
         let style = style
@@ -14510,7 +14743,7 @@ fn parsed_category_list(input: &str) -> Vec<String> {
 }
 
 fn password_dialog_button(
-    label_text: &'static str,
+    label_text: i18n::Message,
     tone: IconButtonTone,
     palette: Palette,
     disabled: impl Fn() -> bool + 'static,
@@ -14661,6 +14894,7 @@ mod tests {
         workspace_switch_blocker,
     };
     use super::{IconButtonTone, ToolbarSubject, parsed_category_list};
+    use crate::i18n::{Key, msg, tr};
     use crate::settings::{
         CategoryNoteSortSettings, GlobalSettings, NoteSortField, PersistedExternalFile,
         PersistedSidebarGroup, SidebarSettings, SortDirection,
@@ -14702,6 +14936,54 @@ mod tests {
     }
 
     #[test]
+    fn language_switch_preserves_dirty_editor_selection_undo_and_files() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "notrum-locale-state-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("notes")).unwrap();
+        let path = root.join("notes/Existing.md");
+        let original = "# Existing\nKeep this text unchanged on disk.\n";
+        fs::write(&path, original).unwrap();
+        let mut model = AppModel::load(&root);
+        let original_editor = render_editor(&model);
+        model.apply(EditorCommand::Insert("draft ".to_owned()));
+        model.apply(EditorCommand::SetSelection {
+            anchor: 1,
+            focus: 4,
+        });
+        model.error = Some(msg!(NoSelection).into());
+        let document = model.workspace.as_ref().unwrap().document().unwrap();
+        let selection = document.selection();
+        let status = document.save_status();
+        let visible = render_editor(&model);
+        let scroll = (model.viewport_first_line, model.viewport_first_visual_row);
+        for locale in crate::i18n::Locale::ALL {
+            crate::i18n::set_current(*locale);
+            let document = model.workspace.as_ref().unwrap().document().unwrap();
+            assert_eq!(document.selection(), selection);
+            assert_eq!(document.save_status(), status);
+            assert_eq!(render_editor(&model), visible);
+            assert_eq!(
+                (model.viewport_first_line, model.viewport_first_visual_row),
+                scroll
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+            assert_eq!(model.error.as_ref().unwrap().to_string(), tr!(NoSelection));
+            assert!(!root.join(".notrum.cfg").exists());
+        }
+        crate::i18n::set_current(crate::i18n::Locale::English);
+        model.apply(EditorCommand::Undo);
+        assert_eq!(render_editor(&model), original_editor);
+        model.shutdown_search_worker();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn external_file_picker_uses_registered_extensions() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -14715,7 +14997,7 @@ mod tests {
         let workspace = WorkspaceSession::open(&root).unwrap();
         let spec = external_file_picker_spec(workspace.external_file_extensions()).unwrap();
 
-        assert_eq!(spec.name, "Поддерживаемые файлы");
+        assert_eq!(spec.name, tr!(SupportedFiles));
         assert_eq!(spec.extensions, ["markdown", "md", "txt"]);
         drop(workspace);
         fs::remove_dir_all(root).expect("remove picker workspace");
@@ -14793,6 +15075,26 @@ mod tests {
             SIDEBAR_MAX_WIDTH_PX
         );
         assert_eq!(resized_sidebar_width(480.0, -36.0, 4.0), 440.0);
+    }
+
+    #[test]
+    fn popovers_mirror_their_anchor_and_stay_inside_the_window() {
+        for rtl in [false, true] {
+            for start in [false, true] {
+                for origin in [8.0, 190.0, 670.0, 820.0] {
+                    let left = super::popover_left(origin, 32.0, 280.0, 860.0, start, rtl);
+                    assert!(left >= 8.0 && left + 280.0 <= 852.0);
+                }
+            }
+        }
+        assert_eq!(
+            super::popover_left(300.0, 32.0, 200.0, 860.0, true, false),
+            300.0
+        );
+        assert_eq!(
+            super::popover_left(300.0, 32.0, 200.0, 860.0, true, true),
+            132.0
+        );
     }
 
     #[test]
@@ -14958,8 +15260,8 @@ mod tests {
         assert_eq!(
             prepare_workspace_switch(std::path::Path::new("relative/workspace"))
                 .err()
-                .as_deref(),
-            Some("Укажите абсолютный путь к рабочей папке")
+                .map(|error| error.to_string()),
+            Some(tr!(EnterAbsoluteWorkspace))
         );
 
         let nonce = SystemTime::now()
@@ -15141,7 +15443,7 @@ mod tests {
             password_change_progress_text("Подготовлено 1 из 3".to_owned(), preparing),
             "42% · Подготовлено 1 из 3"
         );
-        assert_eq!(password_change_success_text(3), "100% · Заменено 3 из 3");
+        assert_eq!(password_change_success_text(3), "100% · Replaced 3 of 3");
     }
 
     #[test]
@@ -15312,7 +15614,7 @@ mod tests {
         security.open(PasswordDialogKind::ExistingProtection);
         assert!(security.entry.borrow_mut().push("wrong password"));
         security.busy.set(true);
-        security.set_status("Проверяем мастер-пароль…");
+        security.set_status(msg!(CheckingPassword));
         model.security_ui = Some(security.clone());
         model.apply(EditorCommand::Insert("dirty ".to_owned()));
         assert_eq!(
@@ -15326,8 +15628,8 @@ mod tests {
         finish_pending_search_security(&mut model);
         assert!(model.pending_security_action.is_none());
         assert_eq!(
-            model.error.as_deref(),
-            Some("Не удалось подтвердить мастер-пароль")
+            model.error.as_ref().map(ToString::to_string),
+            Some(tr!(AuthenticationFailed))
         );
         assert_eq!(
             security.dialog.get_untracked(),
@@ -15337,9 +15639,7 @@ mod tests {
         assert!(security.entry.borrow().primary.is_empty());
         assert_eq!(
             security.feedback.get_untracked(),
-            Some(PasswordFeedback::Error(
-                "Не удалось подтвердить мастер-пароль".to_owned()
-            ))
+            Some(PasswordFeedback::Error(msg!(AuthenticationFailed).into()))
         );
         let workspace = model.workspace.as_ref().expect("workspace stays open");
         let selected = workspace
@@ -15352,7 +15652,7 @@ mod tests {
 
         assert!(security.entry.borrow_mut().push("correct password"));
         security.busy.set(true);
-        security.set_status("Проверяем мастер-пароль…");
+        security.set_status(msg!(CheckingPassword));
         assert_eq!(
             model.protect_selected(Some(notrum_secure::MasterPassword::new(
                 "correct password".to_owned(),
@@ -15937,27 +16237,27 @@ mod tests {
     fn toolbar_titles_name_the_subject_of_the_surface() {
         assert_eq!(
             toolbar_action_title(ToolbarAction::Pin, ToolbarSubject::Note, false),
-            "Закрепить заметку"
+            "Pin note"
         );
         assert_eq!(
             toolbar_action_title(ToolbarAction::Pin, ToolbarSubject::Feed, true),
-            "Открепить ленту"
+            "Unpin feed"
         );
         assert_eq!(
             toolbar_action_title(ToolbarAction::Delete, ToolbarSubject::Note, false),
-            "Переместить заметку в корзину"
+            "Move note to trash"
         );
         assert_eq!(
             toolbar_action_title(ToolbarAction::Restore, ToolbarSubject::Feed, false),
-            "Восстановить ленту"
+            "Restore feed"
         );
         assert_eq!(
             toolbar_action_title(ToolbarAction::Favorite, ToolbarSubject::Feed, true),
-            "Убрать из избранного"
+            tr!(RemoveFavorite)
         );
         assert_eq!(
             toolbar_action_title(ToolbarAction::Categories, ToolbarSubject::Note, false),
-            "Управлять тегами"
+            tr!(ManageTags)
         );
     }
 
@@ -16040,8 +16340,8 @@ mod tests {
             let bar = || super::ToolbarEditBar {
                 open: panel_scope.create_rw_signal(false),
                 value: panel_scope.create_rw_signal(String::new()),
-                label: "",
-                placeholder: "",
+                label: Key::NewTitle,
+                placeholder: Key::NewTitle,
                 field_width: 100.0,
             };
             let signals = super::RssToolbarSignals {
@@ -16227,10 +16527,10 @@ mod tests {
         let categories = ["Personal", "Planning", "Work"];
         let group = |filter: SidebarFilter, count: usize| {
             let title = match &filter {
-                SidebarFilter::All => "Все".to_owned(),
-                SidebarFilter::Favorites => "Избранное".to_owned(),
+                SidebarFilter::All => tr!(All),
+                SidebarFilter::Favorites => tr!(Favorites),
                 SidebarFilter::Tag(tag) => tag.clone(),
-                SidebarFilter::Trash => "Корзина".to_owned(),
+                SidebarFilter::Trash => tr!(Trash),
             };
             SidebarRow::Group {
                 filter,
@@ -16332,10 +16632,10 @@ mod tests {
         state.toggle_group(SidebarFilter::Trash);
         let group = |filter: SidebarFilter, count: usize| {
             let title = match &filter {
-                SidebarFilter::All => "Все".to_owned(),
-                SidebarFilter::Favorites => "Избранное".to_owned(),
+                SidebarFilter::All => tr!(All),
+                SidebarFilter::Favorites => tr!(Favorites),
                 SidebarFilter::Tag(tag) => tag.clone(),
-                SidebarFilter::Trash => "Корзина".to_owned(),
+                SidebarFilter::Trash => tr!(Trash),
             };
             SidebarRow::Group {
                 filter,
@@ -16783,7 +17083,7 @@ mod tests {
         let rows = vec![
             SidebarRow::Group {
                 filter: SidebarFilter::Favorites,
-                title: "Избранное".to_owned(),
+                title: tr!(Favorites),
                 count: 0,
                 depth: 0,
             },
@@ -17930,11 +18230,11 @@ mod tests {
         model.apply(EditorCommand::Insert("dirty ".to_owned()));
         assert!(!model.request_note_creation(SidebarFilter::All));
         assert_eq!(model.pending_note_creation, Some(SidebarFilter::All));
-        assert!(!notes.join("Новая заметка.md").exists());
+        assert!(!notes.join("New note.md").exists());
 
         finish_pending_persistence(&mut model);
         assert!(model.retry_pending_note_creation());
-        assert!(notes.join("Новая заметка.md").is_file());
+        assert!(notes.join("New note.md").is_file());
         assert!(model.pending_note_creation.is_none());
         assert!(model.note_creation_focus_pending);
 

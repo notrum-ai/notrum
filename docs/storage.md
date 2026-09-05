@@ -48,7 +48,7 @@ Preserve unknown files and operation journals as well.
 | `.notrum/recovery/` | Recovery records may contain edits not yet saved to a note, including work retained after a conflict. Removing them can lose work. |
 | `.notrum_security/` | Authoritative password verifier, workspace identity, and encrypted engine secrets. Preserve it. |
 | `.notrum_backups/` | Encrypted rollback versions and their supporting records. Preserve it if you need backup history. |
-| `~/.notrum.cfg` | Global settings, including the last workspace's absolute path. Stored outside the workspace. |
+| `~/.notrum.cfg` | Global settings, including the interface language and last workspace's absolute path. Stored outside the workspace. |
 
 Do not delete `.notrum/` wholesale as a cache cleanup. Resolve pending recovery
 and conflicts in the application before considering removal of their records.

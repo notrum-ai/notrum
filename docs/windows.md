@@ -36,6 +36,9 @@ test exit codes, and native launch result. A cross-compilation log and this
 Windows result are separate evidence. Neither a successful `make check` on
 Linux nor compilation of the test EXEs means that Windows execution passed.
 There is no committed passing native Windows acceptance result yet.
+The [GitHub CI workflow](ci.md) runs this same kit on `windows-2025` after
+verifying the Linux job's package SHA and checksums. Its `-CI` mode exports a
+sanitized report without temporary workspaces; normal local execution is unchanged.
 
 ## Native UI acceptance
 

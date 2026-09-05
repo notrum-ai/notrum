@@ -13,7 +13,14 @@ GIT := $(RUN) git -c safe.directory=/workspace
 MACOS_BINARY ?=
 MACOS_OUTPUT ?= /workspace/dist/Notrum.app
 SOURCE_REVISION ?=
+NATIVE ?= 0
+ifeq ($(NATIVE),1)
+PYTHON := python3 -B
+DEMO_WORKSPACE ?= examples/demo-workspace
+else
+PYTHON := $(RUN) python3 -B
 DEMO_WORKSPACE ?= /workspace/examples/demo-workspace
+endif
 UI_JOBS ?= 2
 
 UI_ACCEPTANCE_STANDARD := ui-click-external ui-click-localization ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
@@ -32,6 +39,8 @@ help:
 		"Итоговая проверка: выберите ровно один самый широкий gate." \
 		"  make ui-check  — все UI smokes и XTEST scenarios" \
 		"  make check     — все проверки, включая ui-check, без native build" \
+		"  make ci-validate — закреплённый actionlint и объединённая Compose CI" \
+		"  make NATIVE=1 SOURCE_REVISION=<HEAD-SHA> native-check — macOS без Docker" \
 		"  make           — make check, затем native build" \
 		"  make clean     — удалить Docker debug-артефакты Cargo" \
 		"  make build-macos — macOS release в dist/Notrum.app (make build — алиас)" \
@@ -43,7 +52,7 @@ help:
 		"  make ui-click-<scenario> | make ui-acceptance | make test-<crate>" \
 		"Не запускайте target, а затем включающий его aggregate на неизменном diff."'
 
-check: fmt-check lint test test-release test-demo-data check-macos package-macos-smoke build-linux-smoke build-windows test-windows-build ui-check audit diff-check
+check: ci-validate fmt-check lint test test-release test-demo-data check-macos package-macos-smoke build-linux-smoke build-windows test-windows-build ui-check audit diff-check
 
 clean:
 	$(RUN) rm -rf -- /var/cache/notrum/target/debug
@@ -51,8 +60,13 @@ clean:
 build: build-macos
 
 build-macos:
+ifeq ($(NATIVE),1)
+	@python3 -B tools/source_revision.py "$(SOURCE_REVISION)"
+	SOURCE_REVISION="$(SOURCE_REVISION)" sh tools/build_macos.sh
+else
 	@revision="$$(docker compose run --rm toolchain sh -c 'revision=$$(git -c safe.directory=/workspace rev-parse HEAD); if test -n "$$(git -c safe.directory=/workspace status --porcelain)"; then printf "%s-dirty\n" "$$revision"; else printf "%s\n" "$$revision"; fi')"; \
 		SOURCE_REVISION="$$revision" sh tools/build_macos.sh
+endif
 
 build-windows:
 	$(RUN) python3 -B tools/build_windows.py
@@ -78,11 +92,12 @@ native-external-smoke: demo-data
 	python3 tools/native_external_smoke.py
 
 demo-data:
-	$(RUN) python3 -B tools/generate_demo_data.py "$(DEMO_WORKSPACE)"
+	$(PYTHON) tools/generate_demo_data.py "$(DEMO_WORKSPACE)"
 
 test-demo-data:
 	$(RUN) python3 -B tools/test_generate_demo_data.py
 	$(RUN) python3 -B tools/test_desktop_registration.py
+	$(RUN) python3 -B tools/test_ci.py
 
 check-macos:
 	$(RUN) env CC_aarch64_apple_darwin=clang CFLAGS_aarch64_apple_darwin='-ffreestanding -nostdinc -isystem /usr/lib/llvm-14/lib/clang/14.0.6/include -I/workspace/docker/rust/macos-cross-headers' cargo check -p notrum-app --target aarch64-apple-darwin
@@ -307,3 +322,31 @@ ui-click-external: ui-build
 
 ui-click-crash: ui-build-test-utils
 	$(RUN) python3 -B tools/desktop_smoke.py crash
+
+.PHONY: native-check revision-check ci-linux ci-macos ci-package-linux ci-package-macos ci-validate
+
+revision-check:
+	$(PYTHON) tools/source_revision.py "$(SOURCE_REVISION)"
+
+# Reuse the native entry points, including future platform smoke additions.
+native-check: revision-check native-smoke native-external-smoke
+
+ci-linux: revision-check
+	python3 -B tools/ci.py run linux -- $(MAKE) check
+	$(MAKE) ci-package-linux
+
+ci-macos: revision-check
+	python3 -B tools/ci.py run macos -- /usr/bin/arch -arm64 $(MAKE) NATIVE=1 native-check
+	$(MAKE) ci-package-macos
+
+ci-package-linux: revision-check
+	$(RUN) env SOURCE_REVISION="$(SOURCE_REVISION)" python3 -B tools/ci.py package linux
+	$(RUN) env SOURCE_REVISION="$(SOURCE_REVISION)" python3 -B tools/ci.py package windows
+	$(RUN) env SOURCE_REVISION="$(SOURCE_REVISION)" python3 -B tools/ci.py package windows-tests
+
+ci-package-macos: revision-check
+	python3 -B tools/ci.py package macos
+
+ci-validate:
+	docker run --rm -v "$(CURDIR):/workspace:ro" -w /workspace rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color .github/workflows/ci.yml
+	@SOURCE_REVISION="$$( $(GIT) rev-parse HEAD )" $(COMPOSE) -f compose.yaml -f compose.ci.yaml config --format json | $(COMPOSE) run --rm -T toolchain python3 -B tools/ci.py validate-compose

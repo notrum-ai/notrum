@@ -159,6 +159,7 @@ message queue or single-instance requirement.
 - [User guide](docs/user-guide.md): workspaces, notes, external files, and feeds.
 - [Storage and security](docs/storage.md): file layout, recovery, encryption, and backups.
 - [Development guide](docs/development.md): toolchain, checks, benchmarks, and packaging.
+- [GitHub CI](docs/ci.md): Linux, macOS and Windows checks, caches and artifacts.
 - [Contributing](CONTRIBUTING.md): reporting bugs and submitting changes.
 - [Security policy](SECURITY.md): reporting vulnerabilities privately.
 

@@ -13,7 +13,7 @@ import shutil
 import tempfile
 
 
-DEFAULT_DEMO_WORKSPACE = Path("/workspace/examples/demo-workspace")
+DEFAULT_DEMO_WORKSPACE = Path(__file__).resolve().parent.parent / "examples/demo-workspace"
 TEMPORARY_ROOT = Path("/tmp")
 GENERATED_MARKER = ".notrum-demo-generated-v1"
 DEMO_NOTES = {

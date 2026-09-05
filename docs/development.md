@@ -17,10 +17,14 @@ and `make native-external-smoke`. They require macOS, Xcode Command Line Tools,
 and `python3`. The build installs pinned Rust under `.host-build/`, uses the
 system Xcode SDK, and leaves global Rust directories and shell profiles alone.
 `native-external-smoke` requires an already built bundle.
+CI also provides `make NATIVE=1 SOURCE_REVISION=<HEAD-SHA> native-check` without
+Docker. See [GitHub CI](ci.md) for runners, caches, artifacts and validation.
 
 | Command | Purpose |
 |---|---|
 | `make help` | Reminder of aggregate check selection |
+| `make ci-validate` | Pinned actionlint and merged CI Compose validation |
+| `make NATIVE=1 SOURCE_REVISION=<HEAD-SHA> native-check` | Pinned macOS build and native smoke checks without Docker |
 | `make status` / `make diff` / `make log` | Inspect the checkout, changes, and recent commits |
 | `make image` | Build the pinned Docker toolchain image |
 | `make test` / `make test-release` | Workspace Rust tests in debug / release mode |

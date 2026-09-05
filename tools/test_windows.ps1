@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Run with: powershell -NoProfile -ExecutionPolicy Bypass -File .\Run-Tests.ps1
 [CmdletBinding()]
-param([switch]$Interactive)
+param([switch]$Interactive, [switch]$CI, [string]$ReportDirectory = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (-not [Environment]::Is64BitOperatingSystem -or [Environment]::OSVersion.Version.Build -lt 10240) {
@@ -24,6 +24,10 @@ $report = [ordered]@{
     started = [DateTime]::UtcNow.ToString('o'); tests = @(); status = 'running'
     interactive = 'not performed'; temporaryWorkspace = $root
 }
+if ($CI) {
+    $report.Remove('temporaryWorkspace')
+    $report.sourceRevision = $env:SOURCE_REVISION
+}
 try {
     $env:TEMP = $root
     $env:TMP = $root
@@ -41,9 +45,15 @@ try {
         }
         Write-Host "Running $name"
         $log = Join-Path $root ($name + '.log')
-        & (Join-Path $PSScriptRoot $name) --test-threads=1 2>&1 | Tee-Object -FilePath $log
+        if ($CI) {
+            & (Join-Path $PSScriptRoot $name) --test-threads=1 *> $log
+        } else {
+            & (Join-Path $PSScriptRoot $name) --test-threads=1 2>&1 | Tee-Object -FilePath $log
+        }
         $code = $LASTEXITCODE
-        $report.tests += [ordered]@{ executable = $name; exitCode = $code; log = $log }
+        $entry = [ordered]@{ executable = $name; exitCode = $code }
+        if (-not $CI) { $entry.log = $log }
+        $report.tests += $entry
         if ($code -ne 0) { throw "Test executable failed: $name (exit $code)" }
     }
     $application = Join-Path (Split-Path -Parent $PSScriptRoot) 'Notrum.exe'
@@ -101,11 +111,12 @@ try {
     $report.status = 'automated tests passed'
 } catch {
     $report.status = 'failed'
-    $report.error = $_.Exception.Message
+    $report.error = if ($CI) { 'Native test kit failed; inspect the recorded test exit codes.' } else { $_.Exception.Message }
     throw
 } finally {
     $report.finished = [DateTime]::UtcNow.ToString('o')
-    $reportPath = Join-Path $PSScriptRoot 'windows-results.json'
+    New-Item -ItemType Directory -Path $ReportDirectory -Force | Out-Null
+    $reportPath = Join-Path $ReportDirectory 'windows-results.json'
     $report | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -LiteralPath $reportPath
     foreach ($name in $previous.Keys) {
         [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')

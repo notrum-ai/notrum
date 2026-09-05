@@ -3,6 +3,7 @@ target
 bench-output
 dist
 .host-build
+.ci
 examples
 notes
 **/.notrum

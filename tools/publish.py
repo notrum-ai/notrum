@@ -17,6 +17,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 
 from app_version import MANIFEST, VERSION_FILES, next_version, read_version, replace_version
@@ -33,11 +36,19 @@ NOTES_SCHEMA = {"type": "object", "additionalProperties": False,
                     key: {"type": "array", "items": {"type": "string"}}
                     for key in ("improvements", "bug_fixes")}}
 CHUNK_SIZE = 60000
+GITHUB_API_VERSION = "2026-03-10"
+GITHUB_API_HOSTS = {"api.github.com", "uploads.github.com"}
+MAX_API_RESPONSE = 8 * 1024 * 1024
 
 
 def run(command, *, input=None, env=None, stdout=subprocess.PIPE, timeout=None):
+    environment = os.environ.copy()
+    # The release token is consumed only by this orchestrator. Codex, builds and
+    # arbitrary project commands must never inherit it.
+    environment.pop("GITHUB_TOKEN", None)
+    environment.update(env or {})
     result = subprocess.run(command, cwd=ROOT, input=input, text=True, stdout=stdout,
-                            env={**os.environ, **(env or {})}, timeout=timeout, check=True)
+                            env=environment, timeout=timeout, check=True)
     return result.stdout or ""
 
 
@@ -107,15 +118,62 @@ def repository_from_remote(url):
 
 
 class GitHub:
-    def __init__(self, repository):
+    def __init__(self, repository, token, opener=None):
         self.repository = repository
+        self.token = token
+        self.opener = opener or urllib.request.build_opener()
 
-    def gh(self, *args, input=None):
-        return run(["gh", *args, "--repo", self.repository], input=input)
+    def request(self, method, url, *, value=None, data=None, content_type=None):
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname not in GITHUB_API_HOSTS:
+            raise ValueError("GitHub API returned an unexpected URL")
+        if value is not None:
+            data = json.dumps(value).encode("utf-8")
+            content_type = "application/json"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {self.token}",
+            "User-Agent": "notrum-publish",
+            "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        }
+        if content_type:
+            headers["Content-Type"] = content_type
+        if data is not None and hasattr(data, "fileno"):
+            headers["Content-Length"] = str(os.fstat(data.fileno()).st_size)
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            return self.opener.open(request, timeout=120)
+        except urllib.error.HTTPError as error:
+            detail = error.read(4096).decode("utf-8", errors="replace")
+            raise ValueError(f"GitHub API {method} failed with HTTP {error.code}: {detail}") from error
+
+    def json_request(self, method, url, *, value=None):
+        with self.request(method, url, value=value) as response:
+            data = response.read(MAX_API_RESPONSE + 1)
+        if len(data) > MAX_API_RESPONSE:
+            raise ValueError("GitHub API response is unexpectedly large")
+        return json.loads(data)
+
+    @property
+    def api_url(self):
+        return f"https://api.github.com/repos/{self.repository}"
 
     def api(self, endpoint):
-        return json.loads(run(["gh", "api", f"repos/{self.repository}/{endpoint}",
-                               "--paginate", "--slurp"]))
+        url = f"{self.api_url}/{endpoint}"
+        pages = []
+        while url:
+            with self.request("GET", url) as response:
+                data = response.read(MAX_API_RESPONSE + 1)
+                link = response.headers.get("Link", "")
+            if len(data) > MAX_API_RESPONSE:
+                raise ValueError("GitHub API response is unexpectedly large")
+            page = json.loads(data)
+            if not isinstance(page, list):
+                raise ValueError("expected a paginated GitHub API list")
+            pages.append(page)
+            next_urls = re.findall(r'<([^>]+)>;\s*rel="next"', link)
+            url = next_urls[0] if next_urls else None
+        return pages
 
     def release(self, tag):
         # Listing distinguishes an absent release from an authentication/network error.
@@ -126,10 +184,7 @@ class GitHub:
         return None
 
     def network_git(self, *args):
-        token = run(["gh", "auth", "token", "--hostname", "github.com"]).strip()
-        if not token:
-            raise ValueError("gh did not provide a GitHub token")
-        credentials = base64.b64encode(("x-access-token:" + token).encode()).decode()
+        credentials = base64.b64encode(("x-access-token:" + self.token).encode()).decode()
         env = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
                "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic " + credentials,
                "GIT_TERMINAL_PROMPT": "0", "GIT_TRACE": "0", "GIT_TRACE_CURL": "0",
@@ -149,6 +204,49 @@ class GitHub:
         refs = self.network_git("ls-remote", self.url, f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}")
         found = dict(line.split()[::-1] for line in refs.splitlines())
         return found.get(f"refs/tags/{tag}^{{}}", found.get(f"refs/tags/{tag}"))
+
+    def create_release(self, tag, sha, notes):
+        return self.json_request("POST", f"{self.api_url}/releases", value={
+            "tag_name": tag,
+            "target_commitish": sha,
+            "name": f"Notrum {tag}",
+            "body": notes,
+            "draft": True,
+            "prerelease": False,
+        })
+
+    def upload_asset(self, release, path):
+        template = release.get("upload_url", "")
+        url = template.split("{", 1)[0]
+        expected_prefix = f"https://uploads.github.com/repos/{self.repository}/releases/"
+        if not url.startswith(expected_prefix):
+            raise ValueError("GitHub release has no asset upload URL")
+        url += "?" + urllib.parse.urlencode({"name": path.name})
+        with path.open("rb") as source, self.request(
+            "POST", url, data=source, content_type="application/octet-stream"
+        ) as response:
+            data = response.read(MAX_API_RESPONSE + 1)
+        if len(data) > MAX_API_RESPONSE:
+            raise ValueError("GitHub asset response is unexpectedly large")
+        return json.loads(data)
+
+    def verify_asset(self, asset, local_path):
+        # GitHub calculates this digest after accepting the complete upload.
+        # Comparing it avoids forwarding Authorization across a download redirect.
+        if asset.get("state") != "uploaded" or asset.get("size") != local_path.stat().st_size:
+            raise ValueError("GitHub release asset is incomplete or has an unexpected size")
+        expected = asset.get("digest", "")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected):
+            raise ValueError("GitHub did not return a SHA-256 digest for the uploaded asset")
+        if expected != "sha256:" + file_digest(local_path):
+            raise ValueError("GitHub release asset checksum mismatch")
+
+    def publish_release(self, release):
+        return self.json_request("PATCH", f"{self.api_url}/releases/{release['id']}", value={
+            "draft": False,
+            "prerelease": False,
+            "make_latest": "true",
+        })
 
 
 def previous_version_commit(head):
@@ -401,11 +499,7 @@ def upload_release(state, github, directory):
                        f"refs/tags/{tag}:refs/tags/{tag}")
     release = github.release(tag)
     if release is None:
-        github.gh("release", "create", tag, "--verify-tag", "--draft", "--title", f"Notrum {tag}",
-                  "--notes-file", "-", input=state["notes"])
-        release = github.release(tag)
-        if release is None:
-            raise ValueError("GitHub did not return the newly created release; retry make publish")
+        release = github.create_release(tag, sha, state["notes"])
     if (release["body"] or "").strip() != state["notes"].strip():
         raise ValueError("existing release description differs from the saved release")
     if release.get("prerelease", False):
@@ -418,18 +512,13 @@ def upload_release(state, github, directory):
             remote_assets[asset["name"]] = asset
     if set(remote_assets) - set(state["assets"]):
         raise ValueError("existing release contains unexpected assets")
-    for name, checksum in state["assets"].items():
+    for name in state["assets"]:
         asset = remote_assets.get(name)
         if asset is None:
             if not release["draft"]:
                 raise ValueError("published release is missing an expected asset")
-            github.gh("release", "upload", tag, str(directory / name))
-        # Download exact expected names into a fresh directory to verify server-side bytes.
-        with tempfile.TemporaryDirectory(prefix="notrum-release-verify-") as temporary:
-            github.gh("release", "download", tag, "--pattern", name, "--dir", temporary)
-            downloaded = Path(temporary) / name
-            if not downloaded.is_file() or file_digest(downloaded) != checksum:
-                raise ValueError("GitHub release asset checksum mismatch; refusing to replace it")
+            asset = github.upload_asset(release, directory / name)
+        github.verify_asset(asset, directory / name)
     final_names = [asset["name"] for page in github.api(f"releases/{release['id']}/assets?per_page=100")
                    for asset in page]
     if len(final_names) != len(state["assets"]) or set(final_names) != set(state["assets"]):
@@ -437,7 +526,7 @@ def upload_release(state, github, directory):
     if github.remote_tag(tag) != sha:
         raise ValueError("remote release tag changed during upload")
     if release["draft"]:
-        github.gh("release", "edit", tag, "--draft=false", "--latest")
+        release = github.publish_release(release)
     state["published"] = True
     state["url"] = release["html_url"]
     save_state(state)
@@ -447,17 +536,20 @@ def upload_release(state, github, directory):
 def main():
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("make publish requires an Apple Silicon Mac for all three local builds")
-    for executable in ("docker", "codex", "gh", "xcrun"):
+    for executable in ("docker", "codex", "xcrun"):
         if not shutil.which(executable):
             raise ValueError(f"{executable} is required; see docs/publishing.md")
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token or any(character.isspace() for character in token):
+        raise ValueError("GITHUB_TOKEN is required; see docs/publishing.md")
     # Fail before changing tracked files if the local CLI cannot even start.
     run(["codex", "exec", "--help"], timeout=30)
-    run(["gh", "auth", "status", "--hostname", "github.com"])
     with publish_lock():
         repository = repository_from_remote(git("remote", "get-url", "origin").strip())
-        github = GitHub(repository)
-        branch = run(["gh", "repo", "view", repository, "--json", "defaultBranchRef", "--jq",
-                      ".defaultBranchRef.name"]).strip()
+        github = GitHub(repository, token)
+        branch = github.json_request("GET", github.api_url).get("default_branch")
+        if not isinstance(branch, str) or not branch:
+            raise ValueError("GitHub API did not return the repository default branch")
         if git("symbolic-ref", "--quiet", "--short", "HEAD").strip() != branch:
             raise ValueError(f"publish from the default branch: {branch}")
         head = git("rev-parse", "HEAD").strip()

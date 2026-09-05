@@ -227,37 +227,80 @@ class ArchiveTests(unittest.TestCase):
 
 
 class UploadTests(unittest.TestCase):
-    def test_draft_retry_skips_existing_assets_and_verifies_downloads(self):
+    def test_draft_retry_skips_existing_assets_and_verifies_digests(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             asset = directory / "notrum.zip"
             asset.write_bytes(b"application")
             state = {"sha": SHA, "tag": "v0.1.1", "branch": "master", "notes": "Notes",
                      "assets": {asset.name: publish.file_digest(asset)}, "published": False}
-            release = {"id": 42, "body": "Notes", "draft": True, "html_url": "https://example.invalid/release"}
+            release = {"id": 42, "body": "Notes", "draft": True,
+                       "html_url": "https://example.invalid/release"}
             github = Mock()
             github.url = "https://github.com/notrum-ai/notrum.git"
             github.remote_tag.return_value = SHA
             github.release.return_value = release
-            github.api.return_value = [[{"name": asset.name}]]
-
-            def gh(*args, **kwargs):
-                if args[1] == "download":
-                    (Path(args[args.index("--dir") + 1]) / asset.name).write_bytes(asset.read_bytes())
+            remote_asset = {"name": asset.name, "state": "uploaded", "size": asset.stat().st_size,
+                            "digest": "sha256:" + publish.file_digest(asset)}
+            github.api.return_value = [[remote_asset]]
+            github.publish_release.return_value = {**release, "draft": False}
 
             def git(*args, **kwargs):
                 if args[0] == "tag":
                     return "v0.1.1\n"
                 return SHA + "\n"
 
-            github.gh.side_effect = gh
             with patch.object(publish, "git", side_effect=git), patch.object(publish, "require_clean"), \
                     patch.object(publish, "save_state"):
                 publish.upload_release(state, github, directory)
             self.assertTrue(state["published"])
-            self.assertFalse(any(call.args[1] == "upload" for call in github.gh.call_args_list))
-            self.assertIn(("release", "edit", "v0.1.1", "--draft=false", "--latest"),
-                          [call.args for call in github.gh.call_args_list])
+            github.upload_asset.assert_not_called()
+            github.verify_asset.assert_called_once_with(remote_asset, asset)
+            github.publish_release.assert_called_once_with(release)
+
+    def test_missing_asset_is_uploaded_through_api(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            asset = directory / "notrum.zip"
+            asset.write_bytes(b"application")
+            state = {"sha": SHA, "tag": "v0.1.1", "branch": "master", "notes": "Notes",
+                     "assets": {asset.name: publish.file_digest(asset)}, "published": False}
+            release = {"id": 42, "body": "Notes", "draft": True,
+                       "html_url": "https://example.invalid/release"}
+            uploaded = {"name": asset.name, "state": "uploaded", "size": asset.stat().st_size,
+                        "digest": "sha256:" + publish.file_digest(asset)}
+            github = Mock()
+            github.url = "https://github.com/notrum-ai/notrum.git"
+            github.remote_tag.return_value = SHA
+            github.release.return_value = release
+            github.api.side_effect = [[[]], [[uploaded]]]
+            github.upload_asset.return_value = uploaded
+            github.publish_release.return_value = {**release, "draft": False}
+
+            def git(*args, **kwargs):
+                if args[0] == "tag":
+                    return "v0.1.1\n"
+                return SHA + "\n"
+
+            with patch.object(publish, "git", side_effect=git), patch.object(publish, "require_clean"), \
+                    patch.object(publish, "save_state"):
+                publish.upload_release(state, github, directory)
+            github.upload_asset.assert_called_once_with(release, asset)
+            github.verify_asset.assert_called_once_with(uploaded, asset)
+
+    def test_asset_digest_must_match_local_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            asset = Path(temporary) / "notrum.zip"
+            asset.write_bytes(b"application")
+            github = publish.GitHub("notrum-ai/notrum", "secret")
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                github.verify_asset({"state": "uploaded", "size": asset.stat().st_size,
+                                     "digest": "sha256:" + "0" * 64}, asset)
+            with self.assertRaisesRegex(ValueError, "did not return"):
+                github.verify_asset({"state": "uploaded", "size": asset.stat().st_size}, asset)
+            with self.assertRaisesRegex(ValueError, "unexpected size"):
+                github.verify_asset({"state": "uploaded", "size": asset.stat().st_size + 1,
+                                     "digest": "sha256:" + publish.file_digest(asset)}, asset)
 
     def test_conflicting_remote_tag_is_never_overwritten(self):
         github = Mock()

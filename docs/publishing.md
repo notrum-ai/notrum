@@ -12,19 +12,30 @@ ahead of GitHub are included; a behind or diverged branch is rejected.
   Xcode Command Line Tools, and system Python 3.9 or newer (`/usr/bin/python3`).
 - A working local `codex` CLI in `PATH`, already signed in and able to use
   `gpt-5.6-luna`. The command explicitly selects `medium` reasoning effort.
-- GitHub CLI (`gh`) in `PATH`, authenticated with `gh auth login`, with permission
-  to push commits/tags and create Releases in the repository. Repository rules
-  still apply; publication does not bypass branch protection.
+- A `GITHUB_TOKEN` environment variable containing a fine-grained personal
+  access token with `Contents: Read and write` permission for the repository.
+  Repository rules still apply; publication does not bypass branch protection.
 
-Python orchestrates publication on the host and invokes the host's Codex and
-GitHub CLIs. Git and Rust commands continue to run in the Docker toolchain.
+Python orchestrates publication on the host, invokes the host's Codex CLI and
+calls GitHub's HTTPS REST API directly through the standard library. The GitHub
+CLI and additional Python packages are not required. Git and Rust commands
+continue to run in the Docker toolchain.
 `make publish` explicitly launches system Python as arm64, so an Intel-only
 `python3` earlier in `PATH` or a terminal running under Rosetta does not trigger
 the Apple Silicon prerequisite error. It does not change `PATH` or your Python
 installation.
-GitHub authentication is passed to individual Docker Git commands in environment
-variables; tokens are not written to the checkout or Git configuration. The
-existing SSH or HTTPS `origin` URL is preserved.
+The token is passed to individual Docker Git commands in environment variables;
+it is not written to the checkout, saved state or Git configuration. The
+orchestrator removes `GITHUB_TOKEN` from the environment of Codex, builds and
+other child processes. The existing SSH or HTTPS `origin` URL is preserved.
+Run publication without putting
+the token in shell history, for example:
+
+```sh
+read -s GITHUB_TOKEN && export GITHUB_TOKEN
+make publish
+unset GITHUB_TOKEN
+```
 
 ## What the command does
 
@@ -54,7 +65,8 @@ existing SSH or HTTPS `origin` URL is preserved.
    The Windows test kit is not a release asset.
 7. Pushes the default branch and annotated `vX.Y.Z` tag atomically, without a
    force push. Creates a draft Release, uploads the archives and checksums,
-   verifies their downloaded bytes, then publishes it as Latest. The command
+   verifies GitHub's SHA-256 digest for every uploaded byte, then publishes it
+   as Latest. The command
    prints the Release URL. No confirmation prompt is required.
 
 No new commits since the previous version change means no new release. A Codex

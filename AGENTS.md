@@ -41,6 +41,8 @@
   and `make native-external-smoke`. Builds use pinned Rust in ignored
   `.host-build/` and the system Xcode SDK without changing global Rust or shell
   profiles. The external-file smoke uses host Python and an existing bundle.
+- `make publish` runs its Python orchestrator and the locally authenticated
+  Codex/GitHub CLIs on the host; its Git and Rust operations stay in Docker.
 - Write or update tests with behavior changes. Do not weaken tests to hide a
   defect.
 - Use scoped UI styles. Do not apply global theme/style overrides for local

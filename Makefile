@@ -34,6 +34,13 @@ UI_ACCEPTANCE_SECURE := ui-click-crash ui-click-password-change ui-click-secure 
 
 all: check build native-external-smoke
 
+.PHONY: publish test-publish
+publish:
+	python3 -B tools/publish.py
+
+test-publish:
+	$(RUN) python3 -B tools/test_publish.py
+
 help:
 	$(RUN) sh -c 'printf "%s\n" \
 		"Итоговая проверка: выберите ровно один самый широкий gate." \
@@ -42,6 +49,7 @@ help:
 		"  make ci-validate — закреплённый actionlint и объединённая Compose CI" \
 		"  make NATIVE=1 SOURCE_REVISION=<HEAD-SHA> native-check — macOS без Docker" \
 		"  make           — make check, затем native build" \
+		"  make publish   — patch version, Codex changelog, полный make и GitHub Release" \
 		"  make clean     — удалить Docker debug-артефакты Cargo" \
 		"  make build-macos — macOS release в dist/Notrum.app (make build — алиас)" \
 		"  make build-windows — Windows x64 release в dist/windows/x86_64/Notrum.exe через Docker" \
@@ -52,7 +60,7 @@ help:
 		"  make ui-click-<scenario> | make ui-acceptance | make test-<crate>" \
 		"Не запускайте target, а затем включающий его aggregate на неизменном diff."'
 
-check: ci-validate fmt-check lint test test-release test-demo-data check-macos package-macos-smoke build-linux-smoke build-windows test-windows-build ui-check audit diff-check
+check: ci-validate fmt-check lint test test-release test-demo-data test-publish check-macos package-macos-smoke build-linux-smoke build-windows test-windows-build ui-check audit diff-check
 
 clean:
 	$(RUN) rm -rf -- /var/cache/notrum/target/debug

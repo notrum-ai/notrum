@@ -96,6 +96,9 @@ class PackageMacosTests(unittest.TestCase):
             self.assertEqual(info["CFBundleExecutable"], "Notrum")
             self.assertEqual(info["CFBundleIdentifier"], "org.notrum.Notrum")
             self.assertEqual(info["CFBundleIconFile"], "Notrum.icns")
+            self.assertEqual(info["CFBundleShortVersionString"], package_macos.APP_VERSION)
+            self.assertEqual(info["CFBundleVersion"], package_macos.APP_VERSION)
+            self.assertEqual(manifest["version"], package_macos.APP_VERSION)
             self.assertEqual(
                 info["CFBundleDocumentTypes"],
                 [

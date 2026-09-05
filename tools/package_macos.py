@@ -14,9 +14,10 @@ import stat
 import tempfile
 from pathlib import Path
 
+from app_version import read_version
 
 APP_NAME = "Notrum"
-APP_VERSION = "0.1.0"
+APP_VERSION = read_version()
 BUNDLE_IDENTIFIER = "org.notrum.Notrum"
 ICON_FILENAME = "Notrum.icns"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -283,7 +284,7 @@ def build_bundle(
             "CFBundleName": APP_NAME,
             "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": APP_VERSION,
-            "CFBundleVersion": "1",
+            "CFBundleVersion": APP_VERSION,
             "LSArchitecturePriority": ["arm64"],
             "NSHighResolutionCapable": True,
         }

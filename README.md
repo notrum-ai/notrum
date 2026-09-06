@@ -70,6 +70,14 @@ Follow RSS and Atom feeds in the same application as your notes.
 A native reader presents article excerpts and read status; use `J` and `K`
 to move between entries, or open the original article in your browser.
 
+### ⬆️ Updates you decide on
+
+Notrum looks for a new release in the background when it starts and offers it
+in a card you can dismiss; nothing is installed without your decision. A
+release is offered automatically only a day after publication, while
+**Settings → Updates** installs it the moment it is published. See the
+[updates guide](docs/updates.md).
+
 ### 🔐 Privacy where it matters
 
 Protect individual note bodies with a workspace password and authenticated
@@ -256,6 +264,7 @@ message queue or single-instance requirement.
 | [Development](docs/development.md) | Toolchain, checks, benchmarks, and packaging |
 | [GitHub CI](docs/ci.md) | Linux, macOS, and Windows checks, caches, and artifacts |
 | [Publishing](docs/publishing.md) | `make publish`, patch versions, and GitHub Releases |
+| [Updates](docs/updates.md) | The startup check, the 24-hour hold, and in-place installation |
 | [Contributing](CONTRIBUTING.md) | Reporting bugs and submitting changes |
 | [Security policy](SECURITY.md) | Reporting vulnerabilities privately |
 

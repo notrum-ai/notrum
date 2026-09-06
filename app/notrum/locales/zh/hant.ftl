@@ -322,3 +322,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = 無法完成操作。詳細資訊：{ $error }
+
+Updates = 更新
+UpdatesDescription = Notrum 會從已發布的版本安裝更新。
+UpdateInstalledVersion = 已安裝版本 { $version }
+UpdateCheckNow = 檢查更新
+UpdateChecking = 正在檢查更新…
+UpdateUpToDate = Notrum 已是最新版本。
+UpdateAvailable = 版本 { $version } 可用。
+UpdateHeld = 版本 { $version } 發布不到一天。啟動檢查會在發布一天後提示；立即更新可馬上安裝。
+UpdateUnpackaged = 版本 { $version } 沒有適用於此平台的安裝包。
+UpdateInstall = 立即更新
+UpdateLater = 稍後
+UpdateDownloading = 正在下載更新…
+UpdateDownloadingPercent = 正在下載更新：{ $percent }%
+UpdateInstalledRestart = 版本 { $version } 已安裝。請重新啟動 Notrum 以使用它。
+UpdateNotes = 新增內容
+UpdateOpenPage = 開啟發布頁面
+UpdateAutomatic = 啟動檢查
+UpdateAutomaticHint = Notrum 啟動時會在背景檢查更新，並在發布一天後提示新版本。在此檢查會立即提示。
+UpdateAutomaticEnabled = 啟動檢查已開啟。
+UpdateAutomaticDisabled = 啟動檢查已關閉。
+UpdateAutomaticEnable = 開啟
+UpdateAutomaticDisable = 關閉
+UpdateNotInstalled = 此組建不是已安裝的套件，因此無法自行更新。
+UpdateReadOnly = 安裝目錄無法寫入。請手動安裝更新。
+UpdateNetworkFailed = 無法連線至發布服務。
+UpdateRateLimited = 發布服務拒絕了請求。請稍後再試。
+UpdateResponseFailed = 無法讀取發布資訊。
+UpdateNoPackage = 此版本沒有適用於此平台的安裝包。
+UpdateChecksumFailed = 下載的安裝包與發布的校驗和不一致。
+UpdateFailed = 更新未能完成。詳細資訊：{ $error }

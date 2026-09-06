@@ -323,3 +323,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = Impossible de terminer l’opération. Détails : { $error }
+
+Updates = Mises à jour
+UpdatesDescription = Notrum installe les mises à jour depuis ses versions publiées.
+UpdateInstalledVersion = Version installée { $version }
+UpdateCheckNow = Rechercher des mises à jour
+UpdateChecking = Recherche de mises à jour…
+UpdateUpToDate = Notrum est à jour.
+UpdateAvailable = La version { $version } est disponible.
+UpdateHeld = La version { $version } a été publiée il y a moins d’un jour. La vérification au démarrage la propose un jour après sa publication ; mettez à jour maintenant pour l’installer immédiatement.
+UpdateUnpackaged = La version { $version } n’a pas de paquet pour cette plateforme.
+UpdateInstall = Mettre à jour
+UpdateLater = Plus tard
+UpdateDownloading = Téléchargement de la mise à jour…
+UpdateDownloadingPercent = Téléchargement de la mise à jour : { $percent } %
+UpdateInstalledRestart = La version { $version } est installée. Redémarrez Notrum pour l’utiliser.
+UpdateNotes = Nouveautés
+UpdateOpenPage = Ouvrir la page de la version
+UpdateAutomatic = Vérification au démarrage
+UpdateAutomaticHint = Notrum recherche des mises à jour en arrière-plan au démarrage et propose une version un jour après sa publication. Une vérification ici la propose immédiatement.
+UpdateAutomaticEnabled = La vérification au démarrage est activée.
+UpdateAutomaticDisabled = La vérification au démarrage est désactivée.
+UpdateAutomaticEnable = Activer
+UpdateAutomaticDisable = Désactiver
+UpdateNotInstalled = Cette build n’est pas un paquet installé et ne peut donc pas se mettre à jour.
+UpdateReadOnly = Le répertoire d’installation n’est pas accessible en écriture. Installez la mise à jour manuellement.
+UpdateNetworkFailed = Le service de versions est injoignable.
+UpdateRateLimited = Le service de versions a refusé la requête. Réessayez plus tard.
+UpdateResponseFailed = Les informations de version n’ont pas pu être lues.
+UpdateNoPackage = Cette version n’a pas de paquet pour cette plateforme.
+UpdateChecksumFailed = Le paquet téléchargé ne correspond pas à sa somme de contrôle publiée.
+UpdateFailed = La mise à jour n’a pas pu être terminée. Détails : { $error }

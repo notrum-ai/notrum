@@ -59,6 +59,17 @@ Translations are included in the application and work offline. System-owned
 file dialog controls follow the operating system's language. Technical diagnostic
 details remain in English.
 
+## Updates
+
+Open **Settings → Updates** to see the installed version, look for a new
+release and install it. Notrum also looks in the background at every start and
+offers a release in a card with **Update now** and **Later**; a release is
+offered automatically only a day after it was published, while checking from
+the settings page installs it immediately. After an update Notrum asks you to
+restart it: the application never restarts itself. The
+[updates guide](updates.md) describes the checks, the platforms and the
+network requests involved.
+
 ## Workspaces and settings
 
 On first launch without an explicit or saved workspace, Notrum offers to

@@ -110,6 +110,13 @@ may show no data until that CI run finishes. The badge URLs do not need to
 change with each version. Repository tag
 rules must allow creating and updating `latest` with the publication token.
 
+Published releases are what installed applications update themselves from:
+they read this repository's latest release, verify the package against the
+uploaded `SHA256SUMS` and replace themselves in place. A release reaches
+automatic checks 24 hours after publication and manual checks immediately, so
+a mistaken release can be replaced within that day. See
+[updates](updates.md).
+
 No new commits since the previous version change means no new release. A Codex
 failure, unsupported version or failed build stops the process; the command does
 not substitute another model or silently skip checks.

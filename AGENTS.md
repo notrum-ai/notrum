@@ -26,10 +26,17 @@
 - Project-owned Rust must remain safe-only. Do not add `unsafe`, SQLite,
   WebView/browser runtimes, JavaScript runtimes, or process execution. The only
   network exceptions are the restricted `ureq` HTTP/HTTPS client in `notrum-rss`
-  (any host or port) and HTTPS client in `notrum-ai` (fixed OpenAI/Anthropic
-  model catalog endpoints only); HTTP/HTTPS article opening is allowed only
-  through the RSS crate's dedicated hardened opener. The test-only RSS HTTP
-  integration target may use a loopback server to exercise the client.
+  (any host or port), the HTTPS client in `notrum-ai` (fixed OpenAI/Anthropic
+  model catalog endpoints only) and the HTTPS client in `notrum-update` (release
+  metadata and release assets on a fixed GitHub host allowlist, redirects
+  checked per hop); HTTP/HTTPS opening in the system browser is allowed only
+  through the RSS crate's dedicated hardened opener. The test-only RSS and
+  update HTTP integration targets may use a loopback server.
+- Updates verify every downloaded byte against the published checksum list and
+  the package manifest, and replace only the application's own installation by
+  renaming files in place. An update must never write into a workspace,
+  restart the application, or install a release that an automatic check found
+  less than 24 hours after publication.
 - AI settings are global. API keys belong only in the OS credential store via
   `notrum-platform`; config files contain opaque references and model aliases.
   Never send notes while checking a key or listing models. Connecting creates

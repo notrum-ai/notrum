@@ -322,3 +322,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = 작업을 완료할 수 없습니다. 세부 정보: { $error }
+
+Updates = 업데이트
+UpdatesDescription = Notrum은 공개된 릴리스에서 업데이트를 설치합니다.
+UpdateInstalledVersion = 설치된 버전 { $version }
+UpdateCheckNow = 업데이트 확인
+UpdateChecking = 업데이트를 확인하는 중…
+UpdateUpToDate = Notrum이 최신 상태입니다.
+UpdateAvailable = 버전 { $version }을(를) 사용할 수 있습니다.
+UpdateHeld = 버전 { $version }은(는) 공개된 지 하루가 지나지 않았습니다. 시작 시 확인은 공개 하루 뒤에 안내합니다. 지금 업데이트하면 즉시 설치됩니다.
+UpdateUnpackaged = 버전 { $version }에는 이 플랫폼용 패키지가 없습니다.
+UpdateInstall = 지금 업데이트
+UpdateLater = 나중에
+UpdateDownloading = 업데이트를 내려받는 중…
+UpdateDownloadingPercent = 업데이트를 내려받는 중: { $percent }%
+UpdateInstalledRestart = 버전 { $version }을(를) 설치했습니다. 사용하려면 Notrum을 다시 시작하세요.
+UpdateNotes = 새로운 기능
+UpdateOpenPage = 릴리스 페이지 열기
+UpdateAutomatic = 시작 시 확인
+UpdateAutomaticHint = Notrum은 시작할 때 백그라운드에서 업데이트를 확인하고, 공개 하루 뒤에 릴리스를 안내합니다. 여기서 확인하면 바로 안내합니다.
+UpdateAutomaticEnabled = 시작 시 확인이 켜져 있습니다.
+UpdateAutomaticDisabled = 시작 시 확인이 꺼져 있습니다.
+UpdateAutomaticEnable = 켜기
+UpdateAutomaticDisable = 끄기
+UpdateNotInstalled = 이 빌드는 설치된 패키지가 아니므로 스스로 업데이트할 수 없습니다.
+UpdateReadOnly = 설치 디렉터리에 쓸 수 없습니다. 업데이트를 직접 설치하세요.
+UpdateNetworkFailed = 릴리스 서비스에 연결할 수 없습니다.
+UpdateRateLimited = 릴리스 서비스가 요청을 거부했습니다. 나중에 다시 시도하세요.
+UpdateResponseFailed = 릴리스 정보를 읽을 수 없습니다.
+UpdateNoPackage = 이 릴리스에는 이 플랫폼용 패키지가 없습니다.
+UpdateChecksumFailed = 내려받은 패키지가 공개된 체크섬과 일치하지 않습니다.
+UpdateFailed = 업데이트를 완료할 수 없습니다. 세부 정보: { $error }

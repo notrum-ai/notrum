@@ -224,7 +224,7 @@ fn error_key(error: Failure) -> i18n::Key {
 
 /// The page heading of a settings section, matching the general and
 /// encryption pages.
-fn page_title(key: i18n::Key, palette: Palette) -> impl IntoView {
+pub(super) fn page_title(key: i18n::Key, palette: Palette) -> impl IntoView {
     label(move || key.to_string()).style(move |style| {
         style
             .font_size(26.0)
@@ -234,14 +234,14 @@ fn page_title(key: i18n::Key, palette: Palette) -> impl IntoView {
     })
 }
 
-fn page_description(key: i18n::Key, palette: Palette) -> impl IntoView {
+pub(super) fn page_description(key: i18n::Key, palette: Palette) -> impl IntoView {
     label(move || key.to_string())
         .style(move |style| style.font_size(13.5).color(palette.muted).selectable(false))
 }
 
 /// A step of the page: the connection and the model aliases are two sections
 /// of one page, titled like the cards of the general settings page.
-fn section_title(key: i18n::Key, palette: Palette) -> impl IntoView {
+pub(super) fn section_title(key: i18n::Key, palette: Palette) -> impl IntoView {
     label(move || key.to_string()).style(move |style| {
         style
             .font_size(15.0)
@@ -251,13 +251,13 @@ fn section_title(key: i18n::Key, palette: Palette) -> impl IntoView {
     })
 }
 
-fn spacer(height: f64) -> impl IntoView {
+pub(super) fn spacer(height: f64) -> impl IntoView {
     empty().style(move |style| style.height(height))
 }
 
 /// One row of form actions. Buttons keep their own width instead of
 /// stretching across the card, and wrap before they shrink.
-fn actions(children: impl ViewTuple + 'static) -> impl IntoView {
+pub(super) fn actions(children: impl ViewTuple + 'static) -> impl IntoView {
     h_stack(children).style(|style| {
         rtl_row(style)
             .gap(8.0)

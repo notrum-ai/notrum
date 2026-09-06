@@ -327,3 +327,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = The operation could not be completed. Details: { $error }
+
+Updates = Updates
+UpdatesDescription = Notrum installs updates from its published releases.
+UpdateInstalledVersion = Installed version { $version }
+UpdateCheckNow = Check for updates
+UpdateChecking = Checking for updates…
+UpdateUpToDate = Notrum is up to date.
+UpdateAvailable = Version { $version } is available.
+UpdateHeld = Version { $version } was published less than a day ago. The startup check offers it a day after publication; update now to install it immediately.
+UpdateUnpackaged = Version { $version } has no package for this platform.
+UpdateInstall = Update now
+UpdateLater = Later
+UpdateDownloading = Downloading the update…
+UpdateDownloadingPercent = Downloading the update: { $percent }%
+UpdateInstalledRestart = Version { $version } is installed. Restart Notrum to use it.
+UpdateNotes = What is new
+UpdateOpenPage = Open the release page
+UpdateAutomatic = Startup check
+UpdateAutomaticHint = Notrum looks for updates in the background when it starts and offers a release a day after publication. Checking here offers a release immediately.
+UpdateAutomaticEnabled = The startup check is on.
+UpdateAutomaticDisabled = The startup check is off.
+UpdateAutomaticEnable = Turn on
+UpdateAutomaticDisable = Turn off
+UpdateNotInstalled = This build is not an installed package, so it cannot update itself.
+UpdateReadOnly = The installation directory is not writable. Install the update manually.
+UpdateNetworkFailed = The release service could not be reached.
+UpdateRateLimited = The release service refused the request. Try again later.
+UpdateResponseFailed = The release information could not be read.
+UpdateNoPackage = This release has no package for this platform.
+UpdateChecksumFailed = The downloaded package did not match its published checksum.
+UpdateFailed = The update could not be completed. Details: { $error }

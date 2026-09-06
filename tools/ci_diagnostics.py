@@ -15,6 +15,7 @@ UI_SCENARIOS = frozenset({
     "editor", "context_menu", "selection", "persistence", "recovery", "conflict",
     "search", "find", "resize", "password_dialog", "password_change", "secure",
     "secure_recovery", "secure_conflict", "secure_integrity", "visual",
+    "updates",
 })
 UI_COMMON_STAGES = frozenset({"startup", "scenario", "capture", "cleanup", "artifacts"})
 UI_PASSWORD_CHANGE_STAGES = frozenset({

@@ -322,3 +322,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = Operasi tidak dapat diselesaikan. Detail: { $error }
+
+Updates = Pembaruan
+UpdatesDescription = Notrum memasang pembaruan dari rilis yang diterbitkannya.
+UpdateInstalledVersion = Versi terpasang { $version }
+UpdateCheckNow = Periksa pembaruan
+UpdateChecking = Memeriksa pembaruan…
+UpdateUpToDate = Notrum sudah versi terbaru.
+UpdateAvailable = Versi { $version } tersedia.
+UpdateHeld = Versi { $version } diterbitkan kurang dari sehari yang lalu. Pemeriksaan saat mulai menawarkannya sehari setelah terbit; perbarui sekarang untuk memasangnya segera.
+UpdateUnpackaged = Versi { $version } tidak memiliki paket untuk platform ini.
+UpdateInstall = Perbarui sekarang
+UpdateLater = Nanti
+UpdateDownloading = Mengunduh pembaruan…
+UpdateDownloadingPercent = Mengunduh pembaruan: { $percent }%
+UpdateInstalledRestart = Versi { $version } telah dipasang. Mulai ulang Notrum untuk menggunakannya.
+UpdateNotes = Yang baru
+UpdateOpenPage = Buka halaman rilis
+UpdateAutomatic = Pemeriksaan saat mulai
+UpdateAutomaticHint = Notrum memeriksa pembaruan di latar belakang saat mulai dan menawarkan rilis sehari setelah diterbitkan. Memeriksa di sini menawarkan rilis segera.
+UpdateAutomaticEnabled = Pemeriksaan saat mulai aktif.
+UpdateAutomaticDisabled = Pemeriksaan saat mulai nonaktif.
+UpdateAutomaticEnable = Aktifkan
+UpdateAutomaticDisable = Nonaktifkan
+UpdateNotInstalled = Build ini bukan paket terpasang, jadi tidak dapat memperbarui dirinya sendiri.
+UpdateReadOnly = Direktori pemasangan tidak dapat ditulis. Pasang pembaruan secara manual.
+UpdateNetworkFailed = Layanan rilis tidak dapat dihubungi.
+UpdateRateLimited = Layanan rilis menolak permintaan. Coba lagi nanti.
+UpdateResponseFailed = Informasi rilis tidak dapat dibaca.
+UpdateNoPackage = Rilis ini tidak memiliki paket untuk platform ini.
+UpdateChecksumFailed = Paket yang diunduh tidak cocok dengan checksum yang diterbitkan.
+UpdateFailed = Pembaruan tidak dapat diselesaikan. Detail: { $error }

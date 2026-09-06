@@ -329,3 +329,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = Не удалось завершить операцию. Подробности: { $error }
+
+Updates = Обновления
+UpdatesDescription = Notrum устанавливает обновления из опубликованных релизов.
+UpdateInstalledVersion = Установленная версия { $version }
+UpdateCheckNow = Проверить обновления
+UpdateChecking = Проверяем обновления…
+UpdateUpToDate = Установлена актуальная версия.
+UpdateAvailable = Доступна версия { $version }.
+UpdateHeld = Версия { $version } опубликована меньше суток назад. Проверка при запуске предложит её через сутки; обновитесь сейчас, чтобы установить сразу.
+UpdateUnpackaged = Для этой платформы в версии { $version } нет пакета.
+UpdateInstall = Обновить
+UpdateLater = Позже
+UpdateDownloading = Загружаем обновление…
+UpdateDownloadingPercent = Загружаем обновление: { $percent }%
+UpdateInstalledRestart = Версия { $version } установлена. Перезапустите Notrum, чтобы её использовать.
+UpdateNotes = Что нового
+UpdateOpenPage = Открыть страницу релиза
+UpdateAutomatic = Проверка при запуске
+UpdateAutomaticHint = Notrum проверяет обновления в фоне при запуске и предлагает релиз через сутки после публикации. Проверка здесь предлагает релиз сразу.
+UpdateAutomaticEnabled = Проверка при запуске включена.
+UpdateAutomaticDisabled = Проверка при запуске выключена.
+UpdateAutomaticEnable = Включить
+UpdateAutomaticDisable = Выключить
+UpdateNotInstalled = Эта сборка не является установленным пакетом и не может обновить себя.
+UpdateReadOnly = Каталог установки недоступен для записи. Установите обновление вручную.
+UpdateNetworkFailed = Не удалось связаться со службой релизов.
+UpdateRateLimited = Служба релизов отклонила запрос. Попробуйте позже.
+UpdateResponseFailed = Не удалось прочитать сведения о релизе.
+UpdateNoPackage = В этом релизе нет пакета для этой платформы.
+UpdateChecksumFailed = Загруженный пакет не совпал с опубликованной контрольной суммой.
+UpdateFailed = Не удалось выполнить обновление. Подробности: { $error }

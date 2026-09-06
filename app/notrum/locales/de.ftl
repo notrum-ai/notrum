@@ -323,3 +323,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = Der Vorgang konnte nicht abgeschlossen werden. Details: { $error }
+
+Updates = Updates
+UpdatesDescription = Notrum installiert Updates aus seinen veröffentlichten Releases.
+UpdateInstalledVersion = Installierte Version { $version }
+UpdateCheckNow = Nach Updates suchen
+UpdateChecking = Suche nach Updates…
+UpdateUpToDate = Notrum ist aktuell.
+UpdateAvailable = Version { $version } ist verfügbar.
+UpdateHeld = Version { $version } wurde vor weniger als einem Tag veröffentlicht. Die Prüfung beim Start bietet sie einen Tag nach der Veröffentlichung an; aktualisieren Sie jetzt, um sie sofort zu installieren.
+UpdateUnpackaged = Für diese Plattform gibt es in Version { $version } kein Paket.
+UpdateInstall = Jetzt aktualisieren
+UpdateLater = Später
+UpdateDownloading = Update wird geladen…
+UpdateDownloadingPercent = Update wird geladen: { $percent } %
+UpdateInstalledRestart = Version { $version } ist installiert. Starten Sie Notrum neu, um sie zu verwenden.
+UpdateNotes = Neu in dieser Version
+UpdateOpenPage = Release-Seite öffnen
+UpdateAutomatic = Prüfung beim Start
+UpdateAutomaticHint = Notrum sucht beim Start im Hintergrund nach Updates und bietet ein Release einen Tag nach der Veröffentlichung an. Eine Prüfung hier bietet es sofort an.
+UpdateAutomaticEnabled = Die Prüfung beim Start ist aktiviert.
+UpdateAutomaticDisabled = Die Prüfung beim Start ist deaktiviert.
+UpdateAutomaticEnable = Aktivieren
+UpdateAutomaticDisable = Deaktivieren
+UpdateNotInstalled = Dieser Build ist kein installiertes Paket und kann sich daher nicht selbst aktualisieren.
+UpdateReadOnly = Das Installationsverzeichnis ist nicht beschreibbar. Installieren Sie das Update manuell.
+UpdateNetworkFailed = Der Release-Dienst war nicht erreichbar.
+UpdateRateLimited = Der Release-Dienst hat die Anfrage abgelehnt. Versuchen Sie es später erneut.
+UpdateResponseFailed = Die Release-Informationen konnten nicht gelesen werden.
+UpdateNoPackage = Dieses Release enthält kein Paket für diese Plattform.
+UpdateChecksumFailed = Das geladene Paket stimmt nicht mit der veröffentlichten Prüfsumme überein.
+UpdateFailed = Das Update konnte nicht abgeschlossen werden. Details: { $error }

@@ -24,6 +24,36 @@ const SETTINGS_FILE: &str = "settings.json";
 const GLOBAL_CONFIG_FILE: &str = ".notrum.cfg";
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// How the application looks for its own updates. Automatic checks are on by
+/// default; `dismissed` remembers the version the user declined, so the same
+/// release is offered once and not at every start.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct UpdateSettings {
+    #[serde(default = "enabled")]
+    pub(crate) automatic: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) dismissed: Option<String>,
+}
+
+fn enabled() -> bool {
+    true
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            automatic: true,
+            dismissed: None,
+        }
+    }
+}
+
+impl UpdateSettings {
+    pub(crate) fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct GlobalSettings {
     pub(crate) version: u32,
@@ -32,6 +62,8 @@ pub(crate) struct GlobalSettings {
     pub(crate) last_workspace: Option<String>,
     #[serde(default, skip_serializing_if = "notrum_ai::AiSettings::is_empty")]
     pub(crate) ai: notrum_ai::AiSettings,
+    #[serde(default, skip_serializing_if = "UpdateSettings::is_default")]
+    pub(crate) updates: UpdateSettings,
     #[serde(flatten)]
     pub(crate) additional: BTreeMap<String, serde_json::Value>,
 }
@@ -43,6 +75,7 @@ impl Default for GlobalSettings {
             locale: Locale::default(),
             last_workspace: None,
             ai: notrum_ai::AiSettings::default(),
+            updates: UpdateSettings::default(),
             additional: BTreeMap::new(),
         }
     }
@@ -95,6 +128,27 @@ impl GlobalSettingsStore {
         }
         let mut settings = loaded.settings;
         settings.ai = wanted;
+        atomic_write_global_settings(home, &settings)?;
+        self.settings = settings;
+        Ok(())
+    }
+
+    pub(crate) fn updates(&self) -> UpdateSettings {
+        self.settings.updates.clone()
+    }
+
+    /// Update preferences are independent of everything else in the file, so
+    /// a concurrent change elsewhere is merged instead of rejected.
+    pub(crate) fn set_updates(&mut self, wanted: UpdateSettings) -> Result<(), SettingsError> {
+        if self.settings.updates == wanted {
+            return Ok(());
+        }
+        let home = self.home.as_deref().ok_or_else(|| {
+            SettingsError::UnsafePath("HOME is unavailable; global config is disabled".to_owned())
+        })?;
+        let _operation = notrum_platform::OperationLock::directory(home)?;
+        let mut settings = Self::load(Some(home)).settings;
+        settings.updates = wanted;
         atomic_write_global_settings(home, &settings)?;
         self.settings = settings;
         Ok(())

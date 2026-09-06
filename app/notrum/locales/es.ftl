@@ -323,3 +323,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = No se pudo completar la operación. Detalles: { $error }
+
+Updates = Actualizaciones
+UpdatesDescription = Notrum instala actualizaciones desde sus versiones publicadas.
+UpdateInstalledVersion = Versión instalada { $version }
+UpdateCheckNow = Buscar actualizaciones
+UpdateChecking = Buscando actualizaciones…
+UpdateUpToDate = Notrum está actualizado.
+UpdateAvailable = La versión { $version } está disponible.
+UpdateHeld = La versión { $version } se publicó hace menos de un día. La comprobación al iniciar la ofrece un día después de su publicación; actualice ahora para instalarla de inmediato.
+UpdateUnpackaged = La versión { $version } no tiene un paquete para esta plataforma.
+UpdateInstall = Actualizar ahora
+UpdateLater = Más tarde
+UpdateDownloading = Descargando la actualización…
+UpdateDownloadingPercent = Descargando la actualización: { $percent } %
+UpdateInstalledRestart = La versión { $version } está instalada. Reinicie Notrum para usarla.
+UpdateNotes = Novedades
+UpdateOpenPage = Abrir la página de la versión
+UpdateAutomatic = Comprobación al iniciar
+UpdateAutomaticHint = Notrum busca actualizaciones en segundo plano al iniciarse y ofrece una versión un día después de su publicación. Comprobar aquí la ofrece de inmediato.
+UpdateAutomaticEnabled = La comprobación al iniciar está activada.
+UpdateAutomaticDisabled = La comprobación al iniciar está desactivada.
+UpdateAutomaticEnable = Activar
+UpdateAutomaticDisable = Desactivar
+UpdateNotInstalled = Esta compilación no es un paquete instalado, por lo que no puede actualizarse sola.
+UpdateReadOnly = No se puede escribir en el directorio de instalación. Instale la actualización manualmente.
+UpdateNetworkFailed = No se pudo contactar con el servicio de versiones.
+UpdateRateLimited = El servicio de versiones rechazó la solicitud. Inténtelo más tarde.
+UpdateResponseFailed = No se pudo leer la información de la versión.
+UpdateNoPackage = Esta versión no tiene un paquete para esta plataforma.
+UpdateChecksumFailed = El paquete descargado no coincide con su suma de verificación publicada.
+UpdateFailed = No se pudo completar la actualización. Detalles: { $error }

@@ -327,3 +327,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = تعذّر إكمال العملية. التفاصيل: { $error }
+
+Updates = التحديثات
+UpdatesDescription = يثبّت Notrum التحديثات من إصداراته المنشورة.
+UpdateInstalledVersion = الإصدار المثبَّت { $version }
+UpdateCheckNow = التحقق من التحديثات
+UpdateChecking = جارٍ التحقق من التحديثات…
+UpdateUpToDate = Notrum محدَّث.
+UpdateAvailable = الإصدار { $version } متاح.
+UpdateHeld = نُشر الإصدار { $version } قبل أقل من يوم. يعرضه التحقق عند بدء التشغيل بعد يوم من نشره؛ حدِّث الآن لتثبيته فورًا.
+UpdateUnpackaged = لا توجد حزمة للإصدار { $version } على هذه المنصة.
+UpdateInstall = تحديث الآن
+UpdateLater = لاحقًا
+UpdateDownloading = جارٍ تنزيل التحديث…
+UpdateDownloadingPercent = جارٍ تنزيل التحديث: { $percent }%
+UpdateInstalledRestart = تم تثبيت الإصدار { $version }. أعد تشغيل Notrum لاستخدامه.
+UpdateNotes = ما الجديد
+UpdateOpenPage = فتح صفحة الإصدار
+UpdateAutomatic = التحقق عند بدء التشغيل
+UpdateAutomaticHint = يبحث Notrum عن التحديثات في الخلفية عند بدء التشغيل، ويعرض الإصدار بعد يوم من نشره. التحقق هنا يعرضه فورًا.
+UpdateAutomaticEnabled = التحقق عند بدء التشغيل مفعَّل.
+UpdateAutomaticDisabled = التحقق عند بدء التشغيل معطَّل.
+UpdateAutomaticEnable = تفعيل
+UpdateAutomaticDisable = تعطيل
+UpdateNotInstalled = هذه النسخة ليست حزمة مثبَّتة، لذا لا يمكنها تحديث نفسها.
+UpdateReadOnly = لا يمكن الكتابة في مجلد التثبيت. ثبِّت التحديث يدويًا.
+UpdateNetworkFailed = تعذّر الوصول إلى خدمة الإصدارات.
+UpdateRateLimited = رفضت خدمة الإصدارات الطلب. حاول لاحقًا.
+UpdateResponseFailed = تعذّرت قراءة معلومات الإصدار.
+UpdateNoPackage = لا توجد حزمة لهذه المنصة في هذا الإصدار.
+UpdateChecksumFailed = لا تطابق الحزمة المنزَّلة المجموع الاختباري المنشور.
+UpdateFailed = تعذّر إكمال التحديث. التفاصيل: { $error }

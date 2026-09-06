@@ -323,3 +323,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = کارروائی مکمل نہیں ہو سکی۔ تفصیلات: { $error }
+
+Updates = اپ ڈیٹس
+UpdatesDescription = Notrum اپنے شائع شدہ ریلیز سے اپ ڈیٹس انسٹال کرتا ہے۔
+UpdateInstalledVersion = نصب شدہ ورژن { $version }
+UpdateCheckNow = اپ ڈیٹس چیک کریں
+UpdateChecking = اپ ڈیٹس چیک کیے جا رہے ہیں…
+UpdateUpToDate = Notrum تازہ ترین ہے۔
+UpdateAvailable = ورژن { $version } دستیاب ہے۔
+UpdateHeld = ورژن { $version } ایک دن سے کم پہلے شائع ہوا۔ آغاز پر جانچ اسے اشاعت کے ایک دن بعد پیش کرتی ہے؛ فوراً انسٹال کرنے کے لیے ابھی اپ ڈیٹ کریں۔
+UpdateUnpackaged = ورژن { $version } کے لیے اس پلیٹ فارم کا پیکیج موجود نہیں۔
+UpdateInstall = ابھی اپ ڈیٹ کریں
+UpdateLater = بعد میں
+UpdateDownloading = اپ ڈیٹ ڈاؤن لوڈ ہو رہا ہے…
+UpdateDownloadingPercent = اپ ڈیٹ ڈاؤن لوڈ ہو رہا ہے: { $percent }%
+UpdateInstalledRestart = ورژن { $version } انسٹال ہو گیا۔ استعمال کے لیے Notrum دوبارہ شروع کریں۔
+UpdateNotes = نیا کیا ہے
+UpdateOpenPage = ریلیز صفحہ کھولیں
+UpdateAutomatic = آغاز پر جانچ
+UpdateAutomaticHint = Notrum آغاز پر پس منظر میں اپ ڈیٹس دیکھتا ہے اور ریلیز اشاعت کے ایک دن بعد پیش کرتا ہے۔ یہاں جانچنے پر ریلیز فوراً پیش کی جاتی ہے۔
+UpdateAutomaticEnabled = آغاز پر جانچ آن ہے۔
+UpdateAutomaticDisabled = آغاز پر جانچ آف ہے۔
+UpdateAutomaticEnable = آن کریں
+UpdateAutomaticDisable = آف کریں
+UpdateNotInstalled = یہ بلڈ نصب شدہ پیکیج نہیں ہے، اس لیے یہ خود کو اپ ڈیٹ نہیں کر سکتا۔
+UpdateReadOnly = انسٹالیشن ڈائریکٹری میں لکھا نہیں جا سکتا۔ اپ ڈیٹ خود انسٹال کریں۔
+UpdateNetworkFailed = ریلیز سروس تک رسائی نہ ہو سکی۔
+UpdateRateLimited = ریلیز سروس نے درخواست مسترد کر دی۔ بعد میں دوبارہ کوشش کریں۔
+UpdateResponseFailed = ریلیز کی معلومات پڑھی نہ جا سکیں۔
+UpdateNoPackage = اس ریلیز میں اس پلیٹ فارم کا پیکیج نہیں ہے۔
+UpdateChecksumFailed = ڈاؤن لوڈ کیا گیا پیکیج شائع شدہ چیک سم سے میل نہیں کھایا۔
+UpdateFailed = اپ ڈیٹ مکمل نہ ہو سکا۔ تفصیلات: { $error }

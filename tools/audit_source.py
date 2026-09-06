@@ -58,11 +58,17 @@ def main() -> int:
                 fail(f"{relative}:{line_number}: project-owned unsafe token")
                 errors += 1
         for label, pattern in FORBIDDEN_RUST.items():
-            # Only this test-only integration target may run a loopback fixture
-            # server. Production RSS networking still goes exclusively through ureq.
+            # Only these test-only integration targets may run a loopback
+            # fixture server: the RSS one exercises its client, the update one
+            # proves that its client refuses every host but GitHub. Production
+            # networking still goes exclusively through ureq.
             if (
                 label == "runtime network API"
-                and relative == Path("crates/notrum-rss/tests/http.rs")
+                and relative
+                in (
+                    Path("crates/notrum-rss/tests/http.rs"),
+                    Path("crates/notrum-update/tests/http.rs"),
+                )
                 and "#![cfg(test)]" in text.splitlines()[:5]
             ):
                 continue
@@ -72,9 +78,9 @@ def main() -> int:
                 fail(f"{relative}:{line_number}: forbidden {label}")
                 errors += 1
         if re.search(r"\bureq::", text) and relative.parts[:2] not in (
-            ("crates", "notrum-rss"), ("crates", "notrum-ai")
+            ("crates", "notrum-rss"), ("crates", "notrum-ai"), ("crates", "notrum-update")
         ):
-            fail(f"{relative}: ureq is restricted to RSS and AI transport crates")
+            fail(f"{relative}: ureq is restricted to RSS, AI and update transport crates")
             errors += 1
         if re.search(r"\bwebbrowser::", text) and relative.parts[:2] != ("crates", "notrum-rss"):
             fail(f"{relative}: browser handoff is restricted to crates/notrum-rss")
@@ -89,9 +95,11 @@ def main() -> int:
             fail(f"{relative}:{line_number}: forbidden direct dependency")
             errors += 1
         if re.search(r"^\s*ureq\s*=", text, re.MULTILINE) and relative not in (
-            Path("crates/notrum-rss/Cargo.toml"), Path("crates/notrum-ai/Cargo.toml")
+            Path("crates/notrum-rss/Cargo.toml"),
+            Path("crates/notrum-ai/Cargo.toml"),
+            Path("crates/notrum-update/Cargo.toml"),
         ):
-            fail(f"{relative}: HTTP dependency crosses the RSS/AI transport boundary")
+            fail(f"{relative}: HTTP dependency crosses the RSS/AI/update transport boundary")
             errors += 1
         if re.search(r"^\s*webbrowser\s*=", text, re.MULTILINE) and relative != Path("crates/notrum-rss/Cargo.toml"):
             fail(f"{relative}: browser handoff crosses the RSS boundary")
@@ -108,7 +116,8 @@ def main() -> int:
     print(
         "SOURCE_AUDIT "
         f"rust_files={len(rust_files)} manifests={len(manifests)} "
-        "project_unsafe=0 rss_http_boundary=1 ai_https_boundary=1 process_spawn=0 database=0 web_js=0"
+        "project_unsafe=0 rss_http_boundary=1 ai_https_boundary=1 update_https_boundary=1 "
+        "process_spawn=0 database=0 web_js=0"
     )
     return 0
 

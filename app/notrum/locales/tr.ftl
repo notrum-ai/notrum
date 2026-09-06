@@ -322,3 +322,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = İşlem tamamlanamadı. Ayrıntılar: { $error }
+
+Updates = Güncellemeler
+UpdatesDescription = Notrum güncellemeleri yayımlanan sürümlerinden yükler.
+UpdateInstalledVersion = Yüklü sürüm { $version }
+UpdateCheckNow = Güncellemeleri denetle
+UpdateChecking = Güncellemeler denetleniyor…
+UpdateUpToDate = Notrum güncel.
+UpdateAvailable = { $version } sürümü kullanılabilir.
+UpdateHeld = { $version } sürümü bir günden kısa süre önce yayımlandı. Başlangıç denetimi bu sürümü yayımdan bir gün sonra sunar; hemen yüklemek için şimdi güncelleyin.
+UpdateUnpackaged = { $version } sürümünün bu platform için paketi yok.
+UpdateInstall = Şimdi güncelle
+UpdateLater = Daha sonra
+UpdateDownloading = Güncelleme indiriliyor…
+UpdateDownloadingPercent = Güncelleme indiriliyor: %{ $percent }
+UpdateInstalledRestart = { $version } sürümü yüklendi. Kullanmak için Notrum’u yeniden başlatın.
+UpdateNotes = Yenilikler
+UpdateOpenPage = Sürüm sayfasını aç
+UpdateAutomatic = Başlangıç denetimi
+UpdateAutomaticHint = Notrum başlarken güncellemeleri arka planda arar ve bir sürümü yayımdan bir gün sonra sunar. Buradan denetlemek sürümü hemen sunar.
+UpdateAutomaticEnabled = Başlangıç denetimi açık.
+UpdateAutomaticDisabled = Başlangıç denetimi kapalı.
+UpdateAutomaticEnable = Aç
+UpdateAutomaticDisable = Kapat
+UpdateNotInstalled = Bu yapı yüklenmiş bir paket değil, bu yüzden kendini güncelleyemez.
+UpdateReadOnly = Kurulum dizinine yazılamıyor. Güncellemeyi elle yükleyin.
+UpdateNetworkFailed = Sürüm hizmetine ulaşılamadı.
+UpdateRateLimited = Sürüm hizmeti isteği reddetti. Daha sonra yeniden deneyin.
+UpdateResponseFailed = Sürüm bilgileri okunamadı.
+UpdateNoPackage = Bu sürümün bu platform için paketi yok.
+UpdateChecksumFailed = İndirilen paket yayımlanan sağlama toplamıyla eşleşmedi.
+UpdateFailed = Güncelleme tamamlanamadı. Ayrıntılar: { $error }

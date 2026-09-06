@@ -322,3 +322,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = 操作を完了できませんでした。詳細：{ $error }
+
+Updates = アップデート
+UpdatesDescription = Notrum は公開されたリリースからアップデートをインストールします。
+UpdateInstalledVersion = インストール済みのバージョン { $version }
+UpdateCheckNow = アップデートを確認
+UpdateChecking = アップデートを確認しています…
+UpdateUpToDate = Notrum は最新です。
+UpdateAvailable = バージョン { $version } が利用できます。
+UpdateHeld = バージョン { $version } は公開から 1 日たっていません。起動時の確認では公開の 1 日後に案内します。今すぐ更新するとすぐにインストールできます。
+UpdateUnpackaged = バージョン { $version } にはこのプラットフォーム向けのパッケージがありません。
+UpdateInstall = 今すぐ更新
+UpdateLater = 後で
+UpdateDownloading = アップデートをダウンロードしています…
+UpdateDownloadingPercent = アップデートをダウンロードしています: { $percent }%
+UpdateInstalledRestart = バージョン { $version } をインストールしました。使用するには Notrum を再起動してください。
+UpdateNotes = 新機能
+UpdateOpenPage = リリースページを開く
+UpdateAutomatic = 起動時の確認
+UpdateAutomaticHint = Notrum は起動時にバックグラウンドでアップデートを確認し、公開の 1 日後にリリースを案内します。ここで確認すると、すぐに案内します。
+UpdateAutomaticEnabled = 起動時の確認はオンです。
+UpdateAutomaticDisabled = 起動時の確認はオフです。
+UpdateAutomaticEnable = オンにする
+UpdateAutomaticDisable = オフにする
+UpdateNotInstalled = このビルドはインストール済みパッケージではないため、自身を更新できません。
+UpdateReadOnly = インストール先のディレクトリに書き込めません。アップデートを手動でインストールしてください。
+UpdateNetworkFailed = リリースサービスに接続できませんでした。
+UpdateRateLimited = リリースサービスがリクエストを拒否しました。しばらくしてからやり直してください。
+UpdateResponseFailed = リリース情報を読み取れませんでした。
+UpdateNoPackage = このリリースにはこのプラットフォーム向けのパッケージがありません。
+UpdateChecksumFailed = ダウンロードしたパッケージが公開されたチェックサムと一致しませんでした。
+UpdateFailed = アップデートを完了できませんでした。詳細: { $error }

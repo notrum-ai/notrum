@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from typing import Callable
@@ -7609,8 +7612,188 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
         raise AcceptanceFailure("AI configuration modified notes")
 
 
+# Update prompt and settings geometry. The prompt is a card in the bottom
+# right corner of the window; its accent-filled action is the only long dark
+# run in that column, exactly like the AI page's primary action.
+UPDATES_SIDEBAR_ITEM = (90, 241)
+UPDATES_PROMPT_CROP = (SCREEN_WIDTH - 360, SCREEN_HEIGHT - 220, 342, 202)
+UPDATES_PROMPT_LEFT = SCREEN_WIDTH - 348
+UPDATES_ACCENT_LUMINANCE = 150.0
+UPDATES_BUTTON_MIN_HEIGHT = 20
+UPDATES_OFFERED_VERSION = "9.9.9"
+
+
+def accent_button(image: Path, region: tuple[int, int, int, int]) -> tuple[int, int, int]:
+    """Left edge, right edge and centre row of the filled button in a region."""
+    left, top, width, height = region
+    columns: list[tuple[int, tuple[int, int]]] = []
+    for x in range(left, left + width, 2):
+        runs = [
+            run
+            for run in shaded_row_runs(
+                image, x=x, y=top, height=height, max_luminance=UPDATES_ACCENT_LUMINANCE
+            )
+            if run[1] - run[0] >= UPDATES_BUTTON_MIN_HEIGHT
+        ]
+        if runs:
+            columns.append((x, max(runs, key=lambda run: run[1] - run[0])))
+    if not columns:
+        raise AcceptanceFailure("no filled update action is visible")
+    start, end = columns[-1][1]
+    return columns[0][0], columns[-1][0], (start + end) // 2
+
+
+def release_fixture(directory: Path, *, published_at: str) -> None:
+    """A complete release: metadata, checksum list and an installable package."""
+    directory.mkdir(parents=True, exist_ok=True)
+    architecture = platform.machine()
+    name = f"notrum-{UPDATES_OFFERED_VERSION}-linux-{architecture}.tar.gz"
+    revision = "0" * 40
+    files = {"notrum": b"updated executable\n", "SOURCE_REVISION.txt": f"{revision}\n".encode()}
+    manifest = {
+        "source_revision": revision,
+        "platform": "linux",
+        "architecture": architecture,
+        "files": [
+            {"path": path, "sha256": hashlib.sha256(data).hexdigest()}
+            for path, data in files.items()
+        ],
+    }
+    files["build.json"] = json.dumps(manifest).encode()
+    archive = directory / name
+    with tarfile.open(archive, "w:gz") as package:
+        for path, data in files.items():
+            info = tarfile.TarInfo(f"{archive.name[: -len('.tar.gz')]}/{path}")
+            info.size = len(data)
+            info.mode = 0o755 if path == "notrum" else 0o644
+            package.addfile(info, io.BytesIO(data))
+    download = "https://github.com/notrum-ai/notrum/releases/download/v" + UPDATES_OFFERED_VERSION
+    (directory / "SHA256SUMS").write_text(
+        f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {name}\n", encoding="ascii"
+    )
+    (directory / "latest.json").write_text(
+        json.dumps(
+            {
+                "tag_name": f"v{UPDATES_OFFERED_VERSION}",
+                "draft": False,
+                "prerelease": False,
+                "published_at": published_at,
+                "html_url": "https://github.com/notrum-ai/notrum/releases/tag/v"
+                + UPDATES_OFFERED_VERSION,
+                "body": "Improvements\n\nNone.",
+                "assets": [
+                    {
+                        "name": name,
+                        "size": archive.stat().st_size,
+                        "state": "uploaded",
+                        "browser_download_url": f"{download}/{name}",
+                    },
+                    {
+                        "name": "SHA256SUMS",
+                        "size": 64,
+                        "state": "uploaded",
+                        "browser_download_url": f"{download}/SHA256SUMS",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+def packaged_installation(installation: Path) -> None:
+    """The installation the application replaces: a packaged Linux layout."""
+    installation.mkdir(parents=True, exist_ok=True)
+    (installation / "notrum").write_bytes(b"installed executable\n")
+    (installation / "build.json").write_text('{"platform": "linux"}', encoding="utf-8")
+
+
+def updates_scenario(driver: WindowDriver, workspace: Path) -> None:
+    """The startup offer, an installed package and a declined release."""
+    original = {path: path.read_bytes() for path in (workspace / "notes").glob("*.md")}
+    releases = driver.temporary_root / "releases"
+    installation = driver.temporary_root / "installation"
+    config = driver.home / ".notrum.cfg"
+    fixture = {
+        "NOTRUM_TEST_UPDATE": str(releases),
+        "NOTRUM_TEST_UPDATE_ROOT": str(installation),
+    }
+    executable = installation / "notrum"
+
+    def settings() -> dict:
+        return json.loads(config.read_text()).get("updates", {}) if config.is_file() else {}
+
+    packaged_installation(installation)
+    release_fixture(releases, published_at="2020-01-01T00:00:00Z")
+    driver.start_app(workspace, "offer", environment_overrides=fixture)
+    empty = driver.capture("updates-before-offer")
+    driver.wait_for_visual_change(
+        "the startup check offering a release", empty, crop=UPDATES_PROMPT_CROP, timeout=20
+    )
+    driver.wait_for_stable_frame("update prompt", crop=UPDATES_PROMPT_CROP, stable_for=0.4)
+    offered = driver.capture("updates-offer")
+    _, _, row = accent_button(offered, UPDATES_PROMPT_CROP)
+    driver.click_point(SCREEN_WIDTH - 60, row)
+    wait_until(
+        "the package replacing the installed executable",
+        lambda: executable.read_bytes() == b"updated executable\n",
+        timeout=20,
+    )
+    if not (installation / "SOURCE_REVISION.txt").is_file():
+        raise AcceptanceFailure("the installed package is missing its source revision")
+    if any(path.name.startswith(".notrum-update-") for path in installation.iterdir()):
+        raise AcceptanceFailure("the update left temporary files in the installation")
+    driver.wait_for_visual_change(
+        "the restart notice replacing the offer", offered, crop=UPDATES_PROMPT_CROP, timeout=20
+    )
+    driver.close_app()
+
+    # A release published hours ago is held back by the startup check and is
+    # still described on the settings page.
+    published = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3 * 3600))
+    release_fixture(releases, published_at=published)
+    driver.start_app(workspace, "held", environment_overrides=fixture)
+    quiet = driver.capture("updates-quiet")
+    time.sleep(6.0)
+    if image_difference(quiet, driver.capture("updates-still-quiet"), crop=UPDATES_PROMPT_CROP) >= 50:
+        raise AcceptanceFailure("a release published hours ago was offered automatically")
+    driver.click("settings")
+    driver.wait_for_stable_frame("settings page", stable_for=0.4)
+    before_section = driver.capture("updates-before-section")
+    driver.click_point(*UPDATES_SIDEBAR_ITEM)
+    driver.wait_for_visual_change(
+        "the updates settings section", before_section, crop=(260, 30, 740, 550), timeout=10
+    )
+    if executable.read_bytes() != b"updated executable\n":
+        raise AcceptanceFailure("opening the updates section changed the installation")
+    driver.close_app()
+
+    # Declining a release is remembered, so the same version is offered once.
+    release_fixture(releases, published_at="2020-01-01T00:00:00Z")
+    driver.start_app(workspace, "declined", environment_overrides=fixture)
+    empty = driver.capture("updates-before-decline")
+    driver.wait_for_visual_change(
+        "the startup check offering a release again", empty, crop=UPDATES_PROMPT_CROP, timeout=20
+    )
+    driver.wait_for_stable_frame("update prompt", crop=UPDATES_PROMPT_CROP, stable_for=0.4)
+    offer = driver.capture("updates-decline-offer")
+    accent_left, _, row = accent_button(offer, UPDATES_PROMPT_CROP)
+    driver.click_point(accent_left - 30, row)
+    wait_until(
+        "the declined version reaching the global settings",
+        lambda: settings().get("dismissed") == UPDATES_OFFERED_VERSION,
+        timeout=10,
+    )
+    driver.wait_for_visual_change(
+        "the offer disappearing", offer, crop=UPDATES_PROMPT_CROP, timeout=10
+    )
+    driver.close_app()
+    if {path: path.read_bytes() for path in original} != original:
+        raise AcceptanceFailure("the update flow modified notes")
+
+
 SCENARIOS: dict[str, Callable[[WindowDriver, Path], None]] = {
     "ai": ai_settings_scenario,
+    "updates": updates_scenario,
     "localization": localization_scenario,
     "rss_cards": rss_cards_scenario,
     "rss_keyboard": rss_keyboard_scenario,

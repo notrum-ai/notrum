@@ -14,6 +14,7 @@ members = [
     "crates/notrum-secure",
     "crates/notrum-security",
     "crates/notrum-storage",
+    "crates/notrum-update",
     "tools/notrum-buffer-probe",
     "tools/notrum-editor-probe",
     "tools/notrum-search-probe",

@@ -323,3 +323,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = Não foi possível concluir a operação. Detalhes: { $error }
+
+Updates = Atualizações
+UpdatesDescription = O Notrum instala atualizações a partir das versões publicadas.
+UpdateInstalledVersion = Versão instalada { $version }
+UpdateCheckNow = Procurar atualizações
+UpdateChecking = Procurando atualizações…
+UpdateUpToDate = O Notrum está atualizado.
+UpdateAvailable = A versão { $version } está disponível.
+UpdateHeld = A versão { $version } foi publicada há menos de um dia. A verificação ao iniciar a oferece um dia após a publicação; atualize agora para instalá-la imediatamente.
+UpdateUnpackaged = A versão { $version } não tem pacote para esta plataforma.
+UpdateInstall = Atualizar agora
+UpdateLater = Mais tarde
+UpdateDownloading = Baixando a atualização…
+UpdateDownloadingPercent = Baixando a atualização: { $percent }%
+UpdateInstalledRestart = A versão { $version } está instalada. Reinicie o Notrum para usá-la.
+UpdateNotes = Novidades
+UpdateOpenPage = Abrir a página da versão
+UpdateAutomatic = Verificação ao iniciar
+UpdateAutomaticHint = O Notrum procura atualizações em segundo plano ao iniciar e oferece uma versão um dia após a publicação. Verificar aqui a oferece imediatamente.
+UpdateAutomaticEnabled = A verificação ao iniciar está ativada.
+UpdateAutomaticDisabled = A verificação ao iniciar está desativada.
+UpdateAutomaticEnable = Ativar
+UpdateAutomaticDisable = Desativar
+UpdateNotInstalled = Esta compilação não é um pacote instalado, por isso não pode se atualizar.
+UpdateReadOnly = O diretório de instalação não permite gravação. Instale a atualização manualmente.
+UpdateNetworkFailed = Não foi possível contatar o serviço de versões.
+UpdateRateLimited = O serviço de versões recusou a solicitação. Tente mais tarde.
+UpdateResponseFailed = Não foi possível ler as informações da versão.
+UpdateNoPackage = Esta versão não tem pacote para esta plataforma.
+UpdateChecksumFailed = O pacote baixado não corresponde à soma de verificação publicada.
+UpdateFailed = Não foi possível concluir a atualização. Detalhes: { $error }

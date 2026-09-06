@@ -323,3 +323,34 @@ NoteCount = { $count ->
     }
 
 OperationFailed = কাজটি সম্পূর্ণ করা যায়নি। বিস্তারিত: { $error }
+
+Updates = আপডেট
+UpdatesDescription = Notrum তার প্রকাশিত রিলিজ থেকে আপডেট ইনস্টল করে।
+UpdateInstalledVersion = ইনস্টল করা সংস্করণ { $version }
+UpdateCheckNow = আপডেট দেখুন
+UpdateChecking = আপডেট দেখা হচ্ছে…
+UpdateUpToDate = Notrum হালনাগাদ আছে।
+UpdateAvailable = সংস্করণ { $version } পাওয়া যাচ্ছে।
+UpdateHeld = সংস্করণ { $version } এক দিনেরও কম আগে প্রকাশিত হয়েছে। চালুর সময়ের পরীক্ষা এটি প্রকাশের এক দিন পরে জানায়; সঙ্গে সঙ্গে ইনস্টল করতে এখনই আপডেট করুন।
+UpdateUnpackaged = সংস্করণ { $version } এ এই প্ল্যাটফর্মের প্যাকেজ নেই।
+UpdateInstall = এখনই আপডেট করুন
+UpdateLater = পরে
+UpdateDownloading = আপডেট ডাউনলোড হচ্ছে…
+UpdateDownloadingPercent = আপডেট ডাউনলোড হচ্ছে: { $percent }%
+UpdateInstalledRestart = সংস্করণ { $version } ইনস্টল হয়েছে। ব্যবহার করতে Notrum পুনরায় চালু করুন।
+UpdateNotes = নতুন কী আছে
+UpdateOpenPage = রিলিজ পাতা খুলুন
+UpdateAutomatic = চালুর সময়ের পরীক্ষা
+UpdateAutomaticHint = Notrum চালুর সময় পটভূমিতে আপডেট খোঁজে এবং প্রকাশের এক দিন পরে রিলিজ জানায়। এখানে পরীক্ষা করলে রিলিজ সঙ্গে সঙ্গে জানানো হয়।
+UpdateAutomaticEnabled = চালুর সময়ের পরীক্ষা চালু আছে।
+UpdateAutomaticDisabled = চালুর সময়ের পরীক্ষা বন্ধ আছে।
+UpdateAutomaticEnable = চালু করুন
+UpdateAutomaticDisable = বন্ধ করুন
+UpdateNotInstalled = এই বিল্ড ইনস্টল করা প্যাকেজ নয়, তাই এটি নিজেকে আপডেট করতে পারে না।
+UpdateReadOnly = ইনস্টলেশন ডিরেক্টরিতে লেখা যাচ্ছে না। আপডেট নিজে ইনস্টল করুন।
+UpdateNetworkFailed = রিলিজ পরিষেবার সঙ্গে সংযোগ করা যায়নি।
+UpdateRateLimited = রিলিজ পরিষেবা অনুরোধ প্রত্যাখ্যান করেছে। পরে আবার চেষ্টা করুন।
+UpdateResponseFailed = রিলিজের তথ্য পড়া যায়নি।
+UpdateNoPackage = এই রিলিজে এই প্ল্যাটফর্মের প্যাকেজ নেই।
+UpdateChecksumFailed = ডাউনলোড করা প্যাকেজ প্রকাশিত চেকসামের সঙ্গে মেলেনি।
+UpdateFailed = আপডেট সম্পূর্ণ করা যায়নি। বিবরণ: { $error }

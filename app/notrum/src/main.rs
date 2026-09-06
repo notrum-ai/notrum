@@ -12,6 +12,7 @@ mod i18n;
 mod localized_input;
 mod rss_card;
 mod settings;
+mod update;
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
@@ -54,7 +55,7 @@ use notrum_secure::MasterPassword;
 use settings::{
     CategoryNoteSortSettings, GlobalSettings, GlobalSettingsStore, NoteSortField,
     PersistedExternalFile, PersistedSidebarGroup, SidebarSettings, SortDirection, UiSettings,
-    UiSettingsStore, WindowSettings, relative_note_path, resolve_note_path,
+    UiSettingsStore, UpdateSettings, WindowSettings, relative_note_path, resolve_note_path,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -209,6 +210,7 @@ const ICON_CHEVRON_DOWN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
 const ICON_NOTE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6V3Z"/><path d="M15 3v5h4M9 12h6M9 16h6"/></svg>"##;
 const ICON_FILE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6V3Z"/><path d="M15 3v5h4"/></svg>"##;
 const ICON_RSS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.9" stroke-linecap="round"><circle cx="6" cy="18" r="1.5" fill="#000" stroke="none"/><path d="M5 11a8 8 0 0 1 8 8M5 5a14 14 0 0 1 14 14"/></svg>"##;
+const ICON_UPDATE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4a8 8 0 1 0 7.5 5.3"/><path d="M20 3.5V10h-6.5"/><path d="M12 8v5l3 2"/></svg>"##;
 const ICON_UNLOCK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M16 10V7a4 4 0 0 0-7.8-1.2M12 14v3"/></svg>"##;
 /// Frames of the padlock that swings open while a protected note is being
 /// decrypted. Floem has no animated-image view, so the badge swaps these
@@ -5070,18 +5072,24 @@ fn app_view(
             .font_size(14.0)
             .line_height(1.35)
     });
+    let updates = update::Updates::new(global_settings_store.clone());
+    updates.start();
     let settings_overlay = settings_page_view(
         settings_page,
-        global_settings_store.clone(),
-        model.clone(),
         revision,
-        apply_workspace,
-        close_settings.clone(),
+        SettingsPageContext {
+            global_settings_store: global_settings_store.clone(),
+            model: model.clone(),
+            apply_workspace,
+            close_settings: close_settings.clone(),
+            updates: updates.clone(),
+        },
         palette,
     );
     let startup_overlay = startup_workspace_modal(startup_workspace, workspace_switch, palette);
     let root = stack((
         shell,
+        update::prompt_view(updates, palette),
         settings_overlay,
         password_change_recovery_modal(model.clone(), revision, palette),
         integrity_modal(model.clone(), revision, palette),
@@ -5202,16 +5210,30 @@ fn app_view(
         })
 }
 
-fn settings_page_view(
-    signals: SettingsPageSignals,
+/// Everything the settings overlay needs besides its own signals.
+struct SettingsPageContext {
     global_settings_store: Rc<RefCell<GlobalSettingsStore>>,
     model: Rc<RefCell<AppModel>>,
-    revision: RwSignal<u64>,
     apply_workspace: Rc<dyn Fn(PathBuf)>,
     close_settings: Rc<dyn Fn()>,
+    updates: update::Updates,
+}
+
+fn settings_page_view(
+    signals: SettingsPageSignals,
+    revision: RwSignal<u64>,
+    context: SettingsPageContext,
     palette: Palette,
 ) -> impl IntoView {
+    let SettingsPageContext {
+        global_settings_store,
+        model,
+        apply_workspace,
+        close_settings,
+        updates,
+    } = context;
     let ai_content = ai_settings::page(signals, global_settings_store.clone(), palette);
+    let updates_content = update::page(signals, updates, palette);
     let language_feedback = create_rw_signal(None::<i18n::Message>);
     let language_picker =
         floem::views::dropdown::Dropdown::new(i18n::current, Locale::ALL.iter().copied())
@@ -5296,6 +5318,7 @@ fn settings_page_view(
     let general_navigation_model = model.clone();
     let encryption_navigation_model = model.clone();
     let ai_navigation_model = model.clone();
+    let updates_navigation_model = model.clone();
     let navigation = v_stack((
         h_stack((
             icon_button(
@@ -5398,6 +5421,32 @@ fn settings_page_view(
                     Color::TRANSPARENT
                 })
                 .focus(|style| style.border(1.0).border_color(palette.accent))
+        }),
+        reliable_button(
+            h_stack((
+                svg(ICON_UPDATE).style(|style| style.size(16.0, 16.0)),
+                label(move || tr!(Updates)).style(|style| style.font_size(13.5).selectable(false)),
+            ))
+            .style(|style| rtl_row(style).items_center().gap(10.0)),
+            move || {
+                if !password_change_busy(&updates_navigation_model.borrow()) {
+                    signals.section.set(SettingsSection::Updates);
+                }
+            },
+        )
+        .style(move |style| {
+            rtl_row(style)
+                .width_full()
+                .height(38.0)
+                .items_center()
+                .padding_horiz(11.0)
+                .background(if signals.section.get() == SettingsSection::Updates {
+                    palette.sidebar_active
+                } else {
+                    Color::TRANSPARENT
+                })
+                .color(palette.sidebar_ink)
+                .border_radius(6.0)
         }),
         empty().style(|style| style.flex_grow(1.0)),
     ))
@@ -5560,6 +5609,13 @@ fn settings_page_view(
         }),
         encryption_content.style(move |style| {
             if signals.section.get() == SettingsSection::Encryption {
+                style
+            } else {
+                style.hide()
+            }
+        }),
+        updates_content.style(move |style| {
+            if signals.section.get() == SettingsSection::Updates {
                 style
             } else {
                 style.hide()
@@ -10281,6 +10337,7 @@ enum SettingsSection {
     General,
     Encryption,
     Ai,
+    Updates,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

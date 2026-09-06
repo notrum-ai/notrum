@@ -7225,6 +7225,13 @@ def localization_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.close_app()
 
 
+def wait_for_ai_controls(driver: WindowDriver) -> None:
+    # Focused text fields legitimately blink. Require identical frames, but not
+    # a 600 ms quiet period spanning a caret blink. Preserve focus so typing,
+    # Enter, blur validation and dropdown assertions exercise the real controls.
+    driver.wait_for_stable_frame("AI controls", crop=(232, 0, 1008, 800), stable_for=0.15, timeout=10)
+
+
 def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
     """Real native controls with test-only catalog and credential adapters."""
     original = {path: path.read_bytes() for path in (workspace / "notes").glob("*.md")}
@@ -7235,7 +7242,7 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
         return json.loads(config.read_text()).get("ai", {})
 
     def settle() -> None:
-        driver.wait_for_stable_frame("AI controls", crop=(232, 0, 1008, 800), stable_for=0.6, timeout=10)
+        wait_for_ai_controls(driver)
 
     def open_ai() -> None:
         driver.click("settings")
@@ -7362,27 +7369,24 @@ def ai_settings_scenario(driver: WindowDriver, workspace: Path) -> None:
         raise AcceptanceFailure("AI key validation interrupted typing")
     driver.click_point(*AI_SIDEBAR_ITEM)
     settle()
-    if danger_pixels() < 20:
-        raise AcceptanceFailure("invalid key was not validated on blur")
+    wait_until("invalid key feedback after blur", lambda: danger_pixels() >= 20)
     driver.click_point(*key_field())
     driver.type_text("k")
     settle()
-    if danger_pixels() > 5:
-        raise AcceptanceFailure("editing retained an outdated key error")
+    wait_until("editing clears outdated key feedback", lambda: danger_pixels() <= 5)
     set_clipboard_text(driver.environment, "invalid-key")
     driver.key("ctrl+v")
     settle()
-    if danger_pixels() < 20:
-        raise AcceptanceFailure("clipboard shortcut did not validate the key")
+    wait_until("invalid clipboard key feedback", lambda: danger_pixels() >= 20)
     set_clipboard_text(driver.environment, "sk-proj-abcdefghijklmnopqrstuvdenied")
     driver.click_point(938, key_field()[1])
     settle()
-    if danger_pixels() > 5:
-        raise AcceptanceFailure("valid key paste retained format feedback")
+    wait_until("valid key paste clears format feedback", lambda: danger_pixels() <= 5)
     primary()
     settle()
-    if state().get("connection") or danger_pixels() < 20:
-        raise AcceptanceFailure("rejected key was saved or lacked connection feedback")
+    wait_until("rejected key feedback", lambda: danger_pixels() >= 20)
+    if state().get("connection"):
+        raise AcceptanceFailure("rejected key was saved")
     review_frame("ai-connection-error")
     driver.click_point(*key_field())
     set_clipboard_text(driver.environment, "  sk-proj-abcdefghijklmnopqrstuvslow  ")

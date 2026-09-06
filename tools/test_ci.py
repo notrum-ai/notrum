@@ -24,6 +24,40 @@ SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    def test_ai_control_wait_accepts_blinking_caret_but_rejects_changing_content(self):
+        for changing_content in (False, True):
+            with self.subTest(changing_content=changing_content):
+                clock = [0.0]
+                frames = [0]
+
+                def capture(_name):
+                    clock[0] += 0.05
+                    frames[0] += 1
+                    return Mock(caret=int(clock[0] / 0.5) % 2,
+                                content=frames[0] if changing_content else 0)
+
+                def advance(seconds):
+                    clock[0] += seconds
+
+                def difference(previous, current, **_kwargs):
+                    return int((previous.caret, previous.content) !=
+                               (current.caret, current.content))
+
+                driver = object.__new__(ui_acceptance.WindowDriver)
+                driver.capture = capture
+                with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(ui_acceptance.time, "sleep", side_effect=advance), \
+                        patch.object(ui_acceptance, "image_difference", side_effect=difference), \
+                        patch.object(ui_acceptance, "dark_pixel_count", return_value=100), \
+                        patch.object(ui_acceptance, "mean_luminance", return_value=0.8):
+                    if changing_content:
+                        with self.assertRaises(ui_acceptance.AcceptanceFailure):
+                            ui_acceptance.wait_for_ai_controls(driver)
+                    else:
+                        ui_acceptance.wait_for_ai_controls(driver)
+                        self.assertGreaterEqual(frames[0], 3)
+                        self.assertLess(clock[0], 0.5)
+
     def test_replace_retry_diagnostics_reject_invalid_attempts_and_payloads(self):
         accepted = [
             f"NATIVE_REPLACE_RETRY thread=ThreadId(7) attempt={attempt} delay_ms={delay} os_error={code}"

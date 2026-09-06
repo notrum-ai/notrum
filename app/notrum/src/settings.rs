@@ -669,13 +669,16 @@ mod tests {
 
     impl TestWorkspace {
         fn new() -> Self {
+            static NEXT_WORKSPACE: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
             let unique = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("clock after epoch")
                 .as_nanos();
             let path = std::env::temp_dir().join(format!(
-                "notrum-settings-test-{}-{unique}",
-                std::process::id()
+                "notrum-settings-test-{}-{unique}-{}",
+                std::process::id(),
+                NEXT_WORKSPACE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             ));
             fs::create_dir(&path).expect("create test workspace");
             Self(path)

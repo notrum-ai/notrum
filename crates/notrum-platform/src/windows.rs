@@ -16,6 +16,9 @@ use windows_permissions::{LocalBox, SecurityDescriptor, wrappers};
 
 const READ_CONTROL: u32 = 0x0002_0000;
 const WRITE_DAC: u32 = 0x0004_0000;
+const DELETE: u32 = 0x0001_0000;
+const SHARE_READ: u32 = 1;
+const SHARE_DELETE: u32 = 4;
 const GENERIC_READ: u32 = 0x8000_0000;
 const GENERIC_WRITE: u32 = 0x4000_0000;
 const FILE_ALL_ACCESS: u32 = 0x001f_01ff;
@@ -288,6 +291,34 @@ fn permissions_descriptor(
 /// NTFS namespace barrier: flush an empty file and move it with WRITE_THROUGH.
 /// A crash may leave an empty marker; it never contains note data.
 pub(super) fn sync_directory(path: &Path) -> io::Result<()> {
+    sync_directory_with(path, |_, _| Ok(()))
+}
+
+fn create_sync_marker(path: &Path) -> io::Result<File> {
+    // Keep DELETE access from creation through rename and removal. Windows then
+    // rejects any new handle that omits FILE_SHARE_DELETE, so a scanner cannot
+    // acquire a rename-blocking handle in a close/reopen gap. Share deletion so
+    // MoveFileEx/DeleteFile can operate while our handle remains open. Readers
+    // are harmless: this marker is always empty; other writers are excluded.
+    // This mode is ONLY for empty sync markers, never private note/recovery data.
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .access_mode(GENERIC_READ | GENERIC_WRITE | READ_CONTROL | WRITE_DAC | DELETE)
+        .share_mode(SHARE_READ | SHARE_DELETE)
+        .custom_flags(OPEN_REPARSE_POINT)
+        .open(path)?;
+    if let Err(error) = restrict(&file, false) {
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(file)
+}
+
+fn sync_directory_with(
+    path: &Path,
+    mut checkpoint: impl FnMut(&str, &Path) -> io::Result<()>,
+) -> io::Result<()> {
     use crate::diagnostics::directory_sync_result;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -296,20 +327,24 @@ pub(super) fn sync_directory(path: &Path) -> io::Result<()> {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let source = path.join(format!(".notrum-sync-{}-{id}.tmp", std::process::id()));
         let destination = source.with_extension("done");
-        let file = match directory_sync_result("Create", create_private_file(&source)) {
+        let file = match directory_sync_result("Create", create_sync_marker(&source)) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         };
         let result = (|| {
             directory_sync_result("FileSync", file.sync_all())?;
-            drop(file);
+            checkpoint("Publish", &source)?;
             directory_sync_result("Publish", atomicwrites::move_atomic(&source, &destination))?;
+            checkpoint("Remove", &destination)?;
             directory_sync_result("Remove", fs::remove_file(&destination))
         })();
         if result.is_err() {
             let _ = directory_sync_result("Cleanup", fs::remove_file(&source));
         }
+        // DeleteFile marks the marker for deletion; closing our last handle
+        // completes it. Never close before Publish or Remove, even on errors.
+        drop(file);
         if result
             .as_ref()
             .is_err_and(|error| error.kind() == io::ErrorKind::AlreadyExists)
@@ -325,4 +360,118 @@ pub(super) fn sync_directory(path: &Path) -> io::Result<()> {
             "cannot allocate namespace barrier",
         )),
     )
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use crate::tests::TestDirectory;
+
+    fn reader(path: &Path, share_delete: bool) -> io::Result<File> {
+        OpenOptions::new()
+            .read(true)
+            .share_mode(SHARE_READ | 2 | if share_delete { SHARE_DELETE } else { 0 })
+            .open(path)
+    }
+
+    #[test]
+    fn closed_sync_marker_reproduces_the_native_publish_sharing_violation() {
+        let directory = TestDirectory::new();
+        let source = directory.0.join("old.tmp");
+        let destination = directory.0.join("old.done");
+        let file = create_private_file(&source).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        let blocker = reader(&source, false).unwrap();
+        assert_eq!(
+            atomicwrites::move_atomic(&source, &destination)
+                .unwrap_err()
+                .raw_os_error(),
+            Some(32)
+        );
+        drop(blocker);
+        atomicwrites::move_atomic(&source, &destination).unwrap();
+    }
+
+    #[test]
+    fn sync_marker_prevents_blockers_through_publication_and_removal() {
+        let directory = TestDirectory::new();
+        for _ in 0..32 {
+            let mut stages = Vec::new();
+            let mut observer = None;
+            sync_directory_with(&directory.0, |stage, path| {
+                stages.push(stage.to_owned());
+                // Coordinate with another thread at the exact old race windows,
+                // without relying on sleeps or an antivirus happening to scan.
+                std::thread::scope(|scope| {
+                    scope
+                        .spawn(|| {
+                            assert_eq!(reader(path, false).unwrap_err().raw_os_error(), Some(32));
+                            assert!(OpenOptions::new().write(true).open(path).is_err());
+                            let compatible = reader(path, true).unwrap();
+                            assert_eq!(compatible.metadata().unwrap().len(), 0);
+                            validate_handle(&compatible).unwrap();
+                        })
+                        .join()
+                        .unwrap();
+                });
+                // Keep a compatible reader open across the real MoveFileEx and
+                // DeleteFile calls too. It must not prevent either operation.
+                observer = Some(reader(path, true)?);
+                Ok(())
+            })
+            .unwrap();
+            drop(observer);
+            assert_eq!(stages, ["Publish", "Remove"]);
+            assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
+    fn sync_marker_collision_preserves_destination_and_cleans_source() {
+        let directory = TestDirectory::new();
+        let mut collision = None;
+        sync_directory_with(&directory.0, |stage, source| {
+            if stage == "Publish" && collision.is_none() {
+                let destination = source.with_extension("done");
+                fs::write(&destination, b"existing entry")?;
+                collision = Some(destination);
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(fs::read(collision.unwrap()).unwrap(), b"existing entry");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn sync_marker_failures_remain_errors_and_never_touch_notes() {
+        for fail_stage in ["Publish", "Remove"] {
+            let directory = TestDirectory::new();
+            let note = directory.0.join("note.md");
+            fs::write(&note, b"committed note").unwrap();
+            let error = sync_directory_with(&directory.0, |stage, _| {
+                if stage == fail_stage {
+                    Err(io::Error::from_raw_os_error(1117))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(1117));
+            assert_eq!(fs::read(&note).unwrap(), b"committed note");
+            let markers: Vec<_> = fs::read_dir(&directory.0)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path != &note)
+                .collect();
+            if fail_stage == "Publish" {
+                assert!(markers.is_empty());
+            } else {
+                assert_eq!(markers.len(), 1);
+                assert_eq!(fs::read(&markers[0]).unwrap(), b"");
+                super::super::validate_private(&markers[0]).unwrap();
+            }
+        }
+    }
 }

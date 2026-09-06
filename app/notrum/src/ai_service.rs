@@ -256,16 +256,55 @@ mod tests {
         }
     }
     fn home() -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "notrum-ai-test-{}-{}",
-            std::process::id(),
+        home_at(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+        )
+    }
+    fn home_at(timestamp: u128) -> std::path::PathBuf {
+        static NEXT_HOME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "notrum-ai-test-{}-{timestamp}-{}",
+            std::process::id(),
+            NEXT_HOME.fetch_add(1, Ordering::Relaxed),
         ));
         std::fs::create_dir(&path).unwrap();
         path
+    }
+    #[test]
+    fn parallel_test_homes_are_isolated_when_the_clock_does_not_advance() {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let start = std::sync::Barrier::new(16);
+        let paths = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        home_at(timestamp)
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            paths
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            16
+        );
+        for path in paths {
+            assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+            std::fs::remove_dir(path).unwrap();
+        }
     }
     #[test]
     fn connect_save_restart_conflict_and_disconnect_preserve_secret_boundary() {

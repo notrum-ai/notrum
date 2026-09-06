@@ -97,7 +97,16 @@ Replacement uses the checked `MoveFileExW` write-through operation supplied by
 `atomicwrites`. Namespace synchronization uses an empty private marker, flushes
 it, and moves it with write-through. Successful cleanup leaves no marker; a
 crash may leave an empty `.notrum-sync-*` file containing no note data. The
-native interruption tests must validate this protocol on the supported NTFS
+marker retains a handle with `DELETE` access and `FILE_SHARE_DELETE` from its
+creation through rename and removal. Windows rejects intervening readers that
+would deny deletion, eliminating the close/reopen race that caused
+`NATIVE_DIRECTORY_SYNC stage=Publish os_error=32` after a note was already
+committed. This sharing mode applies only to empty synchronization markers;
+private note and recovery writers retain exclusive handles. Native regression
+tests reproduce the old sharing violation, attempt blocking opens at both
+publication and removal, and verify collisions and error propagation. The
+sharing contract is documented in [Microsoft's CreateFile reference](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew).
+Native interruption tests must validate this protocol on the supported NTFS
 systems. File synchronization errors are propagated instead of discarded.
 Unix continues using file/parent-directory synchronization and mode bits.
 

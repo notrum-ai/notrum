@@ -9,7 +9,8 @@ endif
 
 COMPOSE := docker compose
 RUN := $(COMPOSE) run --rm toolchain
-GIT := $(RUN) git -c safe.directory=/workspace
+# Inspect the checkout on the host, including from the final check aggregate.
+GIT := git
 MACOS_BINARY ?=
 MACOS_OUTPUT ?= /workspace/dist/Notrum.app
 SOURCE_REVISION ?=

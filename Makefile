@@ -23,6 +23,7 @@ PYTHON := $(RUN) python3 -B
 DEMO_WORKSPACE ?= /workspace/examples/demo-workspace
 endif
 UI_JOBS ?= 2
+COVERAGE ?= 0
 
 UI_ACCEPTANCE_STANDARD := ui-click-external ui-click-localization ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
 UI_ACCEPTANCE_SECURE := ui-click-ai ui-click-crash ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
@@ -48,6 +49,7 @@ help:
 		"  make ui-check  — все UI smokes и XTEST scenarios" \
 		"  make check     — все проверки, включая ui-check, без native build" \
 		"  make ci-validate — закреплённый actionlint и объединённая Compose CI" \
+		"  make coverage — покрытие Rust-тестов Linux в .ci/coverage/lcov.info" \
 		"  make NATIVE=1 SOURCE_REVISION=<HEAD-SHA> native-check — macOS без Docker" \
 		"  make           — make check, затем native build" \
 		"  make publish   — patch version, Codex changelog, полный make и GitHub Release" \
@@ -115,6 +117,7 @@ test-demo-data:
 	$(RUN) python3 -B tools/test_generate_demo_data.py
 	$(RUN) python3 -B tools/test_desktop_registration.py
 	$(RUN) python3 -B tools/test_ci.py
+	$(RUN) python3 -B tools/test_coverage.py
 
 check-macos:
 	$(RUN) env CC_aarch64_apple_darwin=clang CFLAGS_aarch64_apple_darwin='-ffreestanding -nostdinc -isystem /usr/lib/llvm-14/lib/clang/14.0.6/include -I/workspace/docker/rust/macos-cross-headers' cargo check -p notrum-app --target aarch64-apple-darwin
@@ -125,8 +128,22 @@ package-macos:
 package-macos-smoke:
 	$(RUN) python3 -B tools/test_package_macos.py
 
+ifeq ($(COVERAGE),1)
+# llvm-cov on stable Rust omits doctests; keep running those separately.
+test: coverage
+	$(RUN) cargo test --locked --workspace --all-features --doc
+else
 test:
 	$(RUN) cargo test --workspace --all-features
+endif
+
+.PHONY: coverage
+coverage:
+	$(RUN) mkdir -p .ci/coverage
+	$(RUN) rm -f .ci/coverage/lcov.info .ci/coverage/lcov.tmp
+	$(RUN) cargo llvm-cov --locked --workspace --all-features --no-cfg-coverage --remap-path-prefix --lcov --skip-functions --output-path .ci/coverage/lcov.tmp
+	$(RUN) test -s .ci/coverage/lcov.tmp
+	$(RUN) mv .ci/coverage/lcov.tmp .ci/coverage/lcov.info
 
 test-release:
 	$(RUN) cargo test --workspace --all-features --release

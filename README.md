@@ -1,29 +1,100 @@
-# Notrum
+<!-- Copyright 2026 Evgeniy Udodov -->
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-Notrum is a local, native Markdown editor and RSS/Atom reader built with
-Rust and Floem. Notes live in ordinary files in a Notable-style workspace.
-There is no WebView, JavaScript runtime, cloud account, or database holding
-the authoritative copy of your notes.
+<p align="center">
+  <img src="app/notrum/assets/notrum-app-icon.svg" width="128" height="128" alt="Notrum icon">
+</p>
 
-Use it to keep project notes and reading lists in folders you control, edit
-existing text files in place, and read subscribed feeds in the same application.
-Your notes remain Markdown files that you can back up or open in another editor.
+<h1 align="center">Notrum</h1>
+
+<p align="center">
+  <strong>A native home for your notes and the things you read.</strong><br>
+  Plain Markdown. Local files. Yours to keep.
+</p>
+
+<p align="center">
+  <a href="https://github.com/notrum-ai/notrum/actions/workflows/ci.yml"><img src="https://github.com/notrum-ai/notrum/actions/workflows/ci.yml/badge.svg?branch=master&amp;event=push" alt="CI: tests, builds and audits on master"></a>
+  <a href="https://app.codecov.io/gh/notrum-ai/notrum"><img src="https://codecov.io/gh/notrum-ai/notrum/branch/master/graph/badge.svg" alt="Rust line coverage on master"></a>
+  <a href="https://github.com/notrum-ai/notrum/releases"><img src="https://img.shields.io/github/v/release/notrum-ai/notrum?style=flat&amp;color=8b5cf6" alt="Latest release"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/Rust-1.88.0-dea584?style=flat&amp;logo=rust&amp;logoColor=white" alt="Rust 1.88.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-blue?style=flat" alt="License: GPL-3.0-only"></a>
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#build-and-run">Get started</a> ·
+  <a href="docs/user-guide.md">User guide</a> ·
+  <a href="https://github.com/notrum-ai/notrum/releases">Releases</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
+</p>
+
+---
+
+Your notes should be easy to write, easy to find, and easy to take with you.
+Notrum brings Markdown editing, tagged notes, and an RSS/Atom reader into one
+native desktop application. Keep project ideas, everyday notes, and reading
+lists together in a folder you control.
+
+Inspired by [Notable](https://github.com/notable/notable)'s approach to Markdown
+and portable notes, Notrum stores your writing as ordinary files in a
+Notable-style workspace. Open them in another editor, track them with Git,
+or back them up with your own tools. No cloud account is required.
 
 ![Notrum showing the generated demo workspace, with tagged notes in the sidebar and Markdown in the editor](docs/images/demo-workspace.png)
 
-*Demo workspace in the native interface, captured in the Linux test environment.*
+<p align="center"><sub>Tagged notes and Markdown editing in the native interface. Demo workspace captured in the Linux test environment.</sub></p>
 
 ## Features
 
-- Markdown editing with autosave, crash recovery, and external change detection.
-- Categories from YAML tags, favorites, pinning, manual ordering, and sorting.
-- Local search and soft deletion of notes.
-- Password-protected note bodies using authenticated age encryption.
-- External `.md`, `.markdown`, and `.txt` files opened in place, including through the file manager on macOS, Linux, and Windows.
-- HTTPS RSS and Atom subscriptions with a native reader and `J`/`K` navigation.
-- Global AI settings for OpenAI or Anthropic: system-stored API keys, connection
-  checks, and named model/effort aliases with an editable default. Assistant commands
-  are not implemented yet; connection checks only retrieve the model catalog.
+### 📝 Markdown you own
+
+Write in plain Markdown with YAML front matter. Your workspace's `notes/`
+directory is the source of truth, and opening it never rewrites existing notes.
+Unknown metadata and unrelated files are preserved, so your writing stays
+portable and works with tools you already use.
+
+### 🗂 A place for every thought
+
+Organize notes with tag-based categories, favorites, and pins. Arrange them
+manually or choose automatic sorting, then use local search to find what you
+need. Soft deletion lets you move notes out of the way without immediately
+removing their files.
+
+### ✍️ Keep your writing moving
+
+Autosave, crash recovery, and external change detection help preserve your work.
+Open existing `.md`, `.markdown`, and `.txt` files directly from your file
+manager and edit them in place, without moving them into a workspace.
+
+### 📰 Reading alongside writing
+
+Follow HTTPS RSS and Atom feeds in the same application as your notes.
+A native reader presents article excerpts and read status; use `J` and `K`
+to move between entries, or open the original article in your browser.
+
+### 🔐 Privacy where it matters
+
+Protect individual note bodies with a workspace password and authenticated
+age encryption. Filenames and YAML metadata, including titles and tags,
+remain readable. The [storage and security guide](docs/storage.md) explains
+what is protected and how to keep backups safe.
+
+### 🦀 Native from the ground up
+
+Built with Rust and Floem, with no WebView or JavaScript runtime and no database
+holding your notes. The interface offers 17 language variants, with English
+as the default. Build for Apple Silicon macOS, Linux, or Windows x64.
+
+<details>
+<summary><strong>AI settings — groundwork for upcoming assistant features</strong></summary>
+
+Connect OpenAI or Anthropic, keep API keys in the system credential store,
+and configure named model/effort aliases with an editable default. Settings
+apply across workspaces. Connection checks only retrieve the model catalog
+and never send notes. **Assistant commands and text generation are not
+implemented yet.** See the [AI settings guide](docs/user-guide.md#ai-settings).
+
+</details>
 
 ## Project status
 
@@ -49,7 +120,12 @@ work and must not be treated as disposable cache.
 
 ## Build and run
 
-### macOS
+Choose your platform below. Release archives are available from
+[GitHub Releases](https://github.com/notrum-ai/notrum/releases); read the
+[project status](#project-status) and platform notes before installing.
+
+<details open>
+<summary><strong>macOS · Apple Silicon</strong></summary>
 
 Requirements: an Apple Silicon Mac, Docker with Docker Compose and a running
 Docker engine, Xcode Command Line Tools, and `python3`. A preinstalled Rust
@@ -92,7 +168,10 @@ open dist/Notrum.app --args "$PWD/examples/demo-workspace"
 The demo command resets the generated demo notes. Use a separate workspace
 for your own writing.
 
-### Linux
+</details>
+
+<details>
+<summary><strong>Linux · Docker container architecture</strong></summary>
 
 With Docker Compose and a running Docker engine, build an optimized Linux
 executable using the pinned toolchain (no host Rust installation required):
@@ -124,7 +203,10 @@ Wayland, the corresponding system libraries, fonts, GTK4 (4.0 or newer), and an 
 for file dialogs is required. See the [development guide](docs/development.md)
 for build verification and release limitations.
 
-### Windows 10/11 x64
+</details>
+
+<details>
+<summary><strong>Windows · Windows 10/11 x64</strong></summary>
 
 Build on macOS or Linux with Docker Compose:
 
@@ -148,6 +230,8 @@ Run the supplied test kit and complete the native UI checklist before treating
 that Windows build as validated. Instructions, supported filesystem boundaries,
 and known validation limits are in [docs/windows.md](docs/windows.md).
 
+</details>
+
 ## Opening external files
 
 On every supported OS the executable accepts:
@@ -168,13 +252,23 @@ message queue or single-instance requirement.
 
 ## Documentation and contributions
 
-- [User guide](docs/user-guide.md): workspaces, notes, external files, and feeds.
-- [Storage and security](docs/storage.md): file layout, recovery, encryption, and backups.
-- [Development guide](docs/development.md): toolchain, checks, benchmarks, and packaging.
-- [GitHub CI](docs/ci.md): Linux, macOS and Windows checks, caches and artifacts.
-- [Publishing](docs/publishing.md): `make publish`, automatic patch versions and GitHub Releases.
-- [Contributing](CONTRIBUTING.md): reporting bugs and submitting changes.
-- [Security policy](SECURITY.md): reporting vulnerabilities privately.
+| Guide | What you'll find |
+| --- | --- |
+| [User guide](docs/user-guide.md) | Workspaces, notes, external files, and feeds |
+| [Storage and security](docs/storage.md) | File layout, recovery, encryption, and backups |
+| [Development](docs/development.md) | Toolchain, checks, benchmarks, and packaging |
+| [GitHub CI](docs/ci.md) | Linux, macOS, and Windows checks, caches, and artifacts |
+| [Publishing](docs/publishing.md) | `make publish`, patch versions, and GitHub Releases |
+| [Contributing](CONTRIBUTING.md) | Reporting bugs and submitting changes |
+| [Security policy](SECURITY.md) | Reporting vulnerabilities privately |
+
+The CI badge follows pushes to `master` and turns green when the workflow
+passes, including tests, builds, UI checks, and audits. The coverage badge shows
+Rust line coverage from the Linux workspace tests on `master`, published through
+Codecov. See [coverage scope and setup](docs/ci.md#code-coverage) for details.
+
+Found a bug or have an idea? [Open an issue](https://github.com/notrum-ai/notrum/issues)
+or read the [contribution guide](CONTRIBUTING.md) to help shape Notrum.
 
 ## License
 

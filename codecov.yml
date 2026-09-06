@@ -1,0 +1,15 @@
+# Copyright 2026 Evgeniy Udodov
+# SPDX-License-Identifier: GPL-3.0-only
+
+codecov:
+  branch: master
+
+coverage:
+  status:
+    project: false
+    patch: false
+
+comment: false
+
+github_checks:
+  annotations: false

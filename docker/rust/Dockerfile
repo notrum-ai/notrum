@@ -33,6 +33,9 @@ RUN rustup component add clippy rustfmt \
 RUN cargo install --locked --version 0.22.2 cargo-audit \
     && cargo install --locked --version 0.20.2 cargo-deny
 
+RUN rustup component add llvm-tools-preview \
+    && cargo install --locked --version 0.6.21 cargo-llvm-cov
+
 WORKDIR /workspace
 
 ENV CARGO_TARGET_DIR=/var/cache/notrum/target

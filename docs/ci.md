@@ -8,12 +8,13 @@
 `master`, and manual dispatch. It does not change branch protection or PR merge
 rules, publish Releases, or require a write-enabled repository token.
 Every action is pinned to a complete commit SHA, checkout credentials are not
-persisted, and the workflow has only `contents: read`. A newer run cancels the
-older run for the same PR or branch.
+persisted, and repository contents permissions stay at `contents: read`.
+Only the Linux job additionally has `id-token: write` for Codecov OIDC upload
+authentication. A newer run cancels the older run for the same PR or branch.
 
 | Job | Runner | Command and scope | Timeout |
 | --- | --- | --- | --- |
-| Linux | `ubuntu-24.04`, x64 | Build the Compose toolchain; `make ci-linux` executes `make check-linux` (tests, UI, audits and Linux/macOS checks) and packages Linux | 120 min |
+| Linux | `ubuntu-24.04`, x64 | Build the Compose toolchain; `make COVERAGE=1 ci-linux` executes `make check-linux` (tests with coverage, UI, audits and Linux/macOS checks) and packages Linux | 120 min |
 | Windows build | `ubuntu-24.04`, x64 | `make ci-windows-build` cross-compiles the Windows application and test kit, then packages both | 90 min |
 | macOS | `macos-15`, Apple Silicon | `make NATIVE=1 ci-macos` builds with pinned Rust and executes the native launch and Finder smoke checks | 90 min |
 | Windows | `windows-2025`, x64 | Verify and unpack the Windows build job's test package from this run; execute its existing PowerShell test runner and native smoke checks | 30 min |
@@ -66,6 +67,67 @@ pinned Rust/rustup and system Xcode SDK. Global Rust and shell profiles are unch
 The macOS CI wrapper explicitly starts native Make through `arch -arm64`, so an
 Intel Python installation running under Rosetta cannot change the build architecture.
 
+## Code coverage
+
+The Linux job measures Rust **line coverage** with pinned `cargo-llvm-cov 0.6.21`
+and the LLVM tools supplied with Rust 1.88.0. `COVERAGE=1` replaces the usual
+debug workspace test run with its instrumented equivalent, keeping
+`--workspace --all-features`. Stable coverage tooling skips doctests, so those
+still run separately with `cargo test --doc`. Release tests, desktop UI checks,
+audits, and the other platform jobs retain their existing commands.
+
+The report covers Rust workspace sources exercised by Linux unit and integration
+tests, including the application crate. It does not measure Python scripts,
+external UI acceptance scenarios, doctests, or macOS/Windows-specific code.
+Dependencies and standalone test/example/benchmark source directories use
+cargo-llvm-cov's default exclusions. Inline test modules and the workspace's
+Rust probe tools are not specially excluded. No coverage-specific code paths
+are enabled, and no minimum percentage is enforced before a baseline exists.
+
+This avoids another CI runner and a duplicate debug test run. Instrumentation
+still needs its own compilation; its artifacts stay in cargo-llvm-cov's separate
+target directory inside the disposable Cargo target volume. Downloaded tools
+are cached in the Docker image. Coverage does not instrument release packages.
+
+To reproduce locally after rebuilding the toolchain image:
+
+```sh
+make image
+make coverage
+# Or select this as the final full gate:
+make COVERAGE=1 check
+```
+
+`make coverage` writes `.ci/coverage/lcov.info` only after tests pass and a
+nonempty report is generated. A new run removes the old report first, so failed
+tests cannot publish a stale success. This path is already ignored by Git.
+LCOV contains source paths and line execution counts, without source text or
+per-function records. Raw profiles, test workspaces, and test logs are not
+uploaded. The existing CI diagnostic filter still wraps the test command.
+
+GitHub Actions retains the `coverage-linux` LCOV artifact for one day, including
+when a later check fails. Codecov receives only this explicit file; file search,
+source-based file fixes, additional collection plugins, and telemetry are
+disabled. The README badge follows `master` and appears after Codecov processes
+its first upload. Its color reflects the measured result. Uploads explicitly use
+`github.sha`, matching the tested checkout (including the merge SHA for a PR).
+
+### Codecov setup
+
+Enable `notrum-ai/notrum` in [Codecov](https://app.codecov.io/gh/notrum-ai/notrum)
+with the repository owner's GitHub account if it is not connected yet. The
+workflow uses [GitHub OIDC](https://github.com/codecov/codecov-action#using-oidc),
+so no `CODECOV_TOKEN` secret is required. Repository/organization policy must
+allow the pinned Codecov action and the Linux job's `id-token: write` permission.
+No repository-content write permission is granted.
+
+Fork and Dependabot pull requests still measure coverage and retain the artifact,
+but skip the OIDC upload because their token permissions may be restricted.
+Pushes, manual runs, and other same-repository PRs upload automatically. Upload
+errors fail the Linux job visibly; the artifact remains available even if Codecov
+is unavailable or initial account setup is incomplete. `codecov.yml` disables
+PR comments, inline annotations, and percentage-based commit statuses.
+
 ## Caches and runner storage
 
 Both Ubuntu jobs set `COMPOSE_FILE=compose.yaml:compose.ci.yaml`. Buildx Bake
@@ -102,6 +164,7 @@ Artifacts are retained for **one day**, the minimum supported retention period:
   runtime DLLs and the compiled test kit for the dependent job in the same run.
 - `reports-linux`, `reports-macos`, `reports-windows-build`, `reports-windows`: status and cleaned diagnostics,
   uploaded also when checks fail or a run is cancelled after checkout.
+- `coverage-linux`: the completed Rust LCOV report, retained also if later checks fail.
 
 Build archives include the project license, existing runtime notices where
 applicable, `SOURCE_REVISION.txt` and a `build.json` file with per-file SHA-256
@@ -157,7 +220,7 @@ earlier failure whose report omitted those details.
 ## Verify the first GitHub runs
 
 After pushing the workflow commit, open **Actions → CI**. A first successful run
-must show cache misses/build steps, all four jobs passing, and the eight named
+must show cache misses/build steps, all four jobs passing, and the nine named
 artifacts above. Download the archives before they expire and inspect their
 source SHA, license and checksums; the Unix executable bits are inside the tar
 archives. Use **Run workflow** on the same branch to create a second run, verify

@@ -27,6 +27,9 @@ jobs:
     name: Linux / full check
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
     env:
       COMPOSE_FILE: compose.yaml:compose.ci.yaml
       DOCKER_BUILD_RECORD_UPLOAD: "false"
@@ -61,7 +64,7 @@ jobs:
           targets: toolchain
           load: true
       - name: Linux Makefile checks and package
-        run: make ci-linux
+        run: make COVERAGE=1 ci-linux
       - name: Linux build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -71,6 +74,30 @@ jobs:
           overwrite: true
           if-no-files-found: error
           compression-level: 0
+      - name: Rust line coverage report
+        if: ${{ !cancelled() && hashFiles('.ci/coverage/lcov.info') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-linux
+          path: .ci/coverage/lcov.info
+          # .ci is hidden; the upload is restricted to this one completed report.
+          include-hidden-files: true
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+      - name: Upload Rust line coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('.ci/coverage/lcov.info') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' }}
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7 # v5.5.1
+        with:
+          files: .ci/coverage/lcov.info
+          disable_search: true
+          disable_file_fixes: true
+          disable_safe_directory: true
+          disable_telem: true
+          plugins: noop
+          use_oidc: true
+          override_commit: ${{ github.sha }}
+          fail_ci_if_error: true
       - name: Record job outcome
         if: always()
         run: python3 tools/ci.py finish linux "${{ job.status }}"

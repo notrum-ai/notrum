@@ -35,8 +35,7 @@ Notrum brings Markdown editing, tagged notes, and an RSS/Atom reader into one
 native desktop application. Keep project ideas, everyday notes, and reading
 lists together in a folder you control.
 
-Inspired by [Notable](https://github.com/notable/notable)'s approach to Markdown
-and portable notes, Notrum stores your writing as ordinary files in a
+Notrum stores your writing as ordinary files in a
 Notable-style workspace. Open them in another editor, track them with Git,
 or back them up with your own tools. No cloud account is required.
 
@@ -68,7 +67,7 @@ manager and edit them in place, without moving them into a workspace.
 
 ### 📰 Reading alongside writing
 
-Follow HTTP and HTTPS RSS and Atom feeds in the same application as your notes.
+Follow RSS and Atom feeds in the same application as your notes.
 A native reader presents article excerpts and read status; use `J` and `K`
 to move between entries, or open the original article in your browser.
 
@@ -105,8 +104,7 @@ built through Docker for the container's architecture. Portable Windows x64
 builds target Windows 10/11 on local NTFS. Cross-compilation and actual Windows
 acceptance are separate checks; see the [Windows guide](docs/windows.md).
 
-There is no Developer ID signed or notarized public release. Native macOS builds
-use an ad-hoc integrity signature that does not identify an Apple-registered
+Native macOS builds use an ad-hoc integrity signature that does not identify an Apple-registered
 developer.
 Known dependency warnings and the remaining work before distributing binaries
 are documented in the [development guide](docs/development.md).
@@ -197,7 +195,7 @@ On Linux, launch it with an optional workspace path:
 ./dist/linux/$(uname -m)/notrum /absolute/path/to/workspace
 ```
 
-This is a dynamically linked binary built on Debian 12 (glibc 2.36), not a
+This is a dynamically linked binary, not a
 self-contained application bundle. A compatible Linux desktop with X11 or
 Wayland, the corresponding system libraries, fonts, GTK4 (4.0 or newer), and an XDG desktop portal
 for file dialogs is required. See the [development guide](docs/development.md)

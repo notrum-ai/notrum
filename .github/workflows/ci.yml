@@ -88,18 +88,10 @@ jobs:
           if-no-files-found: error
       - name: Upload Rust line coverage to Codecov
         if: ${{ !cancelled() && hashFiles('.ci/coverage/lcov.info') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]' }}
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        uses: ./.github/actions/coverage
         with:
-          files: .ci/coverage/lcov.info
-          disable_search: true
-          disable_file_fixes: true
-          disable_safe_directory: true
-          disable_telem: true
-          plugins: noop
-          use_oidc: true
-          override_commit: ${{ github.sha }}
-          override_branch: ${{ github.ref == 'refs/tags/latest' && 'latest' || '' }}
-          fail_ci_if_error: true
+          commit: ${{ github.sha }}
+          branch: ${{ github.ref == 'refs/tags/latest' && 'latest' || '' }}
       - name: Record job outcome
         if: always()
         run: python3 tools/ci.py finish linux "${{ job.status }}"

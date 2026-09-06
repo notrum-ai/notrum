@@ -398,5 +398,5 @@ ci-package-macos: revision-check
 	python3 -B tools/ci.py package macos
 
 ci-validate:
-	docker run --rm -v "$(CURDIR):/workspace:ro" -w /workspace rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color .github/workflows/ci.yml
+	docker run --rm -v "$(CURDIR):/workspace:ro" -w /workspace rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color .github/workflows/*.yml
 	@SOURCE_REVISION="$$( $(GIT) rev-parse HEAD )" $(COMPOSE) -f compose.yaml -f compose.ci.yaml config --format json | $(COMPOSE) run --rm -T toolchain python3 -B tools/ci.py validate-compose

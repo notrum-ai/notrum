@@ -9,8 +9,8 @@
 rules, publish Releases, or require a write-enabled repository token.
 Every action is pinned to a complete commit SHA, checkout credentials are not
 persisted, and repository contents permissions stay at `contents: read`.
-Only the Linux job additionally has `id-token: write` for Codecov OIDC upload
-authentication. A newer run cancels the older run for the same PR or branch.
+Only jobs uploading coverage additionally have `id-token: write` for Codecov
+OIDC authentication. A newer CI run cancels the older run for the same PR or branch.
 
 | Job | Runner | Command and scope | Timeout |
 | --- | --- | --- | --- |
@@ -40,8 +40,8 @@ make check
 make diff
 ```
 
-`ci-validate` runs actionlint 1.7.12 from its digest-pinned Docker image and checks
-the merged `compose.yaml` + `compose.ci.yaml`, including cache mounts and profile
+`ci-validate` runs actionlint 1.7.12 from its digest-pinned Docker image over all
+workflows and checks the merged `compose.yaml` + `compose.ci.yaml`, including cache mounts and profile
 settings. It is included in `make check`. Artifact privacy, permissions, transfer
 integrity and source-revision validation have tests in `tools/test_ci.py`.
 
@@ -118,8 +118,11 @@ the first upload for `latest`. Its color reflects the measured result. Uploads e
 ### Codecov setup
 
 Enable `notrum-ai/notrum` in [Codecov](https://app.codecov.io/gh/notrum-ai/notrum)
-with the repository owner's GitHub account if it is not connected yet. The
-workflow uses [GitHub OIDC](https://github.com/codecov/codecov-action#using-oidc),
+with the repository owner's GitHub account if it is not connected yet. If the
+repository is missing, synchronize repositories and check the Codecov GitHub
+App's repository access as described in the [Codecov setup guide](https://docs.codecov.com/docs/quick-start).
+OIDC authenticates uploads but does not replace Codecov repository setup.
+The workflow uses [GitHub OIDC](https://github.com/codecov/codecov-action#using-oidc),
 so no `CODECOV_TOKEN` secret is required. Repository/organization policy must
 allow the pinned Codecov action and the Linux job's `id-token: write` permission.
 No repository-content write permission is granted.
@@ -130,6 +133,27 @@ Pushes, manual runs, and other same-repository PRs upload automatically. Upload
 errors fail the Linux job visibly; the artifact remains available even if Codecov
 is unavailable or initial account setup is incomplete. `codecov.yml` disables
 PR comments, inline annotations, and percentage-based commit statuses.
+
+### Retry Codecov without acceptance tests
+
+Open **Actions → Codecov upload → Run workflow**, select `master`, and enter
+the numeric ID from the original CI run URL in `run_id`. This manual workflow
+downloads only that run's `coverage-linux` artifact and uses the same upload
+action as Linux CI, including the explicit GitHub repository slug and OIDC.
+It runs no builds or tests and does not change the original CI result.
+
+The source must be a completed `CI` push or manual run for `master` or `latest`
+in this repository. Its overall result may be failed: the artifact is published
+only after the instrumented Rust tests and report generation succeed. The
+retry obtains the original SHA and branch from GitHub rather than attaching
+old coverage to the new workflow commit. PR and fork runs are rejected.
+`actions: read` is needed to inspect the source run and download its artifact.
+Missing or expired artifacts fail explicitly; the one-day retention still applies.
+
+`Repository not found` after CLI integrity verification is an upload service
+error, not a Rust test or GPG verification failure. Check the repository setup
+above, then retry the saved artifact. Upload failures remain fatal; neither
+workflow hides them with `continue-on-error` or an anonymous upload fallback.
 
 ## Caches and runner storage
 

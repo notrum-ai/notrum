@@ -12,6 +12,8 @@ import sys
 import tempfile
 import unittest
 
+from coverage_retry import coverage_revision
+
 
 ROOT = Path(__file__).resolve().parent.parent
 FAKE_RUNNER = '''import json
@@ -34,6 +36,36 @@ if args[1] == "llvm-cov":
 
 
 class CoverageTests(unittest.TestCase):
+    def source_run(self, **changes):
+        return dict({
+            "path": ".github/workflows/ci.yml", "status": "completed",
+            "conclusion": "failure", "event": "push",
+            "repository": {"full_name": "notrum-ai/notrum"},
+            "head_repository": {"full_name": "notrum-ai/notrum"},
+            "head_sha": "f" * 40, "head_branch": "master",
+        }, **changes)
+
+    def test_retry_preserves_original_revision_even_if_later_ci_steps_failed(self):
+        for branch in ("master", "latest"):
+            for event in ("push", "workflow_dispatch"):
+                with self.subTest(branch=branch, event=event):
+                    self.assertEqual(coverage_revision(
+                        self.source_run(head_branch=branch, event=event), "notrum-ai/notrum"
+                    ), ("f" * 40, branch))
+
+    def test_retry_rejects_untrusted_unfinished_or_mislabelled_sources(self):
+        for changes in (
+            {"path": ".github/workflows/coverage.yml"},
+            {"status": "in_progress"}, {"event": "pull_request"},
+            {"event": "pull_request_target"},
+            {"repository": {"full_name": "another/repo"}},
+            {"head_repository": {"full_name": "another/repo"}},
+            {"head_sha": "f" * 7}, {"head_sha": "f" * 40 + "\nbranch=latest"},
+            {"head_branch": "feature"}, {"head_branch": "master\ncommit=fake"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                coverage_revision(self.source_run(**changes), "notrum-ai/notrum")
+
     def run_make(self, target="coverage", *, coverage="0", exit_code=0, empty=False):
         temporary = tempfile.TemporaryDirectory(prefix="notrum-coverage-test-")
         self.addCleanup(temporary.cleanup)

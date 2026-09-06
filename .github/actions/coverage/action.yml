@@ -1,0 +1,29 @@
+# Copyright 2026 Evgeniy Udodov
+# SPDX-License-Identifier: GPL-3.0-only
+name: Upload Rust coverage
+description: Upload only the completed Linux LCOV report using GitHub OIDC
+inputs:
+  commit:
+    description: SHA of the checkout that produced the report
+    required: true
+  branch:
+    description: Original branch or latest release tag; empty for automatic detection
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+      with:
+        files: .ci/coverage/lcov.info
+        disable_search: true
+        disable_file_fixes: true
+        disable_safe_directory: true
+        disable_telem: true
+        plugins: noop
+        use_oidc: true
+        git_service: github
+        slug: ${{ github.repository }}
+        override_commit: ${{ inputs.commit }}
+        override_branch: ${{ inputs.branch }}
+        fail_ci_if_error: true

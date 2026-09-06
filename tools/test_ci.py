@@ -24,6 +24,56 @@ SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    def test_protection_waits_for_delayed_worker_but_requires_original_path(self):
+        for result in ("delayed", "missing", "wrong_path"):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                note = workspace / "note.md"
+                note.write_text("synthetic body", encoding="utf-8")
+                clock = [0.0]
+
+                def advance(seconds):
+                    clock[0] += seconds
+
+                def protected(_workspace):
+                    if result == "missing" or clock[0] < 12.0:
+                        return []
+                    return [note if result == "delayed" else workspace / "other.md"]
+
+                driver = Mock(spec=ui_acceptance.WindowDriver)
+                with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(ui_acceptance.time, "sleep", side_effect=advance), \
+                        patch.object(ui_acceptance, "protected_note_files", side_effect=protected):
+                    if result == "delayed":
+                        self.assertEqual(
+                            ui_acceptance.protect_selected_note(driver, workspace, note, "fixture"),
+                            note,
+                        )
+                    else:
+                        with self.assertRaises(ui_acceptance.AcceptanceFailure):
+                            ui_acceptance.protect_selected_note(driver, workspace, note, "fixture")
+                self.assertGreaterEqual(clock[0], 12.0)
+                self.assertLess(clock[0], 60.0)
+
+    def test_password_focus_waits_for_accent_border_without_screenshot(self):
+        driver = object.__new__(ui_acceptance.WindowDriver)
+        driver.window_id = "123"
+        driver.environment = {"DISPLAY": ui_acceptance.DISPLAY}
+        divider = "20: (214,219,225) #D6DBE1 srgb(214,219,225)\n"
+        accent = "20: (54,94,130) #365E82 srgb(54,94,130)\n"
+        with patch.object(ui_acceptance, "run_command", side_effect=[
+            Mock(stdout=divider), Mock(stdout=divider), Mock(stdout=accent),
+        ]) as command, patch.object(ui_acceptance.time, "sleep"), \
+                patch.object(driver, "capture") as capture:
+            driver.wait_for_password_field_focus("password_confirmation")
+        self.assertEqual(command.call_count, 3)
+        for call in command.call_args_list:
+            arguments = call.args[0]
+            self.assertEqual(arguments[0], "import")
+            self.assertEqual(arguments[arguments.index("-crop") + 1], "4x20+444+438")
+            self.assertEqual(arguments[-1], "histogram:info:-")
+        capture.assert_not_called()
+
     def test_ai_control_wait_accepts_blinking_caret_but_rejects_changing_content(self):
         for changing_content in (False, True):
             with self.subTest(changing_content=changing_content):

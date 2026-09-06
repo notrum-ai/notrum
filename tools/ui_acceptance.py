@@ -735,8 +735,14 @@ def near_color_pixel_count(
             "histogram:info:-",
         ]
     )
+    return count_near_color_pixels(completed.stdout, expected, tolerance=tolerance)
+
+
+def count_near_color_pixels(
+    histogram: str, expected: tuple[int, int, int], *, tolerance: int
+) -> int:
     count = 0
-    for line in completed.stdout.splitlines():
+    for line in histogram.splitlines():
         match = re.match(
             r"\s*(\d+):\s+\(\s*(\d+),\s*(\d+),\s*(\d+)",
             line,
@@ -1328,6 +1334,40 @@ class WindowDriver:
             return 0.1 < backdrop < 0.85 and padding > 0.95
 
         wait_until("password dialog paint", painted, interval=0.03)
+
+    def window_color_pixel_count(
+        self,
+        expected: tuple[int, int, int],
+        *,
+        crop: tuple[int, int, int, int],
+        tolerance: int = 12,
+    ) -> int:
+        """Read a scoped color histogram in memory, without a screenshot file."""
+        if self.window_id is None:
+            raise AcceptanceFailure("cannot sample a control without a window")
+        x, y, width, height = crop
+        completed = run_command(
+            [
+                "import", "-display", DISPLAY, "-window", self.window_id,
+                "-crop", f"{width}x{height}+{x}+{y}", "+repage",
+                "-depth", "8", "-format", "%c", "histogram:info:-",
+            ],
+            environment=self.environment,
+        )
+        return count_near_color_pixels(completed.stdout, expected, tolerance=tolerance)
+
+    def wait_for_password_field_focus(self, control: str) -> None:
+        # Key delivery and Floem's queued focus change are separate. In
+        # particular, Backspace after Shift+Tab must reach the primary field.
+        # Sample only its left border, never the masked value or note body.
+        _, y = CONTROLS[control]
+        wait_until(
+            "password field focus",
+            lambda: self.window_color_pixel_count(
+                (54, 94, 130), crop=(444, y - 10, 4, 20)
+            ) >= 15,
+            interval=0.03,
+        )
 
     def type_text(self, text: str) -> None:
         self.xdotool("type", "--clearmodifiers", "--delay", "12", text)
@@ -2314,7 +2354,10 @@ def protect_selected_note(
             (105, 112, 121),
             before_text=True,
         )
-    driver.click("password_setup_primary")
+    # The dialog focuses Primary automatically. Clicking an already focused
+    # field queues another delayed focus request, which can steal focus back
+    # after Enter/Tab on a busy runner.
+    driver.wait_for_password_field_focus("password_setup_primary")
     driver.type_sensitive_text(f"{password}x")
     if verify_password_caret:
         assert_masked_password_caret(
@@ -2325,6 +2368,7 @@ def protect_selected_note(
             before_text=False,
         )
     driver.key("Return")
+    driver.wait_for_password_field_focus("password_confirmation")
     if verify_password_caret:
         assert_masked_password_caret(
             driver,
@@ -2333,11 +2377,12 @@ def protect_selected_note(
             (105, 112, 121),
             before_text=True,
         )
-    driver.click("password_confirmation")
     driver.type_sensitive_text(password)
     driver.key("shift+Tab")
+    driver.wait_for_password_field_focus("password_setup_primary")
     driver.key("BackSpace")
     driver.key("Tab")
+    driver.wait_for_password_field_focus("password_confirmation")
     driver.key("Return")
 
     protected: list[Path] = []
@@ -2346,7 +2391,10 @@ def protect_selected_note(
         protected[:] = protected_note_files(workspace)
         return plaintext_note.exists() and protected == [plaintext_note]
 
-    wait_until("selected note body protection at title-derived path", completed, timeout=10.0)
+    # Protection queues a search-index purge, vault setup and the encryption
+    # worker. Allow that whole operation to finish on shared CI runners while
+    # still requiring the encrypted envelope at the original path.
+    wait_until("selected note body protection at title-derived path", completed, timeout=30.0)
     return protected[0]
 
 
@@ -6050,13 +6098,9 @@ def secure_integrity_scenario(driver: WindowDriver, workspace: Path) -> None:
         # The worker writes its journal before the UI receives the completion
         # and paints the modal. A journal alone is not a clickable button.
         def painted() -> bool:
-            frame = driver.capture("integrity-buttons")
-            try:
-                return near_color_pixel_count(
-                    frame, (54, 94, 130), crop=(755, 432, 60, 32), tolerance=16
-                ) >= 100
-            finally:
-                frame.unlink(missing_ok=True)
+            return driver.window_color_pixel_count(
+                (54, 94, 130), crop=(755, 432, 60, 32), tolerance=16
+            ) >= 100
         wait_until("painted integrity actions", painted, timeout=8.0, interval=0.05)
 
     driver.start_app(secure_workspace, "protect")

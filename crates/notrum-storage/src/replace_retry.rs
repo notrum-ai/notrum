@@ -1,6 +1,8 @@
 // Copyright 2026 Evgeniy Udodov
 // SPDX-License-Identifier: GPL-3.0-only
 
+#![forbid(unsafe_code)]
+
 //! Retry only an unpublished Windows replacement, under the caller's operation lock.
 
 use std::io;

@@ -1,6 +1,8 @@
 // Copyright 2026 Evgeniy Udodov
 // SPDX-License-Identifier: GPL-3.0-only
 
+#![forbid(unsafe_code)]
+
 //! Fixed-vocabulary deletion diagnostics; never format an error payload.
 
 use super::CoreError;

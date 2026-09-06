@@ -538,21 +538,9 @@ class LatestTests(unittest.TestCase):
             publish.finish_publication(self.state, self.github)
         self.github.network_git.assert_not_called()
 
-    def test_workflow_limits_coverage_alias_to_latest_tag(self):
+    def test_workflow_runs_for_the_moving_latest_tag(self):
         workflow = (app_version.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        action = (app_version.ROOT / ".github/actions/coverage/action.yml").read_text(encoding="utf-8")
         self.assertIn("    branches: [master]\n    tags: [latest]", workflow)
-        self.assertIn(
-            "        uses: ./.github/actions/coverage\n"
-            "        with:\n"
-            "          commit: ${{ github.sha }}\n"
-            "          branch: ${{ github.ref == 'refs/tags/latest' && 'latest' || '' }}",
-            workflow,
-        )
-        self.assertIn("uses: codecov/codecov-action@", action)
-        self.assertIn("override_branch: ${{ inputs.branch }}", action)
-        self.assertIn("override_commit: ${{ inputs.commit }}", action)
-        self.assertIn("use_oidc: true", action)
 
 
 if __name__ == "__main__":

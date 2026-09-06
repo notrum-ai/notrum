@@ -8,13 +8,12 @@
 `master`, pushes to the moving `latest` tag, and manual dispatch. It does not change branch protection or PR merge
 rules, publish Releases, or require a write-enabled repository token.
 Every action is pinned to a complete commit SHA, checkout credentials are not
-persisted, and repository contents permissions stay at `contents: read`.
-Only jobs uploading coverage additionally have `id-token: write` for Codecov
-OIDC authentication. A newer CI run cancels the older run for the same PR or branch.
+persisted, and repository permissions stay at `contents: read`.
+A newer CI run cancels the older run for the same PR or branch.
 
 | Job | Runner | Command and scope | Timeout |
 | --- | --- | --- | --- |
-| Linux | `ubuntu-24.04`, x64 | Build the Compose toolchain; `make COVERAGE=1 ci-linux` executes `make check-linux` (tests with coverage, UI, audits and Linux/macOS checks) and packages Linux | 120 min |
+| Linux | `ubuntu-24.04`, x64 | Build the Compose toolchain; `make ci-linux` executes `make check-linux` (tests, UI, audits and Linux/macOS checks) and packages Linux | 120 min |
 | Windows build | `ubuntu-24.04`, x64 | `make ci-windows-build` cross-compiles the Windows application and test kit, then packages both | 90 min |
 | macOS | `macos-15`, Apple Silicon | `make NATIVE=1 ci-macos` builds with pinned Rust and executes the native launch and Finder smoke checks | 90 min |
 | Windows | `windows-2025`, x64 | Verify and unpack the Windows build job's test package from this run; execute its existing PowerShell test runner and native smoke checks | 30 min |
@@ -67,94 +66,6 @@ pinned Rust/rustup and system Xcode SDK. Global Rust and shell profiles are unch
 The macOS CI wrapper explicitly starts native Make through `arch -arm64`, so an
 Intel Python installation running under Rosetta cannot change the build architecture.
 
-## Code coverage
-
-The Linux job measures Rust **line coverage** with pinned `cargo-llvm-cov 0.6.21`
-and the LLVM tools supplied with Rust 1.88.0. `COVERAGE=1` replaces the usual
-debug workspace test run with its instrumented equivalent, keeping
-`--workspace --all-features`. Stable coverage tooling skips doctests, so those
-still run separately with `cargo test --doc`. Release tests, desktop UI checks,
-audits, and the other platform jobs retain their existing commands.
-
-The report covers Rust workspace sources exercised by Linux unit and integration
-tests, including the application crate. It does not measure Python scripts,
-external UI acceptance scenarios, doctests, or macOS/Windows-specific code.
-Dependencies and standalone test/example/benchmark source directories use
-cargo-llvm-cov's default exclusions. Inline test modules and the workspace's
-Rust probe tools are not specially excluded. No coverage-specific code paths
-are enabled, and no minimum percentage is enforced before a baseline exists.
-
-This avoids another CI runner and a duplicate debug test run. Instrumentation
-still needs its own compilation; its artifacts stay in cargo-llvm-cov's separate
-target directory inside the disposable Cargo target volume. Downloaded tools
-are cached in the Docker image. Coverage does not instrument release packages.
-
-To reproduce locally after rebuilding the toolchain image:
-
-```sh
-make image
-make coverage
-# Or select this as the final full gate:
-make COVERAGE=1 check
-```
-
-`make coverage` writes `.ci/coverage/lcov.info` only after tests pass and a
-nonempty report is generated. A new run removes the old report first, so failed
-tests cannot publish a stale success. This path is already ignored by Git.
-LCOV contains source paths and line execution counts, without source text or
-per-function records. Raw profiles, test workspaces, and test logs are not
-uploaded. The existing CI diagnostic filter still wraps the test command.
-
-GitHub Actions retains the `coverage-linux` LCOV artifact for one day, including
-when a later check fails. Codecov receives only this explicit file; file search,
-source-based file fixes, additional collection plugins, and telemetry are
-disabled. The README badges follow the moving `latest` release tag. Publishing
-that tag starts an additional full CI run on the release commit. Only runs on
-`refs/tags/latest` set Codecov's `override_branch` to `latest`; other runs retain
-automatic branch detection. The coverage badge appears after Codecov processes
-the first upload for `latest`. Its color reflects the measured result. Uploads explicitly use
-`github.sha`, matching the tested checkout (including the merge SHA for a PR).
-
-### Codecov setup
-
-Enable `notrum-ai/notrum` in [Codecov](https://app.codecov.io/gh/notrum-ai/notrum)
-with the repository owner's GitHub account if it is not connected yet. If the
-repository is missing, synchronize repositories and check the Codecov GitHub
-App's repository access as described in the [Codecov setup guide](https://docs.codecov.com/docs/quick-start).
-OIDC authenticates uploads but does not replace Codecov repository setup.
-The workflow uses [GitHub OIDC](https://github.com/codecov/codecov-action#using-oidc),
-so no `CODECOV_TOKEN` secret is required. Repository/organization policy must
-allow the pinned Codecov action and the Linux job's `id-token: write` permission.
-No repository-content write permission is granted.
-
-Fork and Dependabot pull requests still measure coverage and retain the artifact,
-but skip the OIDC upload because their token permissions may be restricted.
-Pushes, manual runs, and other same-repository PRs upload automatically. Upload
-errors fail the Linux job visibly; the artifact remains available even if Codecov
-is unavailable or initial account setup is incomplete. `codecov.yml` disables
-PR comments, inline annotations, and percentage-based commit statuses.
-
-### Retry Codecov without acceptance tests
-
-Open **Actions → Codecov upload → Run workflow**, select `master`, and enter
-the numeric ID from the original CI run URL in `run_id`. This manual workflow
-downloads only that run's `coverage-linux` artifact and uses the same upload
-action as Linux CI, including the explicit GitHub repository slug and OIDC.
-It runs no builds or tests and does not change the original CI result.
-
-The source must be a completed `CI` push or manual run for `master` or `latest`
-in this repository. Its overall result may be failed: the artifact is published
-only after the instrumented Rust tests and report generation succeed. The
-retry obtains the original SHA and branch from GitHub rather than attaching
-old coverage to the new workflow commit. PR and fork runs are rejected.
-`actions: read` is needed to inspect the source run and download its artifact.
-Missing or expired artifacts fail explicitly; the one-day retention still applies.
-
-`Repository not found` after CLI integrity verification is an upload service
-error, not a Rust test or GPG verification failure. Check the repository setup
-above, then retry the saved artifact. Upload failures remain fatal; neither
-workflow hides them with `continue-on-error` or an anonymous upload fallback.
-
 ## Caches and runner storage
 
 Both Ubuntu jobs set `COMPOSE_FILE=compose.yaml:compose.ci.yaml`. Buildx Bake
@@ -191,7 +102,6 @@ Artifacts are retained for **one day**, the minimum supported retention period:
   runtime DLLs and the compiled test kit for the dependent job in the same run.
 - `reports-linux`, `reports-macos`, `reports-windows-build`, `reports-windows`: status and cleaned diagnostics,
   uploaded also when checks fail or a run is cancelled after checkout.
-- `coverage-linux`: the completed Rust LCOV report, retained also if later checks fail.
 
 Build archives include the project license, existing runtime notices where
 applicable, `SOURCE_REVISION.txt` and a `build.json` file with per-file SHA-256

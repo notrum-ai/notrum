@@ -28,8 +28,6 @@ Docker. See [GitHub CI](ci.md) for runners, caches, artifacts and validation.
 | `make status` / `make diff` / `make log` | Inspect the checkout, changes, and recent commits |
 | `make image` | Build the pinned Docker toolchain image |
 | `make test` / `make test-release` | Workspace Rust tests in debug / release mode |
-| `make coverage` | Linux Rust test coverage as `.ci/coverage/lcov.info` through Docker |
-| `make COVERAGE=1 check` | Full gate with coverage in place of the debug test run; doctests still run separately |
 | `make test-<crate>` | Focused tests for crates with a Makefile target |
 | `make lint` / `make fmt-check` | Clippy / formatting check |
 | `make fmt` | Apply Rust formatting |

@@ -104,10 +104,10 @@ CODEX="$HOME/.local/bin/codex" make publish
    No confirmation prompt is required.
 
 The `latest` tag starts an additional full GitHub CI run and selects the release
-shown by the README's CI and coverage badges. No separate GitHub Release is
-created for this tag. It first appears after a successful publication with this
-publisher; badges may show no data until that CI run and coverage processing
-finish. The badge URLs do not need to change with each version. Repository tag
+shown by the README's CI badge. No separate GitHub Release is created for this
+tag. It first appears after a successful publication with this publisher; badges
+may show no data until that CI run finishes. The badge URLs do not need to
+change with each version. Repository tag
 rules must allow creating and updating `latest` with the publication token.
 
 No new commits since the previous version change means no new release. A Codex

@@ -24,7 +24,7 @@ instead of posting technical details in a public issue.
 - Preserve unknown workspace data, atomic/no-overwrite saves, conflict and
   recovery behavior, bounded memory use, and protected-body storage boundaries.
 - Keep project-owned Rust safe-only. Do not introduce a database, browser or
-  JavaScript runtime, or process execution. HTTPS feed loading and explicit
+  JavaScript runtime, or process execution. HTTP/HTTPS feed loading and explicit
   article opening remain restricted to the RSS engine.
 - Use scoped UI styles, not global theme overrides for local changes.
 - Update relevant English documentation when behavior or setup changes.

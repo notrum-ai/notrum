@@ -52,7 +52,7 @@ The script deliberately leaves manual acceptance unconfirmed.
   in its absolute path. Restart and switch workspaces to verify global settings.
 - Exercise Ctrl+A/C/X/V/Z/Y/S/F, selection, clipboard, undo, native file/folder
   dialogs, and the localized crash dialog using a synthetic failure only.
-- Refresh an HTTPS RSS feed, navigate articles, and open the original through
+- Refresh HTTP and HTTPS RSS feeds, navigate articles, and open the original through
   the existing hardened RSS opener. Check certificate/network error messages.
 - Switch all 17 languages, including Arabic and Urdu, with an unsaved editor
   and open menus. Check mixed text and scaling at 100%, 150%, and 200%, including

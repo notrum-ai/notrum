@@ -68,7 +68,7 @@ manager and edit them in place, without moving them into a workspace.
 
 ### 📰 Reading alongside writing
 
-Follow HTTPS RSS and Atom feeds in the same application as your notes.
+Follow HTTP and HTTPS RSS and Atom feeds in the same application as your notes.
 A native reader presents article excerpts and read status; use `J` and `K`
 to move between entries, or open the original article in your browser.
 

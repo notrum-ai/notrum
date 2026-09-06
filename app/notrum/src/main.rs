@@ -11530,7 +11530,7 @@ fn rss_panel(
                 .entry
                 .link
                 .as_deref()
-                .and_then(rss_card::https_url)
+                .and_then(rss_card::article_url)
                 .or_else(|| excerpt.continuation.clone());
             let alpha = if card.unread {
                 1.0

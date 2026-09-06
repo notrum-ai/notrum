@@ -7031,12 +7031,13 @@ def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
     state_path.unlink()
     entries = json.loads((cache / "feed.json").read_text(encoding="utf-8"))
     entries["entries"][0]["summary"] = linked + " [Читать далее](https://example.test/continuation)"
+    entries["entries"][0]["link"] = "http://example.test/article"
     entries["entries"] += [
         {
             "id": "entry/fallback", "title": "Fallback title",
             "author": None, "published": None, "updated": None,
             "summary": "Fallback summary. [Читать далее](https://example.test/fallback)",
-            "link": "http://example.test/rejected",
+            "link": "ftp://example.test/rejected",
         },
         {
             "id": "entry/plain", "title": "Title without a valid link",
@@ -7080,9 +7081,9 @@ def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
         raise AcceptanceFailure("unread RSS title is not dark or is not first in the card")
     if near_color_pixel_count(unread_frame, (153, 153, 153), crop=metadata_crop, tolerance=8) < 50:
         raise AcceptanceFailure("RSS author and date are not gray below the title")
-    # The original link takes precedence over the continuation URL.
+    # The HTTP original link takes precedence over the HTTPS continuation URL.
     driver.click_point(450, 116)
-    expect_open("https://example.test/article")
+    expect_open("http://example.test/article")
     expect_read("entry/0")
     driver.xdotool("mousemove", "1100", "50")
     frame = driver.wait_for_stable_frame("read RSS title", crop=EDITOR_CROP, stable_for=0.3)
@@ -7098,11 +7099,11 @@ def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
     for _ in range(8):
         driver.key("Tab")
     driver.key("Return")
-    expect_open("https://example.test/article")
+    expect_open("http://example.test/article")
     for _ in range(8):
         driver.key("Tab")
     driver.key("space")
-    expect_open("https://example.test/article")
+    expect_open("http://example.test/article")
     driver.click_point(450, 192)
     driver.click_point(450, 365)
     expect_read("entry/1")

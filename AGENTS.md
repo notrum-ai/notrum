@@ -25,10 +25,11 @@
   persistent index, recovery record, cache, diagnostics, or temporary files.
 - Project-owned Rust must remain safe-only. Do not add `unsafe`, SQLite,
   WebView/browser runtimes, JavaScript runtimes, or process execution. The only
-  network exceptions are the restricted `ureq` HTTPS clients in `notrum-rss`
-  and `notrum-ai` (fixed OpenAI/Anthropic model catalog endpoints only);
-  HTTPS article opening is allowed only through that crate's dedicated
-  hardened opener.
+  network exceptions are the restricted `ureq` HTTP/HTTPS client in `notrum-rss`
+  (any host or port) and HTTPS client in `notrum-ai` (fixed OpenAI/Anthropic
+  model catalog endpoints only); HTTP/HTTPS article opening is allowed only
+  through the RSS crate's dedicated hardened opener. The test-only RSS HTTP
+  integration target may use a loopback server to exercise the client.
 - AI settings are global. API keys belong only in the OS credential store via
   `notrum-platform`; config files contain opaque references and model aliases.
   Never send notes while checking a key or listing models. Connecting creates

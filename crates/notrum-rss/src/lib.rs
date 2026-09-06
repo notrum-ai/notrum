@@ -133,7 +133,7 @@ impl FileEngineFactory for RssEngineFactory {
             fields: vec![SettingField {
                 key: "source/url".to_owned(),
                 label: "URL ленты".to_owned(),
-                description: "Прямой HTTPS URL RSS или Atom".to_owned(),
+                description: "Прямой HTTP/HTTPS URL RSS или Atom".to_owned(),
                 required: true,
                 default: None,
                 field_type: SettingFieldType::Url,
@@ -570,7 +570,7 @@ pub fn execute_refresh(request: RssRefreshRequest) -> Result<RssRefreshResult, E
     let url = normalize_feed_url(&request.url)?;
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(15)))
-        .https_only(true)
+        .https_only(false)
         .max_redirects(5)
         .build();
     let agent = ureq::Agent::new_with_config(config);
@@ -626,13 +626,13 @@ pub fn execute_refresh(request: RssRefreshRequest) -> Result<RssRefreshResult, E
 pub fn open_original(url: &str) -> Result<(), EngineError> {
     let parsed =
         Url::parse(url).map_err(|error| EngineError::Io(format!("invalid entry URL: {error}")))?;
-    if parsed.scheme() != "https"
+    if !matches!(parsed.scheme(), "http" | "https")
         || parsed.host_str().is_none()
         || !parsed.username().is_empty()
         || parsed.password().is_some()
     {
         return Err(EngineError::Io(
-            "entry URL must be an unauthenticated HTTPS URL".to_owned(),
+            "entry URL must be an unauthenticated HTTP or HTTPS URL".to_owned(),
         ));
     }
     webbrowser::open(parsed.as_str())
@@ -739,7 +739,7 @@ pub fn normalize_feed_url(value: &str) -> Result<String, EngineError> {
     }
     let mut url = Url::parse(value.trim())
         .map_err(|_| EngineError::InvalidSetting("source/url".to_owned()))?;
-    if url.scheme() != "https"
+    if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
@@ -747,9 +747,8 @@ pub fn normalize_feed_url(value: &str) -> Result<String, EngineError> {
         return Err(EngineError::InvalidSetting("source/url".to_owned()));
     }
     url.set_fragment(None);
-    if url.port() == Some(443) {
-        let _ = url.set_port(None);
-    }
+    // Url already removes the default port for each scheme. Keep other ports,
+    // including HTTP on port 443.
     Ok(url.to_string())
 }
 
@@ -798,7 +797,11 @@ fn provisional_title(url: &str) -> String {
 
 fn normalize_entry_link(value: &str) -> Option<String> {
     let mut url = Url::parse(value).ok()?;
-    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
         return None;
     }
     url.set_fragment(None);
@@ -1020,13 +1023,68 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_https_and_credentials() {
-        assert!(normalize_feed_url("http://example.test/feed").is_err());
-        assert!(normalize_feed_url("https://user@example.test/feed").is_err());
+    fn accepts_http_and_https_without_host_or_port_restrictions() {
         assert_eq!(
             normalize_feed_url(" https://EXAMPLE.test:443/feed#x ").unwrap(),
             "https://example.test/feed"
         );
+        assert_eq!(
+            normalize_feed_url(" http://EXAMPLE.test:80/feed#x ").unwrap(),
+            "http://example.test/feed"
+        );
+        for url in [
+            "http://localhost:8080/feed",
+            "http://127.0.0.1:443/feed",
+            "http://192.168.1.10/feed",
+            "http://[::1]:8080/feed",
+            "https://example.test:8443/feed",
+        ] {
+            assert_eq!(normalize_feed_url(url).unwrap(), url);
+        }
+    }
+
+    #[test]
+    fn rejects_non_web_urls_and_credentials() {
+        for url in [
+            "ftp://example.test/feed",
+            "file:///tmp/feed.xml",
+            "https://user@example.test/feed",
+            "http://user:pass@example.test/feed",
+        ] {
+            assert!(normalize_feed_url(url).is_err());
+            assert!(normalize_entry_link(url).is_none());
+            assert!(open_original(url).is_err());
+        }
+    }
+
+    #[test]
+    fn http_subscription_survives_reopening_and_preserves_article_links() {
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = RssEngine::open(root.path()).unwrap();
+        let id = engine
+            .create_subscription("http://localhost:8080/feed", Vec::new(), false, "1")
+            .unwrap();
+        let reopened = RssEngine::open(root.path()).unwrap();
+        assert!(reopened.diagnostic().is_none());
+        assert_eq!(
+            reopened.refresh_request(&id).unwrap().url,
+            "http://localhost:8080/feed"
+        );
+        for source in [RSS, ATOM, RSS_ONE] {
+            let cache = parse_feed(
+                source
+                    .replace("https://example.test", "http://example.test")
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert!(
+                cache.entries[0]
+                    .link
+                    .as_deref()
+                    .unwrap()
+                    .starts_with("http://example.test/")
+            );
+        }
     }
 
     #[test]

@@ -126,7 +126,7 @@ available.
 
 ## RSS and Atom
 
-Choose `+` → RSS feed and enter a direct HTTPS feed URL. RSS 1.0, RSS 2.0,
+Choose `+` → RSS feed and enter a direct HTTP or HTTPS feed URL. RSS 1.0, RSS 2.0,
 and Atom are supported. Subscriptions appear alongside notes; entries open in
 a native, read-only feed view. A feed refreshes when opened and through its
 toolbar button. There is no background refresh schedule.
@@ -139,13 +139,15 @@ are dimmed, with additional contrast for the selected card.
 Cards show a bold sans-serif title, the author and local date, then a serif
 Markdown excerpt. They neither execute HTML nor load remote images. Clicking
 a linked title opens the original article in the system browser and marks the
-card read. If an entry has no original link, a suitable HTTPS link from its
+card read. If an entry has no original link, a suitable HTTP or HTTPS link from its
 excerpt can be used instead. Without a suitable link, the title is plain text.
 Other excerpt links are displayed as text.
 
-Feeds are fetched over HTTPS without cookies or authentication. Opening an
-article explicitly hands its HTTPS URL to the system browser. Subscriptions,
-cached entries, and read status have different storage roles; see the
+Feeds are fetched over HTTP or HTTPS without cookies or authentication, with no
+host or port allowlist; local network feeds are supported. HTTP traffic is
+unencrypted. Opening an article explicitly hands its HTTP or HTTPS URL to the
+system browser. Subscriptions, cached entries, and read status have different
+storage roles; see the
 [storage guide](storage.md).
 
 ## Protected notes

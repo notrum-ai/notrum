@@ -132,9 +132,10 @@ those older versions.
 
 ## Network boundary and known limitations
 
-RSS uses a restricted HTTPS client for direct feed URLs, without cookies or
-authentication. Explicit article opening uses the RSS engine's dedicated
-HTTPS opener. There is no WebView or HTML execution, and feed cards do not
+RSS uses a restricted HTTP/HTTPS client for direct feed URLs, without cookies or
+authentication and without host or port restrictions. HTTP traffic is unencrypted.
+Explicit article opening uses the RSS engine's dedicated HTTP/HTTPS opener.
+There is no WebView or HTML execution, and feed cards do not
 fetch images. RSS never creates note files in `notes/`.
 
 Project-owned Rust forbids unsafe code. This does not mean all transitive

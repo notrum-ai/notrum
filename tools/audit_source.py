@@ -58,6 +58,14 @@ def main() -> int:
                 fail(f"{relative}:{line_number}: project-owned unsafe token")
                 errors += 1
         for label, pattern in FORBIDDEN_RUST.items():
+            # Only this test-only integration target may run a loopback fixture
+            # server. Production RSS networking still goes exclusively through ureq.
+            if (
+                label == "runtime network API"
+                and relative == Path("crates/notrum-rss/tests/http.rs")
+                and "#![cfg(test)]" in text.splitlines()[:5]
+            ):
+                continue
             match = pattern.search(text)
             if match:
                 line_number = text.count("\n", 0, match.start()) + 1
@@ -100,7 +108,7 @@ def main() -> int:
     print(
         "SOURCE_AUDIT "
         f"rust_files={len(rust_files)} manifests={len(manifests)} "
-        "project_unsafe=0 rss_https_boundary=1 ai_https_boundary=1 process_spawn=0 database=0 web_js=0"
+        "project_unsafe=0 rss_http_boundary=1 ai_https_boundary=1 process_spawn=0 database=0 web_js=0"
     )
     return 0
 

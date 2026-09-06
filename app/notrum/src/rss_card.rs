@@ -35,9 +35,9 @@ pub struct Excerpt {
     pub continuation: Option<String>,
 }
 
-pub fn https_url(value: &str) -> Option<String> {
+pub fn article_url(value: &str) -> Option<String> {
     let url = Url::parse(value).ok()?;
-    (url.scheme() == "https"
+    (matches!(url.scheme(), "http" | "https")
         && url.host_str().is_some()
         && url.username().is_empty()
         && url.password().is_none())
@@ -130,7 +130,7 @@ pub fn excerpt(markdown: &str) -> Excerpt {
                     let label = result.text[start..].to_owned();
                     if is_continuation(&label) {
                         result.continuation =
-                            result.continuation.or_else(|| https_url(&destination));
+                            result.continuation.or_else(|| article_url(&destination));
                         result.text.truncate(start);
                         result.spans.retain(|(range, ..)| range.end <= start);
                     }
@@ -239,8 +239,23 @@ mod tests {
         ));
         assert_eq!(value.text, "Источник Script login");
         assert!(value.continuation.is_none());
-        assert!(https_url("https://user:pass@example.test/").is_none());
-        assert!(https_url("http://example.test/").is_none());
+        assert!(article_url("https://user:pass@example.test/").is_none());
+        assert!(article_url("http://user:pass@example.test/").is_none());
+        assert!(article_url("file:///tmp/article.html").is_none());
+    }
+
+    #[test]
+    fn accepts_http_article_and_read_more_links() {
+        let url = "http://localhost:8080/article";
+        assert_eq!(article_url(url).as_deref(), Some(url));
+        for markdown in [
+            format!("Text [Read more]({url})"),
+            format!("Text [Read more][1] [1]: {url}"),
+        ] {
+            let value = excerpt(&markdown);
+            assert_eq!(value.text, "Text");
+            assert_eq!(value.continuation.as_deref(), Some(url));
+        }
     }
 
     #[test]

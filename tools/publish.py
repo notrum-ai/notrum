@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
-"""Publish a resumable local release; Git and Rust always run in the toolchain."""
+"""Publish a resumable local release using host Git and Docker Rust builds."""
 
 import base64
 from contextlib import contextmanager
@@ -54,13 +54,8 @@ def run(command, *, input=None, env=None, stdout=subprocess.PIPE, stderr=None, t
     return result.stdout or ""
 
 
-def git_command(environment=None):
-    return [*DOCKER, *[arg for key in (environment or {}) for arg in ("-e", key)],
-            "toolchain", "git", "-c", "safe.directory=/workspace"]
-
-
 def git(*args, input=None, env=None, stdout=subprocess.PIPE):
-    return run([*git_command(env), *args], input=input, env=env, stdout=stdout)
+    return run(["git", *args], input=input, env=env, stdout=stdout)
 
 
 def digest(source):
@@ -190,7 +185,7 @@ class GitHub:
         env = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
                "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic " + credentials,
                "GIT_TERMINAL_PROMPT": "0"}
-        # Docker inherits these values by name; secrets never appear in command arguments.
+        # Only this host Git process receives authentication; arguments contain no secrets.
         return git(*args, env=env)
 
     @property
@@ -201,9 +196,11 @@ class GitHub:
         self.network_git("fetch", "--no-tags", self.url,
                          f"refs/heads/{branch}:refs/remotes/origin/{branch}")
 
-    def remote_tag(self, tag):
+    def remote_tag(self, tag, *, peel=True):
         refs = self.network_git("ls-remote", self.url, f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}")
         found = dict(line.split()[::-1] for line in refs.splitlines())
+        if not peel:
+            return found.get(f"refs/tags/{tag}")
         return found.get(f"refs/tags/{tag}^{{}}", found.get(f"refs/tags/{tag}"))
 
     def create_release(self, tag, sha, notes):
@@ -479,12 +476,54 @@ def build_assets(state):
     return directory
 
 
+def prepare_latest(state, github):
+    # An absent key denotes a pre-latest state file; None denotes an absent remote tag.
+    if "latest_previous" not in state:
+        state["latest_previous"] = github.remote_tag("latest", peel=False)
+        save_state(state)
+
+
+def require_latest_release(state, github):
+    release = github.json_request("GET", f"{github.api_url}/releases/latest")
+    if (release.get("tag_name") != state["tag"] or release.get("draft", True)
+            or release.get("prerelease", True)):
+        raise ValueError("release is no longer GitHub Latest; refusing to move latest backwards")
+    if github.remote_tag(state["tag"]) != state["sha"]:
+        raise ValueError("remote release tag changed; refusing to update latest")
+
+
+def finish_publication(state, github):
+    require_clean(state["sha"])
+    require_latest_release(state, github)
+    prepare_latest(state, github)
+    sha = state["sha"]
+    remote = github.remote_tag("latest", peel=False)
+    if remote != sha:
+        if remote != state["latest_previous"]:
+            raise ValueError("remote latest changed during publication; refusing to overwrite it")
+        # Use the raw tag object, not its peeled commit, for annotated predecessor tags.
+        expected = state["latest_previous"] or ""
+        github.network_git("push", f"--force-with-lease=refs/tags/latest:{expected}",
+                           github.url, f"{sha}:refs/tags/latest")
+    # A retry after an accepted push skips it and completes local synchronization.
+    if github.remote_tag("latest", peel=False) != sha:
+        raise ValueError("remote latest changed after push")
+    require_latest_release(state, github)
+    local = git("for-each-ref", "--format=%(objectname)", "refs/tags/latest").strip()
+    if local != sha:
+        git("update-ref", "--no-deref", "refs/tags/latest", sha, local or "0" * 40)
+    state["published"] = True
+    save_state(state)
+    print(f"Published {state['url']}")
+
+
 def upload_release(state, github, directory):
     require_clean(state["sha"])
     tag, sha = state["tag"], state["sha"]
     existing_tag = github.remote_tag(tag)
     if existing_tag and existing_tag != sha:
         raise ValueError("remote release tag points to a different commit")
+    prepare_latest(state, github)
     local_tags = git("tag", "--list", tag).splitlines()
     if existing_tag and not local_tags:
         github.network_git("fetch", "--no-tags", github.url, f"refs/tags/{tag}:refs/tags/{tag}")
@@ -529,17 +568,19 @@ def upload_release(state, github, directory):
     if github.remote_tag(tag) != sha:
         raise ValueError("remote release tag changed during upload")
     if release["draft"]:
+        if github.remote_tag("latest", peel=False) not in (state["latest_previous"], sha):
+            raise ValueError("remote latest changed during publication; refusing to publish over it")
         release = github.publish_release(release)
-    state["published"] = True
+    state["release_published"] = True
     state["url"] = release["html_url"]
     save_state(state)
-    print(f"Published {state['url']}")
+    finish_publication(state, github)
 
 
 def main():
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("make publish requires an Apple Silicon Mac for all three local builds")
-    for executable in ("docker", "xcrun"):
+    for executable in ("docker", "xcrun", "git"):
         if not shutil.which(executable):
             raise ValueError(f"{executable} is required; see docs/publishing.md")
     codex = shutil.which(os.environ.get("CODEX", "codex"))
@@ -561,9 +602,9 @@ def main():
         state = json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else None
         if state and (state["format"] != 1 or state["repository"] != repository or state["branch"] != branch):
             raise ValueError("saved publication belongs to another repository or branch")
-        if state and state["published"] and head == state["sha"]:
-            require_clean(head)
-            print(f"Already published {state['url']}")
+        if state and (state.get("release_published") and not state["published"]
+                      or state["published"] and head == state["sha"]):
+            finish_publication(state, github)
             return
         github.refresh(branch)
         git("merge-base", "--is-ancestor", f"refs/remotes/origin/{branch}", head)
@@ -585,6 +626,7 @@ def main():
                 raise ValueError("next release tag already exists locally")
             require_clean(head)
             save_state(state)
+        prepare_latest(state, github)
         commit_version(state)
         directory = build_assets(state)
         upload_release(state, github, directory)

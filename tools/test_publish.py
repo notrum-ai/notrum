@@ -6,6 +6,7 @@
 import hashlib
 import io
 import json
+from contextlib import nullcontext
 from pathlib import Path
 import subprocess
 import tarfile
@@ -48,6 +49,25 @@ def fixture_archive(path, *, target="linux", sha=SHA, corrupt=False, signed=True
 
 
 class VersionTests(unittest.TestCase):
+    def test_git_runs_on_host_with_authentication_only_in_environment(self):
+        github = publish.GitHub("notrum-ai/notrum", "secret")
+        with patch.object(publish, "run", return_value="") as execute:
+            github.network_git("ls-remote", github.url, "refs/tags/latest")
+        command = execute.call_args.args[0]
+        self.assertEqual(command, ["git", "ls-remote", github.url, "refs/tags/latest"])
+        self.assertNotIn("secret", " ".join(command))
+        self.assertIn("GIT_CONFIG_VALUE_0", execute.call_args.kwargs["env"])
+
+    def test_remote_tag_distinguishes_raw_object_from_peeled_commit(self):
+        github = publish.GitHub("notrum-ai/notrum", "secret")
+        raw = "b" * 40
+        refs = f"{raw}\trefs/tags/latest\n{SHA}\trefs/tags/latest^{{}}\n"
+        with patch.object(github, "network_git", return_value=refs):
+            self.assertEqual(github.remote_tag("latest"), SHA)
+            self.assertEqual(github.remote_tag("latest", peel=False), raw)
+        with patch.object(github, "network_git", return_value=""):
+            self.assertIsNone(github.remote_tag("latest", peel=False))
+
     def test_increments_only_patch(self):
         for old, new in (("0.1.0", "0.1.1"), ("0.1.9", "0.1.10"), ("2.10.99", "2.10.100")):
             self.assertEqual(app_version.next_version(old), new)
@@ -278,6 +298,8 @@ class UploadTests(unittest.TestCase):
             github.url = "https://github.com/notrum-ai/notrum.git"
             github.remote_tag.return_value = SHA
             github.release.return_value = release
+            github.json_request.return_value = {"tag_name": state["tag"], "draft": False,
+                                                "prerelease": False}
             remote_asset = {"name": asset.name, "state": "uploaded", "size": asset.stat().st_size,
                             "digest": "sha256:" + publish.file_digest(asset)}
             github.api.return_value = [[remote_asset]]
@@ -311,6 +333,8 @@ class UploadTests(unittest.TestCase):
             github.url = "https://github.com/notrum-ai/notrum.git"
             github.remote_tag.return_value = SHA
             github.release.return_value = release
+            github.json_request.return_value = {"tag_name": state["tag"], "draft": False,
+                                                "prerelease": False}
             github.api.side_effect = [[[]], [[uploaded]]]
             github.upload_asset.return_value = uploaded
             github.publish_release.return_value = {**release, "draft": False}
@@ -346,6 +370,181 @@ class UploadTests(unittest.TestCase):
         with patch.object(publish, "require_clean"), self.assertRaisesRegex(ValueError, "different commit"):
             publish.upload_release({"sha": SHA, "tag": "v0.1.1"}, github, Path("/unused"))
         github.network_git.assert_not_called()
+
+    def test_asset_failure_never_publishes_release_or_moves_latest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            asset = directory / "notrum.zip"
+            asset.write_bytes(b"application")
+            state = {"sha": SHA, "tag": "v0.1.1", "branch": "master", "notes": "Notes",
+                     "assets": {asset.name: publish.file_digest(asset)}, "published": False}
+            github = Mock()
+            github.remote_tag.return_value = SHA
+            github.release.return_value = {"id": 42, "body": "Notes", "draft": True}
+            github.api.return_value = [[{"name": asset.name}]]
+            github.verify_asset.side_effect = ValueError("checksum mismatch")
+            with patch.object(publish, "git", return_value=SHA), \
+                    patch.object(publish, "require_clean"), patch.object(publish, "save_state"), \
+                    patch.object(publish, "finish_publication") as finish:
+                with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                    publish.upload_release(state, github, directory)
+            github.publish_release.assert_not_called()
+            finish.assert_not_called()
+            self.assertFalse(state["published"])
+            self.assertNotIn("release_published", state)
+            self.assertFalse(any("refs/tags/latest" in str(call)
+                                 for call in github.network_git.call_args_list))
+
+
+class LatestTests(unittest.TestCase):
+    def setUp(self):
+        self.state = {"sha": SHA, "tag": "v0.1.1", "published": False,
+                      "release_published": True, "url": "https://example.invalid/release"}
+        self.remote = None
+        self.github = Mock()
+        self.github.url = "https://github.com/notrum-ai/notrum.git"
+        self.github.api_url = "https://api.github.com/repos/notrum-ai/notrum"
+        self.github.json_request.return_value = {
+            "tag_name": "v0.1.1", "draft": False, "prerelease": False}
+        self.github.remote_tag.side_effect = (
+            lambda tag, **kwargs: self.remote if tag == "latest" else SHA)
+        self.github.network_git.side_effect = self.push
+        for name in ("require_clean", "save_state", "git"):
+            patcher = patch.object(publish, name)
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
+        self.git.return_value = ""
+        self.saved = []
+        self.save_state.side_effect = lambda state: self.saved.append(dict(state))
+
+    def push(self, *args):
+        self.assertEqual(args, ("push",
+                               f"--force-with-lease=refs/tags/latest:{self.remote or ''}",
+                               self.github.url, f"{SHA}:refs/tags/latest"))
+        self.remote = SHA
+        return ""
+
+    def test_first_publication_creates_lightweight_latest(self):
+        publish.finish_publication(self.state, self.github)
+        self.assertEqual(self.remote, SHA)
+        self.assertIsNone(self.saved[0]["latest_previous"])
+        self.assertFalse(self.saved[0]["published"])
+        self.git.assert_any_call("update-ref", "--no-deref", "refs/tags/latest", SHA, "0" * 40)
+        self.assertTrue(self.saved[-1]["published"])
+
+    def test_moving_latest_preserves_version_tags_and_uses_raw_lease(self):
+        self.remote = "b" * 40  # Raw object ID of an annotated predecessor tag.
+        self.git.return_value = "c" * 40
+        publish.finish_publication(self.state, self.github)
+        self.assertEqual(self.state["latest_previous"], "b" * 40)
+        self.github.network_git.assert_called_once()
+        self.git.assert_any_call("update-ref", "--no-deref", "refs/tags/latest", SHA, "c" * 40)
+        self.assertFalse(any("refs/tags/v0.1.1" in str(call) for call in self.git.call_args_list))
+
+    def test_accepted_push_with_lost_response_can_be_resumed(self):
+        def interrupted_push(*args):
+            self.push(*args)
+            raise subprocess.CalledProcessError(1, ["git", "push"])
+        self.github.network_git.side_effect = interrupted_push
+        with self.assertRaises(subprocess.CalledProcessError):
+            publish.finish_publication(self.state, self.github)
+        self.assertFalse(self.state["published"])
+        self.git.assert_not_called()
+        publish.finish_publication(self.state, self.github)
+        self.github.network_git.assert_called_once()
+        self.assertTrue(self.state["published"])
+
+    def test_local_update_failure_retries_without_another_push(self):
+        def local_git(*args):
+            if args[0] == "update-ref":
+                raise subprocess.CalledProcessError(1, ["git", "update-ref"])
+            return ""
+        self.git.side_effect = local_git
+        with self.assertRaises(subprocess.CalledProcessError):
+            publish.finish_publication(self.state, self.github)
+        self.assertFalse(self.state["published"])
+        self.git.side_effect = None
+        publish.finish_publication(self.state, self.github)
+        self.github.network_git.assert_called_once()
+        self.assertTrue(self.state["published"])
+
+    def test_concurrent_remote_change_is_not_overwritten(self):
+        publish.prepare_latest(self.state, self.github)
+        self.remote = "b" * 40
+        with self.assertRaisesRegex(ValueError, "remote latest changed"):
+            publish.finish_publication(self.state, self.github)
+        self.github.network_git.assert_not_called()
+        self.git.assert_not_called()
+        self.assertIsNone(self.state["latest_previous"])
+
+    def test_change_between_read_and_push_keeps_original_lease(self):
+        self.state["latest_previous"] = "b" * 40
+        self.remote = "b" * 40
+        self.github.network_git.side_effect = subprocess.CalledProcessError(1, ["git", "push"])
+        with self.assertRaises(subprocess.CalledProcessError):
+            publish.finish_publication(self.state, self.github)
+        self.assertIn("--force-with-lease=refs/tags/latest:" + "b" * 40,
+                      self.github.network_git.call_args.args)
+        self.git.assert_not_called()
+        self.assertFalse(self.state["published"])
+
+    def test_legacy_completed_state_can_repair_latest(self):
+        self.state.pop("release_published")
+        self.state["published"] = True
+        publish.finish_publication(self.state, self.github)
+        self.assertEqual(self.remote, SHA)
+        self.assertTrue(self.state["published"])
+
+    def test_main_resumes_tag_update_without_rebuilding_or_bumping(self):
+        self.state.update(format=1, repository="notrum-ai/notrum", branch="master")
+        self.github.json_request.side_effect = lambda method, url: (
+            {"tag_name": "v0.1.1", "draft": False, "prerelease": False}
+            if url.endswith("/releases/latest") else {"default_branch": "master"})
+        self.git.side_effect = lambda *args: (
+            "git@github.com:notrum-ai/notrum.git" if args[0] == "remote" else
+            "master" if args[0] == "symbolic-ref" else SHA)
+        saved_file = Mock()
+        saved_file.exists.return_value = True
+        saved_file.read_text.return_value = json.dumps(self.state)
+        with patch.object(publish, "STATE", saved_file), \
+                patch.object(publish.platform, "system", return_value="Darwin"), \
+                patch.object(publish.platform, "machine", return_value="arm64"), \
+                patch.object(publish.shutil, "which", return_value="/fixture/tool"), \
+                patch.dict(publish.os.environ, {"GITHUB_TOKEN": "fixture-token"}), \
+                patch.object(publish, "publish_lock", return_value=nullcontext()), \
+                patch.object(publish, "GitHub", return_value=self.github), \
+                patch.object(publish, "new_state") as new_state, \
+                patch.object(publish, "build_assets") as build, \
+                patch.object(publish, "upload_release") as upload:
+            publish.main()
+        self.assertEqual(self.remote, SHA)
+        self.assertTrue(self.saved[-1]["published"])
+        new_state.assert_not_called()
+        build.assert_not_called()
+        upload.assert_not_called()
+
+    def test_older_release_cannot_move_latest_backwards(self):
+        self.state["published"] = True
+        self.github.json_request.return_value["tag_name"] = "v0.1.2"
+        with self.assertRaisesRegex(ValueError, "no longer GitHub Latest"):
+            publish.finish_publication(self.state, self.github)
+        self.github.network_git.assert_not_called()
+        self.git.assert_not_called()
+
+    def test_changed_release_tag_prevents_latest_update(self):
+        self.github.remote_tag.side_effect = None
+        self.github.remote_tag.return_value = "b" * 40
+        with self.assertRaisesRegex(ValueError, "remote release tag changed"):
+            publish.finish_publication(self.state, self.github)
+        self.github.network_git.assert_not_called()
+
+    def test_workflow_limits_coverage_alias_to_latest_tag(self):
+        workflow = (app_version.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("    branches: [master]\n    tags: [latest]", workflow)
+        self.assertIn("override_branch: ${{ github.ref == 'refs/tags/latest' && 'latest' || '' }}",
+                      workflow)
+        self.assertIn("override_commit: ${{ github.sha }}", workflow)
+        self.assertIn("use_oidc: true", workflow)
 
 
 if __name__ == "__main__":

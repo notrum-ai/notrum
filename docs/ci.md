@@ -5,7 +5,7 @@
 [Development commands](development.md) · [Windows acceptance](windows.md)
 
 `.github/workflows/ci.yml` runs for pull requests targeting `master`, pushes to
-`master`, and manual dispatch. It does not change branch protection or PR merge
+`master`, pushes to the moving `latest` tag, and manual dispatch. It does not change branch protection or PR merge
 rules, publish Releases, or require a write-enabled repository token.
 Every action is pinned to a complete commit SHA, checkout credentials are not
 persisted, and repository contents permissions stay at `contents: read`.
@@ -108,8 +108,11 @@ uploaded. The existing CI diagnostic filter still wraps the test command.
 GitHub Actions retains the `coverage-linux` LCOV artifact for one day, including
 when a later check fails. Codecov receives only this explicit file; file search,
 source-based file fixes, additional collection plugins, and telemetry are
-disabled. The README badge follows `master` and appears after Codecov processes
-its first upload. Its color reflects the measured result. Uploads explicitly use
+disabled. The README badges follow the moving `latest` release tag. Publishing
+that tag starts an additional full CI run on the release commit. Only runs on
+`refs/tags/latest` set Codecov's `override_branch` to `latest`; other runs retain
+automatic branch detection. The coverage badge appears after Codecov processes
+the first upload for `latest`. Its color reflects the measured result. Uploads explicitly use
 `github.sha`, matching the tested checkout (including the merge SHA for a PR).
 
 ### Codecov setup

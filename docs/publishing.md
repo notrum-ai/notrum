@@ -20,12 +20,12 @@ ahead of GitHub are included; a behind or diverged branch is rejected.
 Python orchestrates publication on the host, invokes the host's Codex CLI and
 calls GitHub's HTTPS REST API directly through the standard library. The GitHub
 CLI and additional Python packages are not required. Git and Rust commands
-continue to run in the Docker toolchain.
+run on the host and in the Docker toolchain, respectively.
 `make publish` explicitly launches system Python as arm64, so an Intel-only
 `python3` earlier in `PATH` or a terminal running under Rosetta does not trigger
 the Apple Silicon prerequisite error. It does not change `PATH` or your Python
 installation.
-The token is passed to individual Docker Git commands in environment variables;
+The token is passed to individual host Git commands in environment variables;
 it is not written to the checkout, saved state or Git configuration. The
 orchestrator removes `GITHUB_TOKEN` from the environment of Codex, builds and
 other child processes. The existing SSH or HTTPS `origin` URL is preserved.
@@ -94,8 +94,21 @@ CODEX="$HOME/.local/bin/codex" make publish
 7. Pushes the default branch and annotated `vX.Y.Z` tag atomically, without a
    force push. Creates a draft Release, uploads the archives and checksums,
    verifies GitHub's SHA-256 digest for every uploaded byte, then publishes it
-   as Latest. The command
-   prints the Release URL. No confirmation prompt is required.
+   as Latest. Only after publication succeeds, creates or moves the lightweight
+   `latest` tag to the same commit as `vX.Y.Z`, using a separate push with an
+   explicit `--force-with-lease` for `refs/tags/latest`. The expected previous
+   raw tag object is saved before publication; concurrent changes cause an error.
+   Versioned tags and the default branch are never force-pushed. The local
+   `latest` tag is synchronized after the remote update succeeds, and only then
+   is publication marked complete. The command prints the Release URL.
+   No confirmation prompt is required.
+
+The `latest` tag starts an additional full GitHub CI run and selects the release
+shown by the README's CI and coverage badges. No separate GitHub Release is
+created for this tag. It first appears after a successful publication with this
+publisher; badges may show no data until that CI run and coverage processing
+finish. The badge URLs do not need to change with each version. Repository tag
+rules must allow creating and updating `latest` with the publication token.
 
 No new commits since the previous version change means no new release. A Codex
 failure, unsupported version or failed build stops the process; the command does
@@ -117,6 +130,15 @@ overwritten. Restore the pending checkout before retrying; do not discard the
 saved state just to bypass an error. Existing uploaded assets are verified and
 never replaced automatically. A successfully published release is not bumped
 again until additional source commits exist.
+
+If the Release was published but updating `latest` failed, retrying completes
+the tag update without rebuilding, uploading again, or increasing the version.
+A push accepted before a connection failure is detected on retry. The saved
+expected previous tag is retained, so retries cannot silently overwrite a
+concurrent change. State files from before `latest` was introduced remain
+supported. Rerunning a completed publication at its original commit can repair
+the tag only while that version is still GitHub's Latest release; an older
+publication cannot move the tag back from a newer release.
 
 Publication tests are part of `make check` through `make test-publish`. They use
 temporary repositories and mocked external services; they never create a real

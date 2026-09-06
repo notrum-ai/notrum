@@ -13,9 +13,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/notrum-ai/notrum/actions/workflows/ci.yml"><img src="https://github.com/notrum-ai/notrum/actions/workflows/ci.yml/badge.svg?branch=master&amp;event=push" alt="CI: tests, builds and audits on master"></a>
-  <a href="https://app.codecov.io/gh/notrum-ai/notrum"><img src="https://codecov.io/gh/notrum-ai/notrum/branch/master/graph/badge.svg" alt="Rust line coverage on master"></a>
-  <a href="https://github.com/notrum-ai/notrum/releases"><img src="https://img.shields.io/github/v/release/notrum-ai/notrum?style=flat&amp;color=8b5cf6" alt="Latest release"></a>
+  <a href="https://github.com/notrum-ai/notrum/actions/workflows/ci.yml?query=branch%3Alatest+event%3Apush"><img src="https://github.com/notrum-ai/notrum/actions/workflows/ci.yml/badge.svg?branch=latest&amp;event=push" alt="CI: tests, builds and audits for the latest release"></a>
+  <a href="https://app.codecov.io/gh/notrum-ai/notrum/tree/latest"><img src="https://codecov.io/gh/notrum-ai/notrum/branch/latest/graph/badge.svg" alt="Rust line coverage for the latest release"></a>
+  <a href="https://github.com/notrum-ai/notrum/releases/latest"><img src="https://img.shields.io/github/v/release/notrum-ai/notrum?style=flat&amp;color=8b5cf6" alt="Latest release"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/Rust-1.88.0-dea584?style=flat&amp;logo=rust&amp;logoColor=white" alt="Rust 1.88.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-blue?style=flat" alt="License: GPL-3.0-only"></a>
 </p>
@@ -262,10 +262,13 @@ message queue or single-instance requirement.
 | [Contributing](CONTRIBUTING.md) | Reporting bugs and submitting changes |
 | [Security policy](SECURITY.md) | Reporting vulnerabilities privately |
 
-The CI badge follows pushes to `master` and turns green when the workflow
+The CI badge follows the moving `latest` release tag and turns green when the workflow
 passes, including tests, builds, UI checks, and audits. The coverage badge shows
-Rust line coverage from the Linux workspace tests on `master`, published through
-Codecov. See [coverage scope and setup](docs/ci.md#code-coverage) for details.
+Rust line coverage from the Linux workspace tests for that release, published through
+Codecov. `make publish` updates `latest` after publishing each release, so new commits
+on `master` do not change these badges. They may show no data until the first `latest`
+CI run and coverage processing finish. See [coverage scope and setup](docs/ci.md#code-coverage)
+for details.
 
 Found a bug or have an idea? [Open an issue](https://github.com/notrum-ai/notrum/issues)
 or read the [contribution guide](CONTRIBUTING.md) to help shape Notrum.

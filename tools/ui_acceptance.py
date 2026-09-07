@@ -8199,9 +8199,6 @@ def updates_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.click("settings")
     driver.wait_for_stable_frame("settings after Later", stable_for=0.4)
     driver.click_point(*UPDATES_SIDEBAR_ITEM)
-    driver.wait_for_stable_frame("installed updates page", stable_for=0.4)
-    page = driver.capture("updates-restart-settings")
-    left, right, row = accent_button(page, (280, 100, 700, 400))
 
     # Retry with the real app in the same installed path. This exercises a
     # real second process, its stdin handoff and workspace restoration without

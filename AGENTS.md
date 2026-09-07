@@ -81,11 +81,18 @@
   separately before an aggregate that includes it.
 - Keep project license metadata and SPDX notices consistent with `GPL-3.0-only`.
   Preserve dependency license notices and do not bypass audits.
-- Do not create Git commits unless the user explicitly requests them.
+- After each completed task, create a local Git commit if all selected tests
+  and checks passed. For documentation-only changes, the checks above suffice.
+  Include only changes belonging to the task; do not commit if required checks
+  failed or could not be completed.
+- Push only when the user explicitly requests it. Creating a commit does not
+  authorize a push.
 
 ## Finishing a task
 
 1. Run the selected checks according to the rules above.
 2. Review `git diff` on the host and confirm that original user changes are preserved.
-3. Report what changed, exactly which checks ran and their results, and any
+3. If all selected checks passed, commit the task changes locally without pushing.
+4. Report what changed, exactly which checks ran and their results, the commit
+   hash (or why no commit was created), and any
    remaining failures or risks.

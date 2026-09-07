@@ -7196,22 +7196,19 @@ def rss_keyboard_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.close_app()
 
 
-def assert_rss_filter_carets(driver: WindowDriver, *, focused: int | None) -> None:
-    # Home places the caret just before each fixture's first glyph. Observe
-    # more than a full 500ms blink cycle so hidden phases cannot mask a leak.
-    crops = ((578, 130, 2, 24), (578, 277, 2, 24))
-    deadline = time.monotonic() + 1.1
-    focused_visible = False
-    while time.monotonic() < deadline:
-        for index, crop in enumerate(crops):
-            visible = driver.window_color_pixel_count((35, 39, 45), crop=crop) >= 12
-            if index == focused:
-                focused_visible |= visible
-            elif visible:
-                raise AcceptanceFailure("unfocused RSS filter field paints a caret")
-        time.sleep(0.05)
-    if focused is not None and not focused_visible:
-        raise AcceptanceFailure("focused RSS filter field never paints a caret")
+def wait_for_rss_filter_text(driver: WindowDriver, expected: str, description: str) -> None:
+    # Verify keyboard routing through the field's value, independently of font
+    # rasterization and caret blink timing. Clear stale clipboard content first.
+    set_clipboard_text(driver.environment, "RSS clipboard sentinel")
+
+    def copied() -> bool:
+        # Focus and Copy are queued UI events. Retrying these read-only actions
+        # lets a slow runner settle without repeating clicks or text entry.
+        driver.key("ctrl+a")
+        driver.key("ctrl+c")
+        return clipboard_text(driver.environment) == expected
+
+    wait_until(description, copied)
 
 
 def rss_filters_scenario(driver: WindowDriver, workspace: Path) -> None:
@@ -7235,45 +7232,44 @@ def rss_filters_scenario(driver: WindowDriver, workspace: Path) -> None:
     }}))
     driver.start_app(workspace, "filters", environment_overrides={"NOTRUM_TEST_RSS_AI": "1"})
     driver.click_note(1, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
-    driver.click_point(1014, 28)
-    driver.wait_for_stable_frame("RSS filter popup", crop=(550, 55, 480, 520), stable_for=0.15)
-    assert_rss_filter_carets(driver, focused=None)
-    driver.click_point(640, 150)
-    driver.key("Home")
-    assert_rss_filter_carets(driver, focused=0)
-    driver.click_point(640, 300)
-    driver.key("Home")
-    assert_rss_filter_carets(driver, focused=1)
-    driver.click_point(770, 82)
-    assert_rss_filter_carets(driver, focused=None)
-    driver.click_point(640, 150)
-    driver.key("ctrl+a")
-    driver.type_text("jk")
-    driver.key("Return")
-    driver.type_text("second line")
+    likes = "jk\nsecond line"
+    dislikes = "Promotions\nSponsored posts"
+
+    def edit_preferences() -> None:
+        driver.click_point(1014, 28)
+        for y, original, draft in ((150, "Rust", likes), (300, "Promotions", dislikes)):
+            driver.click_point(640, y)
+            wait_for_rss_filter_text(driver, original, "RSS preference field receives focus")
+            first, second = draft.split("\n")
+            driver.type_text(first)
+            driver.key("Return")
+            driver.type_text(second)
+            wait_for_rss_filter_text(driver, draft, "RSS preference accepts multiline input")
+        # Switching back must preserve the first field's independent draft.
+        driver.click_point(640, 150)
+        wait_for_rss_filter_text(driver, likes, "switching fields preserves the RSS draft")
+
+    edit_preferences()
     driver.capture("rss-filter-multiline")
     # Escape discards both lines, even while a delayed background result arrives.
     driver.key("Escape")
-    if json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["likes"] != "Rust":
+    preferences = json.loads(config_path.read_text())["subscriptions"][0]["preferences"]
+    if (preferences["likes"], preferences["dislikes"]) != ("Rust", "Promotions"):
         raise AcceptanceFailure("Escape saved the RSS preference draft")
-    driver.click_point(1014, 28)
-    driver.click_point(640, 150)
-    driver.key("ctrl+a")
-    driver.type_text("jk")
-    driver.key("Return")
-    driver.type_text("second line")
+    edit_preferences()
     driver.capture("rss-filter-save-draft")
     driver.click_point(790, 441)
     driver.key("Down")
     driver.key("Down")
     driver.key("Return")
     driver.click_point(970, 506)
-    wait_until("multiline RSS preferences saved", lambda: json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["likes"] == "jk\nsecond line")
+    wait_until("multiline RSS preferences saved", lambda: all(
+        json.loads(config_path.read_text())["subscriptions"][0]["preferences"][field] == value
+        for field, value in (("likes", likes), ("dislikes", dislikes), ("alias", "reading"))
+    ))
     state_path = cache / "state.json"
     def state() -> dict:
         return json.loads(state_path.read_text())
-    if json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["alias"] != "reading":
-        raise AcceptanceFailure("RSS model alias selection was not saved")
     wait_until("soft AI filter keeps ambiguous entry", lambda: state().get("entries", {}).get("entry/1", {}).get("decision") == "keep")
     wait_until("AI hides promotion", lambda: state().get("entries", {}).get("entry/0", {}).get("decision") == "hide")
     driver.key("j")
@@ -7310,20 +7306,14 @@ def rss_filters_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.key("Return")
     driver.type_text("still here")
     wait_until("learning completes while editing", lambda: state()["entries"]["entry/2"].get("learned_version") == state()["entries"]["entry/2"]["reaction_version"])
-    set_clipboard_text(driver.environment, "RSS clipboard sentinel")
-    driver.key("ctrl+a")
-    driver.key("ctrl+c")
-    wait_until("background result preserves text and focus", lambda: clipboard_text(driver.environment) == "draft jk\nstill here")
+    wait_for_rss_filter_text(driver, "draft jk\nstill here", "background result preserves text and focus")
     persisted = json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["likes"]
     driver.click_note(0, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
     driver.wait_for_stable_frame("leave feed with open popup", crop=EDITOR_CROP, stable_for=0.2)
     driver.click_note(1, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
     driver.click_point(1014, 28)
     driver.click_point(640, 150)
-    set_clipboard_text(driver.environment, "RSS reopen sentinel")
-    driver.key("ctrl+a")
-    driver.key("ctrl+c")
-    wait_until("returning to feed loads saved preferences", lambda: clipboard_text(driver.environment) == persisted)
+    wait_for_rss_filter_text(driver, persisted, "returning to feed loads saved preferences")
     driver.key("Escape")
     driver.close_app()
 

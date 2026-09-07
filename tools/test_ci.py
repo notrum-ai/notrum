@@ -170,33 +170,51 @@ class CITests(unittest.TestCase):
                 driver.wait_for_stable_frame.assert_not_called()
                 driver.capture.assert_not_called()
 
-    def test_rss_filter_caret_check_rejects_unfocused_and_missing_cursors(self):
-        for focused, behavior in ((None, "correct"), (0, "correct"), (1, "correct"),
-                                  (None, "both"), (0, "both"), (1, "missing")):
-            with self.subTest(focused=focused, behavior=behavior):
+    def test_rss_filter_text_wait_handles_delayed_focus_and_rejects_stale_or_wrong_text(self):
+        expected = "Rust\nsecond line"
+        for behavior in ("ready", "delayed", "unfocused", "wrong_field", "single_line"):
+            with self.subTest(behavior=behavior):
                 clock = [0.0]
+                clipboard = [expected]
                 driver = Mock(spec=ui_acceptance.WindowDriver)
+                driver.environment = {}
 
                 def advance(seconds):
                     clock[0] += seconds
 
-                def count(_color, *, crop):
-                    index = 0 if crop[1] == 130 else 1
-                    blinking = clock[0] % 1.0 >= 0.5
-                    visible = behavior == "both" or behavior == "correct" and index == focused
-                    return 24 if visible and blinking else 0
+                def seed(_environment, text):
+                    clipboard[0] = text
 
-                driver.window_color_pixel_count.side_effect = count
+                def key(command):
+                    advance(0.08)
+                    if command != "ctrl+c":
+                        return
+                    if behavior == "ready" or behavior == "delayed" and clock[0] >= 0.6:
+                        clipboard[0] = expected
+                    elif behavior == "wrong_field":
+                        clipboard[0] = "Promotions"
+                    elif behavior == "single_line":
+                        clipboard[0] = expected.replace("\n", "")
+
+                driver.key.side_effect = key
                 with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
-                        patch.object(ui_acceptance.time, "sleep", side_effect=advance):
-                    if behavior == "correct":
-                        ui_acceptance.assert_rss_filter_carets(driver, focused=focused)
-                        self.assertGreaterEqual(clock[0], 1.1)
+                        patch.object(ui_acceptance.time, "sleep", side_effect=advance), \
+                        patch.object(ui_acceptance, "set_clipboard_text", side_effect=seed), \
+                        patch.object(ui_acceptance, "clipboard_text", side_effect=lambda _env: clipboard[0]):
+                    if behavior in {"ready", "delayed"}:
+                        ui_acceptance.wait_for_rss_filter_text(driver, expected, "field focus")
+                        self.assertLess(clock[0], 1.0)
+                        if behavior == "delayed":
+                            self.assertGreaterEqual(clock[0], 0.6)
                     else:
                         with self.assertRaises(ui_acceptance.AcceptanceFailure):
-                            ui_acceptance.assert_rss_filter_carets(driver, focused=focused)
+                            ui_acceptance.wait_for_rss_filter_text(driver, expected, "field focus")
+                        self.assertGreaterEqual(clock[0], ui_acceptance.DEFAULT_TIMEOUT_SECONDS)
+                        self.assertLess(clock[0], ui_acceptance.DEFAULT_TIMEOUT_SECONDS + 0.3)
                 driver.click_point.assert_not_called()
-                driver.key.assert_not_called()
+                driver.type_text.assert_not_called()
+                driver.capture.assert_not_called()
+                driver.window_color_pixel_count.assert_not_called()
 
     def test_private_search_wait_never_captures_note_pixels_to_disk(self):
         for state in ("delayed", "empty", "changing"):

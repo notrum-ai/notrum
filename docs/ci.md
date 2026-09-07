@@ -142,6 +142,13 @@ wait stops the scenario; neither selection nor text entry is retried.
 Search steps in the secure scenarios also wait for painted, stable results,
 using only in-memory color counts and image signatures, without screenshot files.
 
+The `rss_filters` scenario checks field focus through Copy and exact text values,
+without sampling caret pixels or blink phases. It clears stale clipboard content
+and retries only Select All / Copy while focus settles. Distinct multiline drafts
+in both fields must survive focus changes, cancel correctly, and save together
+with the selected model alias. Filtering, reactions, and background draft
+preservation remain part of the same scenario.
+
 Native test kits also emit fixed-vocabulary `NATIVE_IO`, `NATIVE_SAVE`,
 `NATIVE_OPERATION`, `NATIVE_CLEANUP`,
 `NATIVE_TEMP`, `NATIVE_RESULT`, `NATIVE_ASSERT` and `NATIVE_PATH` records.

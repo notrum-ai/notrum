@@ -309,19 +309,56 @@ fn create_sync_marker(path: &Path) -> io::Result<File> {
         .custom_flags(OPEN_REPARSE_POINT)
         .open(path)?;
     if let Err(error) = restrict(&file, false) {
-        let _ = fs::remove_file(path);
+        cleanup_sync_marker(&file, path);
         return Err(error);
     }
     Ok(file)
+}
+
+fn sync_marker_ownership(file: &File, path: &Path) -> crate::sync_marker::Ownership {
+    crate::sync_marker::ownership(file, path, |path| {
+        super::validate_real_path(path)?;
+        OpenOptions::new()
+            .read(true)
+            // Inspection must share the original handle's write and delete access.
+            .share_mode(SHARE_READ | 2 | SHARE_DELETE)
+            .custom_flags(OPEN_REPARSE_POINT)
+            .open(path)
+    })
+}
+
+fn cleanup_sync_marker(file: &File, path: &Path) {
+    if sync_marker_ownership(file, path) == crate::sync_marker::Ownership::Owned {
+        let _ = crate::diagnostics::directory_sync_result("Cleanup", fs::remove_file(path));
+    }
 }
 
 fn sync_directory_with(
     path: &Path,
     mut checkpoint: impl FnMut(&str, &Path) -> io::Result<()>,
 ) -> io::Result<()> {
+    sync_directory_operations(
+        path,
+        &mut checkpoint,
+        |source, destination| atomicwrites::move_atomic(source, destination),
+        |path| fs::remove_file(path),
+        std::thread::sleep,
+    )
+}
+
+fn sync_directory_operations(
+    path: &Path,
+    mut checkpoint: impl FnMut(&str, &Path) -> io::Result<()>,
+    mut publish: impl FnMut(&Path, &Path) -> io::Result<()>,
+    mut remove: impl FnMut(&Path) -> io::Result<()>,
+    mut wait: impl FnMut(std::time::Duration),
+) -> io::Result<()> {
     use crate::diagnostics::directory_sync_result;
+    use crate::sync_marker::{Ownership, RetryBudget, Stage};
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
+    // One budget for the whole barrier, including allocation collisions.
+    let mut budget = RetryBudget::default();
     directory_sync_result("Validate", super::validate_real_path(path))?;
     for _ in 0..32 {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -335,20 +372,39 @@ fn sync_directory_with(
         let result = (|| {
             directory_sync_result("FileSync", file.sync_all())?;
             checkpoint("Publish", &source)?;
-            directory_sync_result("Publish", atomicwrites::move_atomic(&source, &destination))?;
+            directory_sync_result(
+                "Publish",
+                budget.run(
+                    Stage::Publish,
+                    || publish(&source, &destination),
+                    || sync_marker_ownership(&file, &source),
+                    &mut wait,
+                ),
+            )?;
             checkpoint("Remove", &destination)?;
-            directory_sync_result("Remove", fs::remove_file(&destination))
+            directory_sync_result(
+                "Remove",
+                budget.run(
+                    Stage::Remove,
+                    || remove(&destination),
+                    || sync_marker_ownership(&file, &destination),
+                    &mut wait,
+                ),
+            )
         })();
+        // Only a collision with the original source still present can allocate
+        // another marker. Never retry an uncertain/partially completed publish.
+        let collision = result
+            .as_ref()
+            .is_err_and(|error| error.kind() == io::ErrorKind::AlreadyExists)
+            && sync_marker_ownership(&file, &source) == Ownership::Owned;
         if result.is_err() {
-            let _ = directory_sync_result("Cleanup", fs::remove_file(&source));
+            cleanup_sync_marker(&file, &source);
         }
         // DeleteFile marks the marker for deletion; closing our last handle
         // completes it. Never close before Publish or Remove, even on errors.
         drop(file);
-        if result
-            .as_ref()
-            .is_err_and(|error| error.kind() == io::ErrorKind::AlreadyExists)
-        {
+        if collision {
             continue;
         }
         return result;
@@ -471,6 +527,152 @@ mod sync_tests {
                 assert_eq!(markers.len(), 1);
                 assert_eq!(fs::read(&markers[0]).unwrap(), b"");
                 super::super::validate_private(&markers[0]).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn sync_marker_retries_native_operations_without_replaying_note_writes() {
+        let directory = TestDirectory::new();
+        let note = directory.0.join("note.md");
+        fs::write(&note, b"committed note").unwrap();
+        let note_file = File::open(&note).unwrap();
+        let identity = crate::file_information(&note_file).unwrap().identity;
+        let mut stages = Vec::new();
+        let mut publishes = 0;
+        let mut removals = 0;
+        let mut delays = Vec::new();
+        sync_directory_operations(
+            &directory.0,
+            |stage, _| {
+                stages.push(stage.to_owned());
+                Ok(())
+            },
+            |source, destination| {
+                publishes += 1;
+                if publishes <= 2 {
+                    return Err(io::Error::from_raw_os_error(32));
+                }
+                atomicwrites::move_atomic(source, destination)
+            },
+            |path| {
+                removals += 1;
+                if removals <= 2 {
+                    return Err(io::Error::from_raw_os_error(32));
+                }
+                fs::remove_file(path)
+            },
+            |delay| delays.push(delay.as_millis()),
+        )
+        .unwrap();
+        assert_eq!(stages, ["Publish", "Remove"]);
+        assert_eq!((publishes, removals), (3, 3));
+        assert_eq!(delays, [10, 20, 40, 80]);
+        assert_eq!(fs::read(&note).unwrap(), b"committed note");
+        assert_eq!(
+            crate::file_information(&File::open(&note).unwrap())
+                .unwrap()
+                .identity,
+            identity
+        );
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn sync_marker_removal_exhausts_the_remaining_budget() {
+        let directory = TestDirectory::new();
+        let mut publishes = 0;
+        let mut removals = 0;
+        let mut delays = Vec::new();
+        let error = sync_directory_operations(
+            &directory.0,
+            |_, _| Ok(()),
+            |source, destination| {
+                publishes += 1;
+                if publishes <= 2 {
+                    return Err(io::Error::from_raw_os_error(32));
+                }
+                atomicwrites::move_atomic(source, destination)
+            },
+            |_| {
+                removals += 1;
+                Err(io::Error::from_raw_os_error(32))
+            },
+            |delay| delays.push(delay.as_millis()),
+        )
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(32));
+        assert_eq!((publishes, removals), (3, 5));
+        assert_eq!(delays, [10, 20, 40, 80, 160, 320]);
+        let marker = fs::read_dir(&directory.0)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(fs::read(marker).unwrap(), b"");
+    }
+
+    #[test]
+    fn sync_marker_substitution_during_wait_is_not_retried_or_cleaned() {
+        use std::cell::RefCell;
+        let directory = TestDirectory::new();
+        let source = RefCell::new(None);
+        let mut publishes = 0;
+        let error = sync_directory_operations(
+            &directory.0,
+            |_, _| Ok(()),
+            |path, _| {
+                publishes += 1;
+                *source.borrow_mut() = Some(path.to_owned());
+                Err(io::Error::from_raw_os_error(32))
+            },
+            |_| panic!("substituted marker must not be removed"),
+            |_| {
+                let source = source.borrow();
+                let path = source.as_ref().unwrap();
+                atomicwrites::move_atomic(path, &directory.0.join("moved")).unwrap();
+                fs::write(path, b"foreign entry").unwrap();
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(32));
+        assert_eq!(publishes, 1);
+        assert_eq!(
+            fs::read(source.into_inner().unwrap()).unwrap(),
+            b"foreign entry"
+        );
+        assert_eq!(fs::read(directory.0.join("moved")).unwrap(), b"");
+    }
+
+    #[test]
+    fn sync_marker_cleanup_preserves_substitutes_and_uncertain_publications() {
+        for substitute in [false, true] {
+            let directory = TestDirectory::new();
+            let mut published = None;
+            let error = sync_directory_operations(
+                &directory.0,
+                |_, _| Ok(()),
+                |source, destination| {
+                    atomicwrites::move_atomic(source, destination)?;
+                    published = Some(destination.to_owned());
+                    if substitute {
+                        fs::write(source, b"foreign entry")?;
+                    }
+                    Err(io::Error::from_raw_os_error(32))
+                },
+                |_| panic!("uncertain publish must not remove"),
+                |_| panic!("uncertain publish must not retry"),
+            )
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(32));
+            let destination = published.unwrap();
+            assert_eq!(fs::read(&destination).unwrap(), b"");
+            if substitute {
+                assert_eq!(
+                    fs::read(destination.with_extension("tmp")).unwrap(),
+                    b"foreign entry"
+                );
             }
         }
     }

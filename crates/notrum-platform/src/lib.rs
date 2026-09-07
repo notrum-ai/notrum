@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 pub mod credentials;
 pub mod diagnostics;
 mod operation_lock;
+#[cfg(any(windows, test))]
+mod sync_marker;
 pub use operation_lock::OperationLock;
 
 #[cfg(windows)]

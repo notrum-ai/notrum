@@ -88,6 +88,16 @@ def native_line(line):
     if retry:
         return line if (int(retry[1]) <= 2**64 - 1
                         and int(retry[3]) == 10 * 2**(int(retry[2]) - 1)) else None
+    marker_retry = re.fullmatch(
+        r"NATIVE_DIRECTORY_SYNC_RETRY thread=ThreadId\(([1-9][0-9]{0,19})\) "
+        r"stage=(Publish|Remove) attempt=([1-7]) delay_ms=(0|10|20|40|80|160|320) "
+        r"os_error=32 ownership=(Owned|Missing|Changed|Unavailable)", line,
+    )
+    if marker_retry:
+        thread, _, attempt, delay, _ = marker_retry.groups()
+        valid_delay = int(delay) == 0 or (int(attempt) <= 6
+                                        and int(delay) == 10 * 2**(int(attempt) - 1))
+        return line if int(thread) <= 2**64 - 1 and valid_delay else None
     post_replace = re.fullmatch(
         r"NATIVE_(POST_REPLACE|DIRECTORY_SYNC) thread=ThreadId\(([1-9][0-9]{0,19})\) "
         r"stage=([A-Za-z]+) kind=([A-Za-z]+) os_error=(-?[0-9]{1,10})", line,

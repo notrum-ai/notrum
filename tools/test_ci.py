@@ -291,6 +291,34 @@ class CITests(unittest.TestCase):
                 self.assertIsNone(ci.safe_line(line))
         self.assertEqual(rust_test_report(accepted + rejected)["diagnostics"], accepted)
 
+    def test_directory_sync_retries_expose_only_bounded_fixed_fields(self):
+        prefix = "NATIVE_DIRECTORY_SYNC_RETRY thread=ThreadId(7)"
+        accepted = [
+            f"{prefix} stage={stage} attempt={attempt} delay_ms={delay} os_error=32 ownership={owner}"
+            for stage in ("Publish", "Remove")
+            for attempt, delay in [(i, 10 * 2**(i - 1)) for i in range(1, 7)] + [(7, 0)]
+            for owner in ("Owned", "Missing", "Changed", "Unavailable")
+        ] + [f"{prefix} stage=Publish attempt=2 delay_ms=0 os_error=32 ownership=Changed"]
+        first = accepted[0]
+        rejected = [first.replace(old, new) for old, new in (
+            ("attempt=1", "attempt=0"), ("attempt=1", "attempt=8"),
+            ("delay_ms=10", "delay_ms=320"), ("os_error=32", "os_error=5"),
+            ("stage=Publish", "stage=Save"), ("ownership=Owned", "ownership=Unknown"),
+            ("ThreadId(7)", "ThreadId(0)"),
+            ("ThreadId(7)", "ThreadId(18446744073709551616)"),
+        )]
+        secrets = ["SYNTHETIC_SECRET", r"C:\private\note.md", "body (os error 32)"]
+        for line in accepted:
+            self.assertEqual(ci.safe_line(ci.safe_line(line)), line)
+            for secret in secrets:
+                rejected.extend([line + " " + secret, line.replace("=", "=" + secret, 1)])
+        for line in rejected:
+            self.assertIsNone(ci.safe_line(line))
+        report = rust_test_report(accepted + rejected)
+        self.assertEqual(report["diagnostics"], accepted)
+        for secret in secrets:
+            self.assertNotIn(secret, json.dumps(report))
+
     def test_post_replace_diagnostics_keep_stage_thread_and_os_code_only(self):
         accepted = [
             f"NATIVE_POST_REPLACE thread=ThreadId(7) stage={stage} kind=PermissionDenied os_error=32"

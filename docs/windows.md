@@ -106,9 +106,20 @@ it, and moves it with write-through. Successful cleanup leaves no marker; a
 crash may leave an empty `.notrum-sync-*` file containing no note data. The
 marker retains a handle with `DELETE` access and `FILE_SHARE_DELETE` from its
 creation through rename and removal. Windows rejects intervening readers that
-would deny deletion, eliminating the close/reopen race that caused
-`NATIVE_DIRECTORY_SYNC stage=Publish os_error=32` after a note was already
-committed. This sharing mode applies only to empty synchronization markers;
+would deny deletion, eliminating that specific close/reopen race. Holding the
+handle does not exclude all Windows sharing conflicts; the source of remaining
+`NATIVE_DIRECTORY_SYNC stage=Publish os_error=32` failures is not established.
+Only marker rename/removal retries error 32, using a shared six-wait budget of
+10, 20, 40, 80, 160 and 320 ms (630 ms total). Before retrying, including after
+each wait, the pathname must still identify the same empty regular file with
+one link. Missing, substituted or uninspectable markers stop the operation;
+an error after a possible rename remains an error, never inferred success.
+Other errors and exhausted retries propagate as `PostReplaceSync` when the note
+was already committed; note writes and user operations are never replayed.
+Cleanup removes only a verified owned source; an uncertain publication can
+leave an empty destination marker. Test-kit retry diagnostics contain only the
+stage, attempt, delay, OS code and ownership classification (plus thread ID).
+This sharing mode applies only to empty synchronization markers;
 private note and recovery writers retain exclusive handles. Native regression
 tests reproduce the old sharing violation, attempt blocking opens at both
 publication and removal, and verify collisions and error propagation. The

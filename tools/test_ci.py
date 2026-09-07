@@ -24,6 +24,78 @@ SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    @staticmethod
+    def editor_frame(*, caret_x=None, text_shift=0, overlay=False):
+        width, height = 64, 32
+        pixels = bytearray(b"\xff\xff\xff" * width * height)
+
+        def fill(x, y, w, h, color):
+            for row in range(y, y + h):
+                for column in range(x, x + w):
+                    offset = (row * width + column) * 3
+                    pixels[offset:offset + 3] = bytes(color)
+
+        fill(12 + text_shift, 8, 20, 12, (35, 39, 45))
+        if caret_x is not None:
+            fill(caret_x, 5, 2, 18, (54, 94, 130))
+        if overlay:
+            fill(4, 5, 28, 18, (54, 94, 130))
+        return bytes(pixels)
+
+    def test_editor_comparison_ignores_only_caret_blink(self):
+        hidden = self.editor_frame()
+        visible = self.editor_frame(caret_x=4)
+        for first, second in ((hidden, hidden), (hidden, visible), (visible, hidden)):
+            self.assertTrue(ui_acceptance.editor_pixels_equal_except_caret(first, second, 64))
+        for changed in (self.editor_frame(text_shift=1), self.editor_frame(caret_x=5),
+                        self.editor_frame(caret_x=4, text_shift=1),
+                        self.editor_frame(overlay=True)):
+            self.assertFalse(ui_acceptance.editor_pixels_equal_except_caret(visible, changed, 64))
+        # A small accent-colored change is not a whole caret blinking.
+        tiny = bytearray(hidden)
+        tiny[0:3] = bytes((54, 94, 130))
+        self.assertFalse(ui_acceptance.editor_pixels_equal_except_caret(hidden, bytes(tiny), 64))
+        adjacent_glyph = bytearray(hidden)
+        offset = (12 * 64 + 6) * 3
+        adjacent_glyph[offset:offset + 3] = bytes((35, 39, 45))
+        self.assertFalse(ui_acceptance.editor_pixels_equal_except_caret(bytes(adjacent_glyph), visible, 64))
+
+    def test_search_editor_wait_handles_slow_alternating_blink_samples(self):
+        for state in ("blink", "text_changes", "blank", "strict"):
+            with self.subTest(state=state):
+                clock = [0.0]
+                frames = [0]
+                driver = object.__new__(ui_acceptance.WindowDriver)
+
+                def capture(_name):
+                    # On a slow runner PNG/compare work can sample a different
+                    # 530ms caret phase on every iteration, indefinitely.
+                    clock[0] += 0.53
+                    frames[0] += 1
+                    return Mock(pixels=self.editor_frame(
+                        caret_x=4 if frames[0] % 2 else None,
+                        text_shift=frames[0] % 2 if state == "text_changes" else 0,
+                    ))
+
+                driver.capture = Mock(side_effect=capture)
+                with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(ui_acceptance.time, "sleep"), \
+                        patch.object(ui_acceptance, "dark_pixel_count", return_value=0 if state == "blank" else 240), \
+                        patch.object(ui_acceptance, "mean_luminance", return_value=0.9), \
+                        patch.object(ui_acceptance, "image_difference", side_effect=
+                                     lambda a, b, **_kwargs: int(a.pixels != b.pixels)), \
+                        patch.object(ui_acceptance, "editor_frames_equal_except_caret", side_effect=
+                                     lambda a, b, _crop: ui_acceptance.editor_pixels_equal_except_caret(a.pixels, b.pixels, 64)):
+                    kwargs = dict(crop=ui_acceptance.EDITOR_CROP, minimum_dark_pixels=100,
+                                  stable_for=0.15, timeout=10, ignore_editor_caret=state != "strict")
+                    if state == "blink":
+                        driver.wait_for_stable_frame("editor", **kwargs)
+                        self.assertLess(clock[0], 3)
+                    else:
+                        with self.assertRaises(ui_acceptance.AcceptanceFailure):
+                            driver.wait_for_stable_frame("editor", **kwargs)
+                        self.assertGreaterEqual(clock[0], 10)
+
     def test_private_search_wait_never_captures_note_pixels_to_disk(self):
         for state in ("delayed", "empty", "changing"):
             with self.subTest(state=state):
@@ -139,6 +211,7 @@ class CITests(unittest.TestCase):
                 def type_marker(marker):
                     self.assertGreaterEqual(clock[0], 0.4)
                     driver.wait_for_stable_frame.assert_called_once()
+                    self.assertTrue(driver.wait_for_stable_frame.call_args.kwargs["ignore_editor_caret"])
                     if state != "unsaved":
                         note.write_text("original body\n" + marker, encoding="utf-8")
 

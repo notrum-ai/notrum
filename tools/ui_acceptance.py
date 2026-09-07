@@ -680,6 +680,62 @@ def dark_pixel_count(
         ) from error
 
 
+def editor_pixels_equal_except_caret(first: bytes, second: bytes, width: int) -> bool:
+    """Accept only an unchanged image or one 2px by 18px accent caret blinking.
+
+    Allow a one-pixel rasterization margin. Text, selection overlays and moving
+    carets remain changes; do not use a general changed-pixel allowance.
+    """
+    if width <= 0 or len(first) != len(second) or len(first) % (3 * width):
+        raise AcceptanceFailure("invalid editor pixel geometry")
+    if first == second:
+        return True
+    left, top, right, bottom = width, len(first) // (3 * width), -1, -1
+    first_accent = second_accent = False
+    changed = []
+    for offset in range(0, len(first), 3):
+        before, after = first[offset:offset + 3], second[offset:offset + 3]
+        if before == after:
+            continue
+        y, x = divmod(offset // 3, width)
+        left, right = min(left, x), max(right, x)
+        top, bottom = min(top, y), max(bottom, y)
+        if right - left >= 3 or bottom - top >= 20:
+            return False
+        changed.append((before, after))
+        first_accent |= all(abs(value - color) <= 8 for value, color in zip(before, (54, 94, 130)))
+        second_accent |= all(abs(value - color) <= 8 for value, color in zip(after, (54, 94, 130)))
+    # Exactly one frame must contain the caret's solid accent color.
+    if bottom - top < 15 or first_accent == second_accent:
+        return False
+    for before, after in changed:
+        painted, background = (before, after) if first_accent else (after, before)
+        # Antialiased edge pixels must also lie between the underlying pixel
+        # and the caret color. A nearby glyph disappearing is not a blink.
+        if any(not min(base, accent) - 2 <= value <= max(base, accent) + 2
+               for value, base, accent in zip(painted, background, (54, 94, 130))):
+            return False
+    return True
+
+
+def editor_frames_equal_except_caret(
+    first: Path, second: Path, crop: tuple[int, int, int, int]
+) -> bool:
+    x, y, width, height = crop
+
+    def pixels(path: Path) -> bytes:
+        result = subprocess.run(
+            ["convert", str(path), "-crop", f"{width}x{height}+{x}+{y}",
+             "+repage", "-depth", "8", "rgb:-"],
+            check=True, capture_output=True,
+        )
+        if len(result.stdout) != width * height * 3:
+            raise AcceptanceFailure("unexpected editor pixel count")
+        return result.stdout
+
+    return editor_pixels_equal_except_caret(pixels(first), pixels(second), width)
+
+
 def bright_pixel_count(
     image: Path,
     *,
@@ -1518,7 +1574,10 @@ class WindowDriver:
         minimum_luminance: float = 0.1,
         stable_for: float = 0.0,
         timeout: float = 3.0,
+        ignore_editor_caret: bool = False,
     ) -> Path:
+        if ignore_editor_caret and crop != EDITOR_CROP:
+            raise AcceptanceFailure("caret-aware comparison requires the editor crop")
         previous = self.capture("stability-previous")
         stable = self.capture("stability-current")
         stable_since: float | None = None
@@ -1526,12 +1585,15 @@ class WindowDriver:
         def unchanged() -> bool:
             nonlocal previous, stable, stable_since
             current = self.capture("stability-next")
-            difference = image_difference(previous, current, crop=crop)
+            equal = (
+                editor_frames_equal_except_caret(previous, current, EDITOR_CROP)
+                if ignore_editor_caret else image_difference(previous, current, crop=crop) == 0
+            )
             previous.unlink(missing_ok=True)
             previous = current
             stable = current
             frame_is_unchanged = (
-                difference == 0
+                equal
                 and dark_pixel_count(current, crop=crop) >= minimum_dark_pixels
                 and mean_luminance(current, crop=crop) >= minimum_luminance
             )
@@ -6407,7 +6469,8 @@ def select_search_result_and_edit(
     wait_until("expected search note selection", selected, timeout=SEARCH_WAIT_SECONDS)
     driver.wait_for_stable_frame(
         "selected search result before editing", crop=EDITOR_CROP,
-        minimum_dark_pixels=30, stable_for=0.15, timeout=SEARCH_WAIT_SECONDS,
+        minimum_dark_pixels=100, stable_for=0.15, timeout=SEARCH_WAIT_SECONDS,
+        ignore_editor_caret=True,
     )
     driver.set_stage("selection/save")
     driver.click("editor_below_document")

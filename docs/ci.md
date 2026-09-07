@@ -126,6 +126,10 @@ The Linux `search` acceptance scenario waits for painted result rows and a
 stable result area that excludes the blinking input caret. Before typing an edit,
 it requires the search controls to close and the expected note path to reach
 workspace settings. It then checks the marker in that note's canonical file.
+Editor readiness allows only the appearance or disappearance of the narrow
+accent-colored caret; text changes, caret movement and selection overlays still
+reset the stability interval. This remains valid when slow frame capture samples
+opposite caret blink phases on every iteration, without extending the timeout.
 Search diagnostics use fixed stages (`initial/index`, `query/results`,
 `selection/open`, `selection/save`, `external/index`, `rebuild/index`, and
 `final/validation`), without logging queries, paths or note contents. A failed

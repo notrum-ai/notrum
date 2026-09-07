@@ -149,6 +149,14 @@ in both fields must survive focus changes, cancel correctly, and save together
 with the selected model alias. Filtering, reactions, and background draft
 preservation remain part of the same scenario.
 
+The `rss_cards` scenario is a basic open/read smoke check with one cached article
+restored at startup. After first paint, one title click must open the expected
+URL through a local browser stand-in and persist the read marker. Browser calls
+use atomic records, and both results are checked again after normal shutdown.
+The scenario does not compare screenshots, text colors, card heights, hover
+frames, or a fixed Tab sequence. Markdown presentation and URL validation have
+Rust unit tests; feed keyboard navigation has its own `rss_keyboard` scenario.
+
 Native test kits also emit fixed-vocabulary `NATIVE_IO`, `NATIVE_SAVE`,
 `NATIVE_OPERATION`, `NATIVE_CLEANUP`,
 `NATIVE_TEMP`, `NATIVE_RESULT`, `NATIVE_ASSERT` and `NATIVE_PATH` records.

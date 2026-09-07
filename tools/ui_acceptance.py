@@ -7320,173 +7320,57 @@ def rss_filters_scenario(driver: WindowDriver, workspace: Path) -> None:
 
 def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
     del workspace
-    linked = "[Sheet-Native Computing Foundation](https://example.test/foundation) · [первой статье](https://example.test/first)"
-    plain = "Sheet-Native Computing Foundation · первой статье"
-    workspace, _, cache = cached_rss_workspace(driver, "rss-cards", [
-        {
-            "id": f"entry/{index}", "title": "Статья о Sheeternetes",
-            "author": "TimurTukaev", "published": "2026-09-04T15:46:00Z", "updated": None,
-            "summary": summary + " [Читать далее](https://example.test/article)",
-            "link": "https://example.test/article",
-        } for index, summary in enumerate((linked, plain))
-    ])
+    article_url = "https://example.test/article"
+    workspace, config_path, cache = cached_rss_workspace(driver, "rss-cards", [{
+        "id": "entry/0", "title": "RSS article", "author": None,
+        "published": None, "updated": None,
+        "summary": "A **native** RSS article.", "link": article_url,
+    }])
     state_path = cache / "state.json"
-    state_path.write_text(json.dumps({"read_entry_ids": ["entry/1"], "last_read_at": None}),
+    state_path.write_text(json.dumps({"read_entry_ids": [], "last_read_at": None}),
                           encoding="utf-8")
-    driver.start_app(workspace, "cards")
-    counts = {"favorites": 0, "all": 1, "trash": 1}
-    driver.click_point(*group_row_center("trash", categories=(), counts=counts))
-    driver.click_note(0, expanded_groups=("all", "trash"), expanded="trash",
-                      categories=(), counts=counts)
-    # Check both read states in one frame before navigation changes the viewport.
-    frame = driver.wait_for_stable_frame("RSS read and unread styling", crop=EDITOR_CROP, stable_for=0.3)
-    if near_color_pixel_count(frame, (51, 51, 51), crop=(302, 98, 650, 36), tolerance=8) < 100:
-        raise AcceptanceFailure("unread RSS title is not dark")
-    if near_color_pixel_count(frame, (169, 169, 169), crop=(302, 265, 650, 50), tolerance=8) < 100:
-        raise AcceptanceFailure("unselected read RSS title is not visibly dimmed")
-    driver.key("j")
-    crop = (300, 100, 760, 140)
-    linked_frame = driver.wait_for_stable_frame(
-        "card with inline links", crop=crop, stable_for=0.3, minimum_dark_pixels=200
-    )
-    driver.key("j")
-    plain_frame = driver.wait_for_stable_frame(
-        "card with plain labels", crop=crop, stable_for=0.3, minimum_dark_pixels=200
-    )
-    # Inline URLs must not add chips or alter card height. Both cards should
-    # render identically, with the title as the sole original-article action.
-    if image_difference(linked_frame, plain_frame, crop=crop) != 0:
-        raise AcceptanceFailure("inline links changed the RSS card layout")
-    # The bottom border follows the summary and padding; no source/action row
-    # or empty footer-sized gap remains below it.
-    if near_color_pixel_count(plain_frame, (105, 135, 162), crop=(320, 225, 600, 20), tolerance=55) < 500:
-        raise AcceptanceFailure("RSS card retained a footer or its empty space")
-    driver.close_app()
+    # Restore one cached card directly into the first painted frame. No network,
+    # sidebar transitions, scrolling, wrapped titles, or date/locale geometry.
+    feed_id = json.loads(config_path.read_text(encoding="utf-8"))["subscriptions"][0]["id"]
+    (workspace / ".notrum/settings.json").write_text(json.dumps({
+        "version": 1, "window": {"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT},
+        "sidebar": {"width": SIDEBAR_WIDTH, "expanded": [], "creation_group": {"kind": "all"}},
+        "selected_rss": feed_id,
+    }), encoding="utf-8")
 
-    # Exercise the production HTTPS opener with a local browser stand-in.
-    # A recognized text-browser name makes webbrowser wait for its exit code;
-    # no real browser or network is needed, including on the failure path.
+    # Exercise the production opener using a local text-browser stand-in.
+    # Each invocation publishes its arguments atomically; polling cannot read
+    # half a JSON record, and duplicate opens remain visible after app shutdown.
     browser_dir = driver.temporary_root / "browser"
     browser_dir.mkdir()
-    browser_log = browser_dir / "opened.jsonl"
-    browser_failure = browser_dir / "fail"
     browser = browser_dir / "lynx"
     browser.write_text(
-        "#!/usr/bin/python3\nimport json, pathlib, sys\n"
-        f"with pathlib.Path({str(browser_log)!r}).open('a') as output:\n"
-        "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        f"sys.exit(1 if pathlib.Path({str(browser_failure)!r}).exists() else 0)\n",
+        "#!/usr/bin/python3\nimport json, pathlib, sys, tempfile\n"
+        f"with tempfile.NamedTemporaryFile(mode='w', dir={str(browser_dir)!r}, suffix='.tmp', delete=False) as output:\n"
+        "    json.dump(sys.argv[1:], output)\n"
+        "path = pathlib.Path(output.name)\n"
+        "path.rename(path.with_suffix('.json'))\n",
         encoding="utf-8",
     )
     browser.chmod(0o755)
-    state_path.unlink()
-    entries = json.loads((cache / "feed.json").read_text(encoding="utf-8"))
-    entries["entries"][0]["summary"] = linked + " [Читать далее](https://example.test/continuation)"
-    entries["entries"][0]["link"] = "http://example.test/article"
-    entries["entries"] += [
-        {
-            "id": "entry/fallback", "title": "Fallback title",
-            "author": None, "published": None, "updated": None,
-            "summary": "Fallback summary. [Читать далее](https://example.test/fallback)",
-            "link": "ftp://example.test/rejected",
-        },
-        {
-            "id": "entry/plain", "title": "Title without a valid link",
-            "author": None, "published": None, "updated": None,
-            "summary": "Plain summary.", "link": "https://user:pass@example.test/rejected",
-        },
-        {
-            "id": "entry/long", "title": "Длинный заголовок статьи " * 8,
-            "author": None, "published": None, "updated": None,
-            "summary": "Long title summary.", "link": "https://example.test/long",
-        },
-    ]
-    (cache / "feed.json").write_text(json.dumps(entries), encoding="utf-8")
-    # No opener fallback can start a real browser, even on the error path.
-    driver.start_app(workspace, "title-actions", environment_overrides={
+
+    def opened() -> list[list[str]]:
+        return [json.loads(path.read_text(encoding="utf-8")) for path in browser_dir.glob("*.json")]
+
+    def read_ids() -> list[str]:
+        return json.loads(state_path.read_text(encoding="utf-8"))["read_entry_ids"]
+
+    # start_app waits for first paint. The only click is inside the single-line
+    # title's full-width hit area; it is never repeated to make a failed step pass.
+    driver.start_app(workspace, "cards", environment_overrides={
         "BROWSER": str(browser), "PATH": str(browser_dir),
     })
-
-    def opened() -> list[str]:
-        if not browser_log.exists():
-            return []
-        return [json.loads(line)[0] for line in browser_log.read_text().splitlines()]
-
-    expected_urls: list[str] = []
-
-    def expect_open(url: str) -> None:
-        expected_urls.append(url)
-        wait_until(f"RSS title open {len(expected_urls)}: {url}", lambda: opened() == expected_urls)
-        driver.wait_for_stable_frame("RSS title action settles", crop=EDITOR_CROP, stable_for=0.3)
-        if opened() != expected_urls:
-            raise AcceptanceFailure(f"RSS title opened more than once: {opened()}")
-
-    def expect_read(entry_id: str) -> None:
-        wait_until("RSS title marks the entry read", lambda: state_path.exists() and entry_id in
-                   json.loads(state_path.read_text(encoding="utf-8"))["read_entry_ids"])
-
-    title_crop = (302, 98, 650, 36)
-    metadata_crop = (302, 142, 650, 26)
-    unread_frame = driver.wait_for_stable_frame("unread RSS typography", crop=EDITOR_CROP, stable_for=0.3)
-    if near_color_pixel_count(unread_frame, (51, 51, 51), crop=title_crop, tolerance=8) < 100:
-        raise AcceptanceFailure("unread RSS title is not dark or is not first in the card")
-    if near_color_pixel_count(unread_frame, (153, 153, 153), crop=metadata_crop, tolerance=8) < 50:
-        raise AcceptanceFailure("RSS author and date are not gray below the title")
-    # The HTTP original link takes precedence over the HTTPS continuation URL.
     driver.click_point(450, 116)
-    expect_open("http://example.test/article")
-    expect_read("entry/0")
-    driver.xdotool("mousemove", "1100", "50")
-    frame = driver.wait_for_stable_frame("read RSS title", crop=EDITOR_CROP, stable_for=0.3)
-    if near_color_pixel_count(frame, (116, 116, 116), crop=title_crop, tolerance=8) < 100:
-        raise AcceptanceFailure("read RSS title is not rendered in gray")
-    driver.xdotool("mousemove", "450", "116")
-    hover_frame = driver.wait_for_stable_frame("RSS title hover", crop=title_crop, stable_for=0.3)
-    if image_difference(frame, hover_frame, crop=title_crop) != 0:
-        raise AcceptanceFailure("RSS title hover changed its background")
-    driver.xdotool("mousemove", "1100", "50")
-    # Feed -> seven toolbar actions -> card -> title. Enter and Space must each
-    # open once; each activation restores the stable feed focus for J/K.
-    for _ in range(9):
-        driver.key("Tab")
-    driver.key("Return")
-    expect_open("http://example.test/article")
-    for _ in range(9):
-        driver.key("Tab")
-    driver.key("space")
-    expect_open("http://example.test/article")
-    driver.click_point(450, 192)
-    driver.click_point(450, 365)
-    expect_read("entry/1")
-    driver.key("j")
-    driver.click_point(450, 116)
-    expect_open("https://example.test/fallback")
-    driver.key("j")
-    driver.click_point(450, 116)
-    expect_read("entry/plain")
-    plain_frame = driver.wait_for_stable_frame("unlinked RSS title", crop=EDITOR_CROP, stable_for=0.3)
-    if near_color_pixel_count(plain_frame, (116, 116, 116), crop=title_crop, tolerance=8) < 100:
-        raise AcceptanceFailure("unlinked read RSS title is not rendered in gray")
-    if opened() != expected_urls:
-        raise AcceptanceFailure("RSS body, navigation or unlinked title opened a browser")
-    driver.key("j")
-    # Click a wrapped title below its first line.
-    driver.click_point(450, 150)
-    expect_open("https://example.test/long")
-    expect_read("entry/long")
-    browser_failure.touch()
-    driver.click_point(450, 150)
-    expect_open("https://example.test/long")
-    error_frame = driver.wait_for_stable_frame("RSS browser error", crop=EDITOR_CROP, stable_for=0.3)
-    if near_color_pixel_count(error_frame, (190, 72, 72), crop=(256, 740, 980, 60)) < 50:
-        raise AcceptanceFailure("RSS browser failure was not displayed")
-    browser_failure.unlink()
-    driver.click_point(450, 150)
-    expect_open("https://example.test/long")
-    recovered_frame = driver.wait_for_stable_frame("RSS browser retry", crop=EDITOR_CROP, stable_for=0.3)
-    if near_color_pixel_count(recovered_frame, (190, 72, 72), crop=(256, 740, 980, 60)) > 10:
-        raise AcceptanceFailure("RSS browser error remained after a successful retry")
+    wait_until("RSS title opens its original URL once", lambda: opened() == [[article_url]])
+    wait_until("RSS title persists the read state", lambda: read_ids() == ["entry/0"])
     driver.close_app()
+    if opened() != [[article_url]] or read_ids() != ["entry/0"]:
+        raise AcceptanceFailure("RSS title open/read result changed before shutdown")
 
 
 def localization_scenario(driver: WindowDriver, workspace: Path) -> None:

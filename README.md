@@ -1,287 +1,282 @@
 <!-- Copyright 2026 Evgeniy Udodov -->
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- Target-state editorial draft: planned capabilities are deliberately written in the present tense, as requested. This is not a verification of current release functionality. Relative links assume the repository root. Existing installation instructions, documentation links, and imagery require alignment with the target release before publication. -->
 
 <p align="center">
-  <img src="app/notrum/assets/notrum-app-icon.svg" width="128" height="128" alt="Notrum icon">
+  <img src="app/notrum/assets/notrum-app-icon.svg" width="96" height="96" alt="Notrum icon">
 </p>
 
 <h1 align="center">Notrum</h1>
 
 <p align="center">
-  <strong>A native home for your notes and the things you read.</strong><br>
-  Plain Markdown. Local files. Yours to keep.
+  <strong>A native workspace for your notes, email, and the web.</strong><br>
+  Write in Markdown. Read what matters. Let AI put your knowledge to work.
+</p>
+
+<p align="center">
+  <a href="#get-notrum"><strong>Download &amp; get started</strong></a> ·
+  <a href="#what-you-can-do">Explore features</a> ·
+  <a href="docs/user-guide.md">User guide</a> ·
+  <a href="#build-from-source">Build from source</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/notrum-ai/notrum/actions/workflows/ci.yml?query=branch%3Alatest+event%3Apush"><img src="https://github.com/notrum-ai/notrum/actions/workflows/ci.yml/badge.svg?branch=latest&amp;event=push" alt="CI: tests, builds and audits for the latest release"></a>
   <a href="https://github.com/notrum-ai/notrum/releases/latest"><img src="https://img.shields.io/github/v/release/notrum-ai/notrum?style=flat&amp;color=8b5cf6" alt="Latest release"></a>
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/Rust-1.88.0-dea584?style=flat&amp;logo=rust&amp;logoColor=white" alt="Rust 1.88.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-blue?style=flat" alt="License: GPL-3.0-only"></a>
 </p>
 
-<p align="center">
-  <a href="#features">Features</a> ·
-  <a href="#build-and-run">Get started</a> ·
-  <a href="docs/user-guide.md">User guide</a> ·
-  <a href="https://github.com/notrum-ai/notrum/releases">Releases</a> ·
-  <a href="CONTRIBUTING.md">Contribute</a>
-</p>
+<p align="center"><sub>Early development · Review the platform notes below before installing.</sub></p>
 
----
+![Notrum with tagged notes in the sidebar and a Markdown note open in the editor](docs/images/demo-workspace.png)
 
-Your notes should be easy to write, easy to find, and easy to take with you.
-Notrum brings Markdown editing, tagged notes, and an RSS/Atom reader into one
-native desktop application. Keep project ideas, everyday notes, and reading
-lists together in a folder you control.
+<p align="center"><sub>Tagged notes and Markdown editing. Demo workspace, captured on Linux.</sub></p>
 
-Notrum stores your writing as ordinary files in a
-Notable-style workspace. Open them in another editor, track them with Git,
-or back them up with your own tools. No cloud account is required.
+## From information to action
 
-![Notrum showing the generated demo workspace, with tagged notes in the sidebar and Markdown in the editor](docs/images/demo-workspace.png)
+Notrum brings your notes, email, feeds, and watched pages into one desktop
+workspace. Its AI assistant uses your personal knowledge to filter what you
+read, help you write, and carry out tasks across the application at your request.
 
-<p align="center"><sub>Tagged notes and Markdown editing in the native interface. Demo workspace captured in the Linux test environment.</sub></p>
+Ask it to prepare a reply using your project notes, reduce the noise in your
+feeds, or unsubscribe you from newsletters. Your notes stay in local Markdown
+files you control.
 
-## Features
+## What you can do
 
-### 📝 Markdown you own
+### Build your knowledge in Markdown
 
-Write in plain Markdown with YAML front matter. Your workspace's `notes/`
-directory is the source of truth, and opening it never rewrites existing notes.
-Unknown metadata and unrelated files are preserved, so your writing stays
-portable and works with tools you already use.
+Write notes, develop ideas, and keep the context behind your work. Organize
+with tags, favorites, and pins; find notes with local search. Your assistant
+can draw on this knowledge when writing text or preparing a reply.
 
-### 🗂 A place for every thought
+Notes use Markdown with YAML front matter. Open external `.md`, `.markdown`,
+and `.txt` files and edit them in place. Autosave, crash recovery, and external
+change detection help preserve your work.
 
-Organize notes with tag-based categories, favorites, and pins. Arrange them
-manually or choose automatic sorting, then use local search to find what you
-need. Soft deletion lets you move notes out of the way without immediately
-removing their files.
+### Read and reply to email
 
-### ✍️ Keep your writing moving
+Read, compose, and send email inside Notrum. Ask the assistant to draft replies
+using the context in your notes, or unsubscribe you from newsletters at your
+request. Control notification sounds for each connected mailbox.
 
-Autosave, crash recovery, and external change detection help preserve your work.
-Open existing `.md`, `.markdown`, and `.txt` files directly from your file
-manager and edit them in place, without moving them into a workspace.
+### Follow what matters
 
-### 📰 Reading alongside writing
+Read RSS and Atom feeds, or create a feed from a website that does not publish
+one. Ask AI to filter out the noise and focus your reading on what matters to
+you. Choose which feeds announce new items with a notification sound.
 
-Follow RSS and Atom feeds in the same application as your notes.
-A native reader presents article excerpts and read status; use `J` and `K`
-to move between entries, or open the original article in your browser.
+With **Watch Pages**, add a URL, view the page in Notrum, and see what changed
+between versions. Keep up with the pages you care about through their diffs.
 
-### ⬆️ Updates you decide on
+### Give your assistant work to do
 
-Notrum looks for a new release in the background when it starts and offers it
-in a card you can dismiss; nothing is installed without your decision. A
-release is offered automatically only a day after publication, while
-**Settings → Updates** installs it the moment it is published. See the
-[updates guide](docs/updates.md).
+Ask for a result in everyday language. The assistant can use your notes as
+context, write text, work with email and feeds, and perform actions across
+Notrum through its application interface. Ask it to gather information and
+populate a text file or spreadsheet.
 
-### 🔐 Privacy where it matters
+| Ask Notrum | Put it to work |
+| --- | --- |
+| “Draft a reply using the decisions in my project notes.” | Prepare an email with the context from your knowledge base. |
+| “Filter my feeds for updates relevant to this project.” | Focus your reading using the context you provide. |
+| “Unsubscribe me from all newsletters in this mailbox.” | Delegate mailbox cleanup at your request. |
+| “Gather this information and fill in this spreadsheet.” | Populate a spreadsheet with the information you need. |
 
-Protect individual note bodies with a workspace password and authenticated
-age encryption. Filenames and YAML metadata, including titles and tags,
-remain readable. The [storage and security guide](docs/storage.md) explains
-what is protected and how to keep backups safe.
+Follow an agent's work through a detailed record of its steps, actions,
+and results.
 
-### 🦀 Native from the ground up
-
-Built with Rust and Floem, with no WebView or JavaScript runtime and no database
-holding your notes. The interface offers 17 language variants, with English
-as the default. Build for Apple Silicon macOS, Linux, or Windows x64.
+Notrum exposes application actions through the **Model Context Protocol
+(MCP)**, giving the assistant access to your notes and operations across the
+workspace. Use OpenAI or Anthropic; API keys are kept in the system credential
+store.
 
 <details>
-<summary><strong>AI settings — groundwork for upcoming assistant features</strong></summary>
+<summary><strong>More tools for the work around your writing</strong></summary>
 
-Connect OpenAI or Anthropic, keep API keys in the system credential store,
-and configure named model/effort aliases with an editable default. Settings
-apply across workspaces. Connection checks only retrieve the model catalog
-and never send notes. **Assistant commands and text generation are not
-implemented yet.** See the [AI settings guide](docs/user-guide.md#ai-settings).
+**Monitor with readable checks.** Track DNS, SSL certificates, ping, HTTP,
+TCP ports, and disk usage. Express what you expect as text:
+
+```text
+expect https://example.com 200 < 800ms
+expect disk / < 80%
+expect port db:5432 open
+```
+
+**Work with objects as text.** View and edit structured objects, such as a
+process list, through a text interface.
+
+**Sign PDFs.** Sign PDF documents inside Notrum.
+
+**Check email exposure.** Check connected email addresses for appearances in
+known data breaches.
 
 </details>
 
+## Get Notrum
+
+Choose an archive for your operating system and architecture from
+[GitHub Releases](https://github.com/notrum-ai/notrum/releases).
+If there is no matching archive, see [Build from source](#build-from-source).
+
+| Platform target | Before you install |
+| --- | --- |
+| **macOS · Apple Silicon** | Uses an ad-hoc signature; not Developer ID signed or notarized. A downloaded app requires explicit macOS approval. |
+| **Linux · matching architecture** | Dynamically linked executable. Requires a compatible Linux desktop and system libraries; see the Linux notes below. |
+| **Windows · x64, Windows 10/11** | Unsigned portable application targeting local NTFS. A successful cross-build does not establish native Windows validation; see the [Windows guide](docs/windows.md). |
+
+<details>
+<summary><strong>macOS: first launch</strong></summary>
+
+Extract the release archive. Use an archive from the project's releases and
+verify it against the accompanying `SHA256SUMS` before approving it.
+
+Try opening `Notrum.app` once. If macOS blocks the launch, open
+**System Settings → Privacy & Security → Security**, choose **Open Anyway**,
+and confirm. This override is available for about an hour after the failed
+launch attempt.
+
+</details>
+
+<details>
+<summary><strong>Linux: first launch and requirements</strong></summary>
+
+Use an archive built for the destination machine's architecture. Run the
+`notrum` executable from the extracted package.
+
+The application requires X11 or Wayland, the corresponding system libraries,
+fonts, GTK4 4.0 or newer, and an XDG desktop portal for file dialogs.
+
+See the [development guide](docs/development.md) for build and release
+limitations.
+
+</details>
+
+<details>
+<summary><strong>Windows: first launch</strong></summary>
+
+Keep the extracted package files together and run `Notrum.exe`.
+Required non-system runtime DLLs are included beside the executable.
+
+See the [Windows guide](docs/windows.md) for filesystem boundaries and the
+native validation checklist. The package also includes optional **Open With**
+registration; it does not change default applications.
+
+</details>
+
+### Your first workspace
+
+1. Launch Notrum and choose an existing workspace or create one. A workspace
+   is the folder where Notrum keeps your notes.
+2. Bring in what you work with: write a note, connect a mailbox, add a feed,
+   or watch a page.
+3. Configure an AI provider and ask the assistant to help with a task, such as
+   drafting a reply using your notes.
+
+Prefer to edit an existing file? Open it with Notrum from your file manager.
+If no workspace is configured yet, Notrum asks you to choose one first.
+The file stays in its original location. See the
+[user guide](docs/user-guide.md) for details.
+
+## Your files, your tools
+
+Your workspace's `notes/` directory is the source of truth for notes.
+Opening a workspace does not migrate or rewrite existing notes; unknown
+metadata and unrelated files are preserved. Unencrypted notes are ordinary
+Markdown with YAML front matter, so you can open them in another editor,
+track them with Git, or back them up with your own tools.
+
+You can encrypt individual note bodies using a workspace password and
+authenticated age encryption. **Filenames and YAML metadata—including titles
+and tags—remain readable.**
+
+Recovery files can contain unsaved work. Read the
+[storage and security guide](docs/storage.md) before changing your backup
+setup or removing local state.
+
 ## Project status
 
-Notrum is in early development. The interface defaults to English and offers
-17 language variants in Settings → General → Language.
-Native builds target **Apple Silicon Macs**. Linux release binaries can be
-built through Docker for the container's architecture. Portable Windows x64
-builds target Windows 10/11 on local NTFS. Cross-compilation and actual Windows
-acceptance are separate checks; see the [Windows guide](docs/windows.md).
+Notrum is in early development. Check the
+[release notes](https://github.com/notrum-ai/notrum/releases) and
+[development guide](docs/development.md) for current limitations and known
+dependency warnings.
 
-Native macOS builds use an ad-hoc integrity signature that does not identify an Apple-registered
-developer.
-Known dependency warnings and the remaining work before distributing binaries
-are documented in the [development guide](docs/development.md).
+Updates require your decision. Notrum checks for releases at startup and
+offers them 24 hours after publication; manual installation through
+**Settings → Updates** is available without that delay.
+See [how updates work](docs/updates.md).
 
-Your workspace's `notes/` directory holds the authoritative note files.
-Opening a workspace does not migrate or rewrite existing notes. Encryption
-protects the note body; filenames and YAML metadata, including titles and tags,
-remain readable. Read the [storage and security guide](docs/storage.md) before
-managing backups or removing local state. Recovery files can contain unsaved
-work and must not be treated as disposable cache.
+Built with Rust and Floem. Includes 17 interface language variants, with
+English as the default.
 
-## Build and run
+## Build from source
 
-Choose your platform below. Release archives are available from
-[GitHub Releases](https://github.com/notrum-ai/notrum/releases); read the
-[project status](#project-status) and platform notes before installing.
-
-<details open>
-<summary><strong>macOS · Apple Silicon</strong></summary>
-
-Requirements: an Apple Silicon Mac, Docker with Docker Compose and a running
-Docker engine, Xcode Command Line Tools, and `python3`. A preinstalled Rust
-toolchain is not required. Clone the repository, then build the application:
+Clone the repository before running any platform's build command:
 
 ```sh
 git clone https://github.com/notrum-ai/notrum.git
 cd notrum
-make build-macos
-open dist/Notrum.app
 ```
 
-A release downloaded from GitHub requires explicit approval until Notrum is
-Developer ID signed and notarized. Try to open `Notrum.app` once, then open
-**System Settings → Privacy & Security**, scroll to **Security**, choose
-**Open Anyway**, and confirm the launch. macOS offers this override for about an
-hour after the failed launch attempt. Only approve an archive whose checksum
-matches the release's `SHA256SUMS`.
+All builds below require Docker Compose and a running Docker engine.
+The macOS and Linux builds use pinned Rust 1.88.0 without a preinstalled
+Rust toolchain. macOS builds additionally require an Apple Silicon Mac,
+Xcode Command Line Tools, and `python3`.
 
-On first launch, choose a workspace or create one through the application.
-To open an existing workspace explicitly:
+| Target | Command | Output |
+| --- | --- | --- |
+| macOS · Apple Silicon | `make build-macos` | `dist/Notrum.app` |
+| Linux · Docker container architecture | `make build-linux` | `dist/linux/<architecture>/notrum` |
+| Windows · x64 | `make build-windows` | `dist/windows/x86_64/Notrum.exe` |
 
-```sh
-open dist/Notrum.app --args /absolute/path/to/workspace
-```
+For Linux, build on the destination architecture: `aarch64` or `x86_64`.
+Windows cross-builds run on macOS or Linux; run `make test-windows-build`
+and complete the [native Windows checklist](docs/windows.md) before
+considering a build validated.
 
-`make build-macos` downloads pinned Rust 1.88.0 into the ignored `.host-build/`
-directory and builds with the system macOS SDK. It does not change your global
-Rust installation or shell profile. It builds the application in release mode
-and packages it as `dist/Notrum.app`. `make build` remains an alias for this
-command.
-
-To try generated demo notes:
+<details>
+<summary><strong>Launch a macOS build with demo notes</strong></summary>
 
 ```sh
 make demo-data
 open dist/Notrum.app --args "$PWD/examples/demo-workspace"
 ```
 
-The demo command resets the generated demo notes. Use a separate workspace
-for your own writing.
+`make demo-data` resets the generated demo notes. Keep your own writing
+in a separate workspace.
+
+To launch without the demo, run `open dist/Notrum.app`.
 
 </details>
 
-<details>
-<summary><strong>Linux · Docker container architecture</strong></summary>
+See the [development guide](docs/development.md) for toolchain details,
+checks, benchmarks, and packaging, and the [CI guide](docs/ci.md) for
+automated checks.
 
-With Docker Compose and a running Docker engine, build an optimized Linux
-executable using the pinned toolchain (no host Rust installation required):
+## Documentation
 
-```sh
-make build-linux
-```
-
-The stripped release binary is written to `dist/linux/<architecture>/notrum`,
-where the architecture matches the Docker container: `aarch64` on Apple
-Silicon by default, or `x86_64` on an Intel/AMD host. Build on the matching
-architecture for the destination Linux machine. The package also includes a desktop entry, icon, and optional `Register.py` script.
-Run `python3 Register.py` on the destination Linux desktop to add Notrum to
-Open With, or `python3 Register.py --remove` to remove that registration.
-The script does not change default applications.
-
-The command also works from
-macOS, but the resulting executable runs only on Linux.
-
-On Linux, launch it with an optional workspace path:
-
-```sh
-./dist/linux/$(uname -m)/notrum /absolute/path/to/workspace
-```
-
-This is a dynamically linked binary, not a
-self-contained application bundle. A compatible Linux desktop with X11 or
-Wayland, the corresponding system libraries, fonts, GTK4 (4.0 or newer), and an XDG desktop portal
-for file dialogs is required. See the [development guide](docs/development.md)
-for build verification and release limitations.
-
-</details>
-
-<details>
-<summary><strong>Windows · Windows 10/11 x64</strong></summary>
-
-Build on macOS or Linux with Docker Compose:
-
-```sh
-make build-windows
-make test-windows-build
-```
-
-Copy `dist/windows/x86_64/` to a Windows computer and run `Notrum.exe`.
-Any required non-system runtime DLLs are included beside the executable.
-The application is portable, unsigned, and runs without a console window.
-The existing `make build` command still builds the macOS application.
-For optional Open With registration, run `powershell -NoProfile -File .\Register.ps1`
-in the package directory; add `-Remove` to unregister. Defaults are unchanged.
-
-Settings use `%USERPROFILE%\.notrum.cfg`, falling back to
-`%HOMEDRIVE%%HOMEPATH%\.notrum.cfg`. English remains the default language;
-all 17 language variants and saved workspace selection are available.
-
-Run the supplied test kit and complete the native UI checklist before treating
-that Windows build as validated. Instructions, supported filesystem boundaries,
-and known validation limits are in [docs/windows.md](docs/windows.md).
-
-</details>
-
-## Opening external files
-
-On every supported OS the executable accepts:
-
-```sh
-notrum --workspace /absolute/path/to/workspace --open first.md second.txt
-notrum first.md second.markdown
-```
-
-A single directory argument still selects a workspace. Relative paths are
-resolved against the launch directory; use `--` before paths beginning with `-`.
-When no workspace is configured, select one in the startup dialog; the requested
-files wait until that choice. Files stay in their original locations.
-
-Linux and Windows may start another process when opening files from the desktop.
-Finder delivers files to the running macOS application. There is no inter-instance
-message queue or single-instance requirement.
-
-## Documentation and contributions
-
-| Guide | What you'll find |
+| Guide | Use it for |
 | --- | --- |
-| [User guide](docs/user-guide.md) | Workspaces, notes, external files, and feeds |
-| [Storage and security](docs/storage.md) | File layout, recovery, encryption, and backups |
-| [Development](docs/development.md) | Toolchain, checks, benchmarks, and packaging |
-| [GitHub CI](docs/ci.md) | Linux, macOS, and Windows checks, caches, and artifacts |
-| [Publishing](docs/publishing.md) | `make publish`, patch versions, and GitHub Releases |
-| [Updates](docs/updates.md) | The startup check, the 24-hour hold, and in-place installation |
-| [Contributing](CONTRIBUTING.md) | Reporting bugs and submitting changes |
-| [Security policy](SECURITY.md) | Reporting vulnerabilities privately |
+| [User guide](docs/user-guide.md) | Workspaces, writing, external files, and feeds |
+| [Storage and security](docs/storage.md) | File layout, encryption, recovery, and backups |
+| [Development](docs/development.md) | Building, testing, benchmarks, and packaging |
+| [Windows](docs/windows.md) | Windows setup, filesystem boundaries, and validation |
+| [Updates](docs/updates.md) | Release checks and installation |
+| [Publishing](docs/publishing.md) | Versioning and GitHub Releases |
 
-The CI badge follows the moving `latest` release tag and turns green when the workflow
-passes, including tests, builds, UI checks, and audits. `make publish` updates
-`latest` after publishing each release, so new commits on `master` do not change
-this badge. It may show no data until the first `latest` CI run finishes.
+## Help shape Notrum
 
-Found a bug or have an idea? [Open an issue](https://github.com/notrum-ai/notrum/issues)
-or read the [contribution guide](CONTRIBUTING.md) to help shape Notrum.
+[Report a bug or suggest an improvement](https://github.com/notrum-ai/notrum/issues).
+Include your operating system, Notrum version, and steps to reproduce a bug.
+For code contributions, start with [Contributing](CONTRIBUTING.md).
+
+To report a vulnerability privately, follow the
+[security policy](SECURITY.md).
 
 ## License
 
-Copyright 2026 Evgeniy Udodov.
+Copyright 2026 Evgeniy Udodov. Notrum's own code, scripts, documentation,
+and artwork are licensed under [GPL-3.0-only](LICENSE), without warranty.
+Third-party dependencies retain their respective licenses.
 
-Notrum's own code, scripts, documentation, and application artwork are licensed
-under the **GNU General Public License version 3 only** (`GPL-3.0-only`).
-See [LICENSE](LICENSE) for the full terms. Notrum comes without warranty.
-Third-party dependencies retain their respective licenses; the project's
-license does not replace them.

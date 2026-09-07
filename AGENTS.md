@@ -68,18 +68,24 @@
   defect.
 - Use scoped UI styles. Do not apply global theme/style overrides for local
   changes.
-- Select exactly one widest applicable final aggregate: `make ui-check` for UI,
-  `make check` for the full gate without a native build, or `make` for the full
-  gate, native build, and external-file smoke. Use narrow targets only during
-  development or failure diagnosis; after fixing a failure, repeat the original
-  aggregate once.
-- Do not run `make ui-build` separately before a final aggregate that includes it.
+- After changes, run fast unit tests first, then only tests related to the
+  changed behavior. Select specific packages, test filters, and UI scenarios
+  based on the affected code.
+- Do not run `make`, `make check`, `make ui-check`, or other long full-suite
+  checks unless the user explicitly requests them.
+- After fixing a failure, rerun the relevant checks without expanding to a
+  full-suite run.
+- For documentation-only changes, review the diff and run `git diff --check`
+  on the host; application tests are not required.
+- If a full aggregate is explicitly requested, do not run `make ui-build`
+  separately before an aggregate that includes it.
 - Keep project license metadata and SPDX notices consistent with `GPL-3.0-only`.
   Preserve dependency license notices and do not bypass audits.
 - Do not create Git commits unless the user explicitly requests them.
 
 ## Finishing a task
 
-1. Run the applicable final check.
+1. Run the selected checks according to the rules above.
 2. Review `git diff` on the host and confirm that original user changes are preserved.
-3. Report what changed, which checks passed, and any remaining failures or risks.
+3. Report what changed, exactly which checks ran and their results, and any
+   remaining failures or risks.

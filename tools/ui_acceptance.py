@@ -7126,24 +7126,9 @@ def rss_keyboard_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.key("j")
     expect_read([0])
     expect_card_at_top()
-    unread_frame = driver.wait_for_stable_frame("RSS unread card styling", crop=EDITOR_CROP, stable_for=0.3)
     driver.key("j")
     expect_read([0, 1])
     expect_card_at_top()
-    driver.key("k")
-    expect_card_at_top()
-    read_frame = driver.wait_for_stable_frame("RSS read card styling", crop=EDITOR_CROP, stable_for=0.3)
-    # Same second card, same viewport: its text must be substantially lighter
-    # once read and no longer selected, not merely lose a tiny unread dot.
-    contrast_crop = (302, 265, 650, 110)
-    before = crop_luminances(unread_frame, contrast_crop)
-    after = crop_luminances(read_frame, contrast_crop)
-    ink = [point for point, luminance in before.items() if luminance < 110]
-    lightening = sum(after[point] - before[point] for point in ink) / max(1, len(ink))
-    if len(ink) < 50 or lightening < 60:
-        raise AcceptanceFailure(f"read RSS card text is not visibly dimmed: ink={len(ink)}, lightening={lightening:.1f}")
-    driver.key("j")
-    expect_read([0, 1])
     # Clicking a card rebuilds its projection. Focus must survive this update.
     driver.key("k")
     driver.click_point(450, 315)
@@ -7355,11 +7340,20 @@ def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
             "link": "https://example.test/article",
         } for index, summary in enumerate((linked, plain))
     ])
+    state_path = cache / "state.json"
+    state_path.write_text(json.dumps({"read_entry_ids": ["entry/1"], "last_read_at": None}),
+                          encoding="utf-8")
     driver.start_app(workspace, "cards")
     counts = {"favorites": 0, "all": 1, "trash": 1}
     driver.click_point(*group_row_center("trash", categories=(), counts=counts))
     driver.click_note(0, expanded_groups=("all", "trash"), expanded="trash",
                       categories=(), counts=counts)
+    # Check both read states in one frame before navigation changes the viewport.
+    frame = driver.wait_for_stable_frame("RSS read and unread styling", crop=EDITOR_CROP, stable_for=0.3)
+    if near_color_pixel_count(frame, (51, 51, 51), crop=(302, 98, 650, 36), tolerance=8) < 100:
+        raise AcceptanceFailure("unread RSS title is not dark")
+    if near_color_pixel_count(frame, (169, 169, 169), crop=(302, 265, 650, 50), tolerance=8) < 100:
+        raise AcceptanceFailure("unselected read RSS title is not visibly dimmed")
     driver.key("j")
     crop = (300, 100, 760, 140)
     linked_frame = driver.wait_for_stable_frame(
@@ -7395,7 +7389,6 @@ def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
         encoding="utf-8",
     )
     browser.chmod(0o755)
-    state_path = cache / "state.json"
     state_path.unlink()
     entries = json.loads((cache / "feed.json").read_text(encoding="utf-8"))
     entries["entries"][0]["summary"] = linked + " [Читать далее](https://example.test/continuation)"

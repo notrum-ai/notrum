@@ -1,6 +1,10 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+UpdateRestart = Mulai ulang
+UpdateRestartWaiting = Menunggu penyimpanan dan operasi latar belakang selesai…
+UpdateRestartFailed = Tidak dapat memulai ulang Notrum: { $error }
+
 AiAssistant = Pengaturan AI
 AiDescription = Berlaku untuk semua ruang kerja.
 AiConnect = Koneksi

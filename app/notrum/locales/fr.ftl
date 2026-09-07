@@ -1,6 +1,10 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+UpdateRestart = Redémarrer
+UpdateRestartWaiting = En attente de la fin de l’enregistrement et des opérations en arrière-plan…
+UpdateRestartFailed = Impossible de redémarrer Notrum : { $error }
+
 AiAssistant = Paramètres IA
 AiDescription = S’appliquent à tous les espaces de travail.
 AiConnect = Connexion

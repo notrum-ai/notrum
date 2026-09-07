@@ -78,10 +78,15 @@ pub(crate) struct Updates {
     generation: Rc<Cell<u64>>,
     installation: Rc<Option<Installation>>,
     global: Rc<RefCell<GlobalSettingsStore>>,
+    restart: RestartAction,
+    restarting: RwSignal<bool>,
+    restart_error: RwSignal<Option<UiText>>,
 }
 
+pub(crate) type RestartAction = Rc<dyn Fn(&Installation) -> Result<bool, UiText>>;
+
 impl Updates {
-    pub(crate) fn new(global: Rc<RefCell<GlobalSettingsStore>>) -> Self {
+    pub(crate) fn new(global: Rc<RefCell<GlobalSettingsStore>>, restart: RestartAction) -> Self {
         let installation = installation();
         if let Some(installation) = installation.as_ref() {
             // A previous update may have left the replaced files behind.
@@ -99,6 +104,9 @@ impl Updates {
             generation: Rc::new(Cell::new(0)),
             installation: Rc::new(installation),
             global,
+            restart,
+            restarting: create_rw_signal(false),
+            restart_error: create_rw_signal(None),
         }
     }
 
@@ -121,7 +129,10 @@ impl Updates {
     }
 
     fn check(&self, mode: CheckMode) {
-        if self.installation.is_none() || self.stage.get_untracked().busy() {
+        if self.installation.is_none()
+            || self.stage.get_untracked().busy()
+            || matches!(self.stage.get_untracked(), Stage::Installed(_))
+        {
             return;
         }
         self.stage.set(Stage::Checking);
@@ -217,6 +228,7 @@ impl Updates {
             }
             Message::Installed(Ok(version)) => {
                 self.stage.set(Stage::Installed(version));
+                self.prompt.set(true);
                 true
             }
         }
@@ -234,6 +246,7 @@ impl Updates {
     /// reappear at every start until a newer release is published.
     fn dismiss(&self) {
         self.prompt.set(false);
+        self.restarting.set(false);
         let Some(release) = self.stage.get_untracked().release().cloned() else {
             return;
         };
@@ -263,6 +276,42 @@ impl Updates {
         if let Err(error) = open_rss_original(&release.page_url) {
             self.stage
                 .set(Stage::Failed(UpdateError::Io(error.to_string())));
+        }
+    }
+
+    fn request_restart(&self) {
+        if !matches!(self.stage.get_untracked(), Stage::Installed(_))
+            || self.restarting.get_untracked()
+        {
+            return;
+        }
+        self.restart_error.set(None);
+        self.restarting.set(true);
+        self.restart_tick();
+    }
+
+    fn restart_tick(&self) {
+        if self.restarting.try_get_untracked() != Some(true) {
+            return;
+        }
+        let Some(installation) = self.installation.as_ref() else {
+            self.restarting.set(false);
+            self.restart_error
+                .set(Some(msg!(UpdateNotInstalled).into()));
+            return;
+        };
+        match (self.restart)(installation) {
+            Ok(true) => {}
+            Ok(false) => {
+                let controller = self.clone();
+                exec_after(Duration::from_millis(POLL_MS), move |_| {
+                    controller.restart_tick()
+                });
+            }
+            Err(error) => {
+                self.restarting.set(false);
+                self.restart_error.set(Some(error));
+            }
         }
     }
 }
@@ -323,6 +372,9 @@ pub(crate) fn prompt_view(updates: Updates, palette: Palette) -> impl IntoView {
     let prompt = updates.prompt;
     let install = updates.clone();
     let later = updates.clone();
+    let restart = updates.clone();
+    let restarting = updates.restarting;
+    let restart_error = updates.restart_error;
     let title = label(move || match stage.get() {
         Stage::Installed(version) => {
             UiText::from(msg!(UpdateInstalledRestart, "version" => version.to_string()))
@@ -332,13 +384,25 @@ pub(crate) fn prompt_view(updates: Updates, palette: Palette) -> impl IntoView {
         }),
     })
     .style(move |style| style.font_size(13.5).color(palette.ink).selectable(false));
-    let status = label(move || status_text(&stage.get()))
-        .style(move |style| style.font_size(12.5).color(palette.muted).selectable(false))
-        .style(move |style| {
-            style.apply_if(matches!(stage.get(), Stage::Available(_)), |style| {
-                style.hide()
-            })
-        });
+    let status = label(move || {
+        restart_error.get().unwrap_or_else(|| {
+            if restarting.get() {
+                msg!(UpdateRestartWaiting).into()
+            } else {
+                status_text(&stage.get())
+            }
+        })
+    })
+    .style(move |style| style.font_size(12.5).color(palette.muted).selectable(false))
+    .style(move |style| {
+        style.apply_if(
+            matches!(stage.get(), Stage::Available(_))
+                || (matches!(stage.get(), Stage::Installed(_))
+                    && !restarting.get()
+                    && restart_error.get().is_none()),
+            |style| style.hide(),
+        )
+    });
     let update_button = action_button(
         move || tr!(UpdateInstall),
         IconButtonTone::Primary,
@@ -359,6 +423,18 @@ pub(crate) fn prompt_view(updates: Updates, palette: Palette) -> impl IntoView {
         || true,
         move || later.dismiss(),
     );
+    let restart_button = action_button(
+        move || tr!(UpdateRestart),
+        IconButtonTone::Primary,
+        palette,
+        move || !restarting.get(),
+        move || restart.request_restart(),
+    )
+    .style(move |style| {
+        style.apply_if(!matches!(stage.get(), Stage::Installed(_)), |style| {
+            style.hide()
+        })
+    });
     let card = v_stack((
         title,
         status,
@@ -366,6 +442,7 @@ pub(crate) fn prompt_view(updates: Updates, palette: Palette) -> impl IntoView {
             empty().style(|style| style.flex_grow(1.0)),
             dismiss,
             update_button,
+            restart_button,
         ))
         .style(|style| rtl_row(style).width_full().items_center().gap(8.0)),
     ))
@@ -423,17 +500,29 @@ pub(crate) fn page(
     let install = updates.clone();
     let page_open = updates.clone();
     let toggle = updates.clone();
+    let restart = updates.clone();
+    let restarting = updates.restarting;
+    let restart_error = updates.restart_error;
     let status_card = v_stack((
         label(|| msg!(UpdateInstalledVersion, "version" => env!("CARGO_PKG_VERSION")))
             .style(move |style| style.font_size(15.0).color(palette.ink).selectable(false)),
         label(move || status_text(&stage.get()))
             .style(move |style| style.font_size(12.5).line_height(1.4).color(palette.muted)),
+        label(move || restart_error.get().unwrap_or_default()).style(move |style| {
+            style
+                .font_size(12.5)
+                .color(palette.muted)
+                .apply_if(restart_error.get().is_none(), |style| style.hide())
+        }),
         actions((
             action_button(
                 move || tr!(UpdateCheckNow),
                 IconButtonTone::Secondary,
                 palette,
-                move || !stage.get().busy() && !matches!(stage.get(), Stage::Unsupported(_)),
+                move || {
+                    !stage.get().busy()
+                        && !matches!(stage.get(), Stage::Unsupported(_) | Stage::Installed(_))
+                },
                 move || check.check(CheckMode::Manual),
             ),
             action_button(
@@ -461,6 +550,21 @@ pub(crate) fn page(
             )
             .style(move |style| {
                 style.apply_if(stage.get().release().is_none(), |style| style.hide())
+            }),
+            action_button(
+                move || tr!(UpdateRestart),
+                IconButtonTone::Primary,
+                palette,
+                move || !restarting.get(),
+                move || {
+                    restart.prompt.set(true);
+                    restart.request_restart();
+                },
+            )
+            .style(move |style| {
+                style.apply_if(!matches!(stage.get(), Stage::Installed(_)), |style| {
+                    style.hide()
+                })
             }),
         ))
         .style(|style| style.margin_top(4.0)),
@@ -584,6 +688,57 @@ fn failure(error: &UpdateError) -> i18n::Message {
         UpdateError::Checksum => msg!(UpdateChecksumFailed),
         UpdateError::Package(detail) => msg!(UpdateFailed, "error" => (*detail).to_owned()),
         UpdateError::Io(detail) => msg!(UpdateFailed, "error" => detail.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installed_update_requires_a_click_and_retains_restart_after_errors_or_later() {
+        let scope = floem::reactive::Scope::new();
+        floem::reactive::with_scope(scope, || {
+            let root = crate::test_support::workspace("notrum-update-restart");
+            std::fs::write(root.join("notrum"), b"fixture").unwrap();
+            std::fs::write(root.join("build.json"), b"{}").unwrap();
+            let global = Rc::new(RefCell::new(GlobalSettingsStore::load(Some(&root)).store));
+            let calls = Rc::new(Cell::new(0));
+            let invoked = calls.clone();
+            let mut updates = Updates::new(
+                global,
+                Rc::new(move |_| {
+                    invoked.set(invoked.get() + 1);
+                    Err(msg!(ResolveSaveFirst).into())
+                }),
+            );
+            updates.installation = Rc::new(Some(Installation::linux(root.join("notrum")).unwrap()));
+            updates.request_restart();
+            assert_eq!(calls.get(), 0);
+            updates.apply(
+                Message::Installed(Ok(Version::new(9, 9, 9))),
+                CheckMode::Manual,
+            );
+            assert!(updates.prompt.get_untracked());
+            assert_eq!(calls.get(), 0);
+            updates.check(CheckMode::Manual);
+            assert_eq!(
+                updates.stage.get_untracked(),
+                Stage::Installed(Version::new(9, 9, 9))
+            );
+            updates.request_restart();
+            assert_eq!(calls.get(), 1);
+            assert!(updates.restart_error.get_untracked().is_some());
+            assert!(!updates.restarting.get_untracked());
+            updates.dismiss();
+            assert!(!updates.prompt.get_untracked());
+            assert!(updates.global.borrow().updates().dismissed.is_none());
+            updates.request_restart();
+            assert_eq!(calls.get(), 2);
+            assert!(matches!(updates.stage.get_untracked(), Stage::Installed(_)));
+            std::fs::remove_dir_all(root).unwrap();
+        });
+        scope.dispose();
     }
 }
 

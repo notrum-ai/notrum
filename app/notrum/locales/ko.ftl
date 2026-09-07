@@ -1,6 +1,10 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+UpdateRestart = 다시 시작
+UpdateRestartWaiting = 저장 및 백그라운드 작업이 완료되기를 기다리는 중…
+UpdateRestartFailed = Notrum을 다시 시작할 수 없습니다: { $error }
+
 AiAssistant = AI 설정
 AiDescription = 모든 작업 공간에 적용됩니다.
 AiConnect = 연결

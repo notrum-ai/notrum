@@ -7951,7 +7951,70 @@ def updates_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.wait_for_visual_change(
         "the restart notice replacing the offer", offered, crop=UPDATES_PROMPT_CROP, timeout=20
     )
-    driver.close_app()
+    driver.wait_for_stable_frame("restart notice", crop=UPDATES_PROMPT_CROP, stable_for=0.4)
+    restart_notice = driver.capture("updates-restart")
+    left, right, row = accent_button(restart_notice, UPDATES_PROMPT_CROP)
+    # This fixture deliberately contains an invalid executable. A failed
+    # launch must keep the old window alive and the Restart action available.
+    driver.click_point((left + right) // 2, row)
+    driver.wait_for_visual_change(
+        "restart failure remaining in the open session", restart_notice,
+        crop=UPDATES_PROMPT_CROP, timeout=10,
+    )
+    if driver.app is None or driver.app.poll() is not None:
+        raise AcceptanceFailure("a failed restart closed the running session")
+    driver.wait_for_stable_frame("restart failure", crop=UPDATES_PROMPT_CROP, stable_for=0.4)
+    failure = driver.capture("updates-restart-failed")
+    left, right, row = accent_button(failure, UPDATES_PROMPT_CROP)
+    driver.click_point(left - 30, row)
+    driver.wait_for_visual_change("Later dismissing restart", failure, crop=UPDATES_PROMPT_CROP)
+    driver.click("settings")
+    driver.wait_for_stable_frame("settings after Later", stable_for=0.4)
+    driver.click_point(*UPDATES_SIDEBAR_ITEM)
+    driver.wait_for_stable_frame("installed updates page", stable_for=0.4)
+    page = driver.capture("updates-restart-settings")
+    left, right, row = accent_button(page, (280, 100, 700, 400))
+
+    # Retry with the real app in the same installed path. This exercises a
+    # real second process, its stdin handoff and workspace restoration without
+    # packaging the debug binary or launching anything from the workspace.
+    shutil.copy2(APP_BINARY, executable)
+    global_config = json.loads(config.read_text())
+    global_config.setdefault("updates", {})["automatic"] = False
+    config.write_text(json.dumps(global_config))
+    old_pid = driver.app.pid
+    driver.click_point((left + right) // 2, row)
+    if driver.app.wait(timeout=20) != 0:
+        raise AcceptanceFailure("old process failed during restart")
+    driver.app = None
+    driver.window_id = None
+    new_pid = None
+    try:
+        driver.window_id = driver._wait_for_window()
+        new_pid = int(driver.xdotool("getwindowpid", driver.window_id).stdout.strip())
+        if new_pid == old_pid:
+            raise AcceptanceFailure("Restart did not launch a new process")
+        if Path(f"/proc/{new_pid}/exe").resolve() != executable.resolve():
+            raise AcceptanceFailure("Restart launched a different executable")
+        wait_for_first_paint(driver.window_id, driver.environment)
+        driver.wait_for_stable_frame("restarted workspace", stable_for=0.4)
+        driver.capture("updates-restarted")
+        arguments = Path(f"/proc/{new_pid}/cmdline").read_bytes().split(b"\0")
+        if str(workspace).encode() not in arguments:
+            raise AcceptanceFailure("Restart did not preserve the current workspace")
+    finally:
+        if driver.window_id is not None:
+            driver.xdotool("windowclose", driver.window_id)
+            wait_until("restarted window closing", lambda: run_command(
+                ["xdotool", "search", "--onlyvisible", "--name", "^Notrum$"],
+                environment=driver.environment, check=False,
+            ).returncode == 1)
+            driver.window_id = None
+        if new_pid is not None:
+            wait_until("restarted process exiting", lambda: not Path(f"/proc/{new_pid}/exe").exists())
+    global_config["updates"]["automatic"] = True
+    config.write_text(json.dumps(global_config))
+    executable.write_bytes(b"updated executable\n")
 
     # A release published hours ago is held back by the startup check and is
     # still described on the settings page.

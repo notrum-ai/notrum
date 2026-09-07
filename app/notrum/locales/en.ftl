@@ -1,6 +1,10 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+UpdateRestart = Restart
+UpdateRestartWaiting = Waiting for saves and background operations to finish…
+UpdateRestartFailed = Could not restart Notrum: { $error }
+
 AiAssistant = AI settings
 AiDescription = Applies to all workspaces.
 AiConnect = Connection

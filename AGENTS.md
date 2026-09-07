@@ -24,8 +24,12 @@
   body as an authenticated age envelope. Body plaintext must not reach a
   persistent index, recovery record, cache, diagnostics, or temporary files.
 - Project-owned Rust must remain safe-only. Do not add `unsafe`, SQLite,
-  WebView/browser runtimes, JavaScript runtimes, or process execution. The only
-  network exceptions are the restricted `ureq` HTTP/HTTPS client in `notrum-rss`
+  WebView/browser runtimes, JavaScript runtimes, or general process execution.
+  The sole process-launch exception is `app/notrum/src/restart.rs`: after an
+  installed update and an explicit Restart click, it may launch only the
+  installed Notrum executable directly, with a bounded stdin handoff and no
+  shell. Save conflicts and security operations must block restart.
+  The only network exceptions are the restricted `ureq` HTTP/HTTPS client in `notrum-rss`
   (any host or port), the HTTPS client in `notrum-ai` (fixed OpenAI/Anthropic
   model catalog endpoints only) and the HTTPS client in `notrum-update` (release
   metadata and release assets on a fixed GitHub host allowlist, redirects
@@ -35,8 +39,8 @@
 - Updates verify every downloaded byte against the published checksum list and
   the package manifest, and replace only the application's own installation by
   renaming files in place. An update must never write into a workspace,
-  restart the application, or install a release that an automatic check found
-  less than 24 hours after publication.
+  restart the application without an explicit Restart click, or install a
+  release that an automatic check found less than 24 hours after publication.
 - AI settings are global. API keys belong only in the OS credential store via
   `notrum-platform`; config files contain opaque references and model aliases.
   Never send notes while checking a key or listing models. Connecting creates

@@ -58,6 +58,10 @@ def main() -> int:
                 fail(f"{relative}:{line_number}: project-owned unsafe token")
                 errors += 1
         for label, pattern in FORBIDDEN_RUST.items():
+            # Explicit update restart is the sole process-launch boundary.
+            # The module launches the installed Notrum executable directly.
+            if label == "process spawning" and relative == Path("app/notrum/src/restart.rs"):
+                continue
             # Only these test-only integration targets may run a loopback
             # fixture server: the RSS one exercises its client, the update one
             # proves that its client refuses every host but GitHub. Production
@@ -117,7 +121,7 @@ def main() -> int:
         "SOURCE_AUDIT "
         f"rust_files={len(rust_files)} manifests={len(manifests)} "
         "project_unsafe=0 rss_http_boundary=1 ai_https_boundary=1 update_https_boundary=1 "
-        "process_spawn=0 database=0 web_js=0"
+        "update_restart_boundary=1 database=0 web_js=0"
     )
     return 0
 

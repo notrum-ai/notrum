@@ -7,8 +7,8 @@
 //!
 //! Replacement is a sequence of renames inside the installation directory, so
 //! a failure at any point can be rolled back and the running program keeps the
-//! files it already opened. The project never spawns processes, so the caller
-//! has to ask the user to restart the application afterwards.
+//! files it already opened. The caller offers an explicit restart afterwards;
+//! installation never starts a process or closes the running application.
 
 use crate::UpdateError;
 use std::fs;

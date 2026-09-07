@@ -1,6 +1,10 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+UpdateRestart = পুনরায় চালু করুন
+UpdateRestartWaiting = সংরক্ষণ ও পটভূমির কাজ শেষ হওয়ার অপেক্ষা চলছে…
+UpdateRestartFailed = Notrum পুনরায় চালু করা যায়নি: { $error }
+
 AiAssistant = AI সেটিংস
 AiDescription = সব কর্মক্ষেত্রে প্রযোজ্য।
 AiConnect = সংযোগ

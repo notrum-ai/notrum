@@ -38,9 +38,14 @@ turn the startup check on or off.
 4. The installed application is replaced by renaming: the previous bundle or
    files move aside, the new ones take their place, and a failure at any step
    restores what was there before.
-5. **Notrum does not restart itself.** The project never starts processes, so
-   the update finishes with a notice asking you to restart the application. The
-   files left behind by the replacement are removed at the next start.
+5. A notice offers **Restart** or **Later**, including after a manual update.
+   Restart waits for saves and background operations to finish, preserves the
+   current workspace and open-file selection, and launches the updated Notrum
+   executable directly. The new window opens after the old window shuts down.
+   Save conflicts, security operations and launch errors leave Notrum open.
+   **Later** keeps the current session running; **Settings → Updates** retains
+   the Restart button. Files left behind by replacement are removed at the
+   next start.
 
 Only the application's own installation directory is written. Workspaces,
 notes and `.notrum/` are never touched by an update.

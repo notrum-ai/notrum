@@ -10,6 +10,7 @@ mod crash_dialog;
 mod editor_geometry;
 mod i18n;
 mod localized_input;
+mod restart;
 mod rss_card;
 mod settings;
 #[cfg(test)]
@@ -284,6 +285,11 @@ use crash_dialog::install as install_panic_logging;
 fn main() -> Result<(), LaunchError> {
     install_panic_logging();
     let launch = LaunchOptions::parse()?;
+    if launch.restart_after_update
+        && !restart::await_handoff().map_err(|error| LaunchError::Restart(error.to_string()))?
+    {
+        return Ok(());
+    }
     let home = notrum_platform::home_directory();
     let settings::GlobalSettingsLoad {
         store: mut global_store,
@@ -360,6 +366,9 @@ fn main() -> Result<(), LaunchError> {
     let settings_store = Rc::new(RefCell::new(store));
     let global_settings_store = Rc::new(RefCell::new(global_store));
     let final_settings_store = settings_store.clone();
+    let final_model = model.clone();
+    let pending_restart = Rc::new(RefCell::new(None::<restart::PendingRestart>));
+    let restart_request = pending_restart.clone();
     let app = Application::new();
     if let Some(delay) = launch.smoke_exit_after {
         exec_after(delay, |_| quit_app());
@@ -378,8 +387,11 @@ fn main() -> Result<(), LaunchError> {
                 global_settings_store,
                 settings,
                 startup_prompt,
-                smoke,
-                launch.external_paths,
+                UiLaunch {
+                    smoke,
+                    external_paths: launch.external_paths,
+                    restart_request,
+                },
             )
         },
         Some(
@@ -391,7 +403,26 @@ fn main() -> Result<(), LaunchError> {
     )
     .run();
     if let Err(error) = final_settings_store.borrow_mut().flush() {
+        if pending_restart.borrow().is_some() {
+            return Err(LaunchError::Restart(error.to_string()));
+        }
         eprintln!("Notrum: {error}");
+    }
+    if let Some(restart) = pending_restart.borrow_mut().take() {
+        // Stop the only long-lived cache writer before letting the new copy
+        // open the workspace. Saves and security workers finished before quit.
+        let mut model = final_model.borrow_mut();
+        let (finished, _) = mpsc::channel();
+        let _ = model.search_sender.send(SearchCommand::Shutdown(finished));
+        if let Some(worker) = model.search_worker.take() {
+            worker
+                .join()
+                .map_err(|_| LaunchError::Restart("search worker failed".to_owned()))?;
+        }
+        model.workspace.take();
+        restart
+            .complete()
+            .map_err(|error| LaunchError::Restart(error.to_string()))?;
     }
     Ok(())
 }
@@ -565,6 +596,7 @@ fn startup_candidate_state(
 struct LaunchOptions {
     workspace: Option<PathBuf>,
     external_paths: Vec<PathBuf>,
+    restart_after_update: bool,
     #[cfg(feature = "test-utils")]
     smoke_panic: bool,
     smoke_exit_after: Option<Duration>,
@@ -596,6 +628,7 @@ impl LaunchOptions {
     ) -> Result<Self, LaunchError> {
         let mut workspace = None;
         let mut external_paths = Vec::new();
+        let mut restart_after_update = false;
         let mut opening_files = false;
         let mut open_needs_value = false;
         let mut smoke_exit_after = None;
@@ -621,6 +654,13 @@ impl LaunchOptions {
             }
             if !positional_only && argument == "--" {
                 positional_only = true;
+            } else if !positional_only && argument == restart::HANDOFF_FLAG {
+                if restart_after_update {
+                    return Err(LaunchError::UnexpectedArgument(
+                        restart::HANDOFF_FLAG.to_owned(),
+                    ));
+                }
+                restart_after_update = true;
             } else if !positional_only && argument == "--workspace" {
                 if workspace.is_some() {
                     return Err(LaunchError::UnexpectedArgument("--workspace".to_owned()));
@@ -682,6 +722,7 @@ impl LaunchOptions {
         Ok(Self {
             workspace,
             external_paths,
+            restart_after_update,
             #[cfg(feature = "test-utils")]
             smoke_panic,
             smoke_exit_after,
@@ -694,6 +735,7 @@ impl LaunchOptions {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum LaunchError {
+    Restart(String),
     WorkingDirectory(String),
     MissingValue(&'static str),
     InvalidSmokeExit(String),
@@ -704,6 +746,7 @@ enum LaunchError {
 impl fmt::Display for LaunchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Restart(error) => write!(formatter, "cannot restart Notrum: {error}"),
             Self::WorkingDirectory(error) => {
                 write!(formatter, "cannot resolve launch directory: {error}")
             }
@@ -4753,15 +4796,25 @@ fn switch_workspace(
     Ok((prepared.canonical_path, diagnostic))
 }
 
+struct UiLaunch {
+    smoke: SmokeOptions,
+    external_paths: Vec<PathBuf>,
+    restart_request: Rc<RefCell<Option<restart::PendingRestart>>>,
+}
+
 fn app_view(
     model: Rc<RefCell<AppModel>>,
     settings_store: Rc<RefCell<UiSettingsStore>>,
     global_settings_store: Rc<RefCell<GlobalSettingsStore>>,
     initial_settings: UiSettings,
     startup_prompt: Option<StartupWorkspacePrompt>,
-    smoke: SmokeOptions,
-    external_paths: Vec<PathBuf>,
+    launch: UiLaunch,
 ) -> impl IntoView {
+    let UiLaunch {
+        smoke,
+        external_paths,
+        restart_request,
+    } = launch;
     let revision = create_rw_signal(0_u64);
     let sidebar_width = create_rw_signal(initial_settings.sidebar.width);
     let sidebar_state = create_rw_signal({
@@ -5114,7 +5167,47 @@ fn app_view(
             .font_size(14.0)
             .line_height(1.35)
     });
-    let updates = update::Updates::new(global_settings_store.clone());
+    let restart_model = model.clone();
+    let restart_settings = settings_store.clone();
+    let restart_action = Rc::new(move |installation: &notrum_update::Installation| {
+        if restart_request.borrow().is_some() {
+            return Ok(true);
+        }
+        let model = restart_model.borrow();
+        match workspace_switch_blocker(&model) {
+            Some(WorkspaceSwitchBlocker::Unsaved) => {
+                drop(model);
+                schedule_autosave(restart_model.clone(), revision);
+                return Ok(false);
+            }
+            Some(WorkspaceSwitchBlocker::Persistence) => return Ok(false),
+            Some(blocker) => return Err(blocker.message().into()),
+            None => {}
+        }
+        if !model.rss_refreshing.is_empty() || model.pending_note_creation.is_some() {
+            return Ok(false);
+        }
+        let workspace = model.workspace.as_ref().map(WorkspaceSession::root);
+        if workspace.is_some() {
+            let snapshot = ui_settings_snapshot(
+                &model,
+                window_size.get_untracked(),
+                sidebar_width.get_untracked(),
+                &sidebar_state.get_untracked(),
+            );
+            restart_settings.borrow_mut().stage(snapshot);
+            restart_settings.borrow_mut().flush().map_err(|error| {
+                UiText::from(msg!(SaveSettingsFailed, "error" => error.to_string()))
+            })?;
+        }
+        let pending = restart::PendingRestart::start(installation, workspace).map_err(|error| {
+            UiText::from(msg!(UpdateRestartFailed, "error" => error.to_string()))
+        })?;
+        *restart_request.borrow_mut() = Some(pending);
+        quit_app();
+        Ok(true)
+    });
+    let updates = update::Updates::new(global_settings_store.clone(), restart_action);
     updates.start();
     let settings_overlay = settings_page_view(
         settings_page,
@@ -5131,8 +5224,8 @@ fn app_view(
     let startup_overlay = startup_workspace_modal(startup_workspace, workspace_switch, palette);
     let root = stack((
         shell,
-        update::prompt_view(updates, palette),
         settings_overlay,
+        update::prompt_view(updates, palette),
         password_change_recovery_modal(model.clone(), revision, palette),
         integrity_modal(model.clone(), revision, palette),
         password_modal(model.clone(), security.clone(), revision, palette),

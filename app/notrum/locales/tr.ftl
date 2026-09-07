@@ -1,6 +1,10 @@
 # Copyright 2026 Evgeniy Udodov
 # SPDX-License-Identifier: GPL-3.0-only
 
+UpdateRestart = Yeniden başlat
+UpdateRestartWaiting = Kaydetme ve arka plan işlemlerinin tamamlanması bekleniyor…
+UpdateRestartFailed = Notrum yeniden başlatılamadı: { $error }
+
 AiAssistant = Yapay zekâ ayarları
 AiDescription = Tüm çalışma alanlarına uygulanır.
 AiConnect = Bağlantı

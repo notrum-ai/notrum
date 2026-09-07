@@ -265,8 +265,8 @@ pub fn check(
 
 /// Downloads, verifies and installs a release in place.
 ///
-/// The caller must restart the application afterwards: this project never
-/// spawns processes, so the running program cannot relaunch itself.
+/// The caller offers an explicit restart afterwards; installation itself
+/// never starts a process or closes the running application.
 pub fn install(
     transport: &dyn UpdateTransport,
     installation: &Installation,

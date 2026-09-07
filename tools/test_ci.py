@@ -288,6 +288,160 @@ class CITests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ui_acceptance.failure_diagnostics("search", "SYNTHETIC_SECRET", RuntimeError())
 
+    def test_updates_accent_button_uses_one_crop_and_distinguishes_absence(self):
+        region = (10, 10, 100, 60)
+        pixels = {(x, y): 255 for x in range(10, 110) for y in range(10, 70)}
+        self.assertIsNone(ui_acceptance.find_accent_button(pixels, region))
+        for x in range(24, 85):
+            for y in range(30, 61):
+                pixels[x, y] = 90
+        # White text inside the filled surface must not move the click outside it.
+        for x in range(40, 70):
+            for y in range(40, 50):
+                pixels[x, y] = 255
+        with patch.object(ui_acceptance, "crop_luminances", return_value=pixels) as decode:
+            self.assertEqual(ui_acceptance.accent_button(Path("frame"), region), (24, 84, 45))
+        decode.assert_called_once_with(Path("frame"), region)
+
+    def run_updates_restart_probe(self, mode):
+        clock = [0.0]
+        clicks = []
+        hovered = [None]
+        frames = []
+        driver = Mock(spec=ui_acceptance.WindowDriver)
+        driver.app = Mock()
+        driver.window_id = "123"
+        driver.scenario = "updates"
+        driver.set_stage.side_effect = lambda stage: ui_acceptance.WindowDriver.set_stage(driver, stage)
+
+        def capture(_name):
+            clock[0] += 0.02
+            if mode == "capture/error":
+                raise ui_acceptance.AcceptanceFailure("capture failed")
+            point = None if clock[0] < 0.3 or mode == "missing" else (
+                (400, 500, 200) if clock[0] < 0.6 else (400, 500, 240)
+            )
+            reaction = bool(clicks) and mode in ("prompt", "settings", "hung", "nonzero")
+            frame = Mock(button=point, prompt=reaction and mode != "settings",
+                         settings=(point, reaction and mode == "settings",
+                                   clock[0] if mode == "changing" else 0))
+            frames.append(frame)
+            return frame
+
+        def command(*args):
+            if args[0] == "mousemove":
+                hovered[0] = (int(args[-2]), int(args[-1]))
+            elif args == ("click", "1"):
+                clicks.append((clock[0], hovered[0]))
+            else:
+                self.fail(f"unexpected command: {args}")
+
+        def poll():
+            if mode == "early/exit":
+                return 0
+            if len(clicks) >= (2 if mode == "lost/first" else 1) and mode in ("fast", "slow/decode", "lost/first"):
+                return 0
+            return None
+
+        def wait(*, timeout):
+            self.assertIn(mode, ("prompt", "settings", "hung", "nonzero"))
+            if mode == "hung":
+                clock[0] += timeout
+                raise subprocess.TimeoutExpired(["SYNTHETIC_SECRET"], timeout)
+            clock[0] += 0.2
+            return 7 if mode == "nonzero" else 0
+
+        def advance(seconds):
+            clock[0] += seconds
+
+        def decode(frame, _region):
+            if mode == "slow/decode":
+                clock[0] += 3.0
+            return frame
+
+        def difference(first, second, *, crop):
+            attribute = "prompt" if crop == ui_acceptance.UPDATES_PROMPT_CROP else "settings"
+            return 100 if getattr(first, attribute) != getattr(second, attribute) else 0
+
+        driver.capture.side_effect = capture
+        driver.xdotool.side_effect = command
+        driver.app.poll.side_effect = poll
+        driver.app.wait.side_effect = wait
+        failure = None
+        with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(ui_acceptance.time, "sleep", side_effect=advance), \
+                patch.object(ui_acceptance, "crop_luminances", side_effect=decode), \
+                patch.object(ui_acceptance, "find_accent_button", side_effect=lambda frame, _region: frame.button), \
+                patch.object(ui_acceptance, "image_difference", side_effect=difference):
+            try:
+                ui_acceptance.restart_from_update_settings(driver)
+            except (ui_acceptance.AcceptanceFailure, subprocess.TimeoutExpired) as error:
+                failure = error
+        for frame in frames:
+            frame.unlink.assert_called_with(missing_ok=True)
+        return driver, clicks, clock[0], failure
+
+    def test_updates_restart_waits_for_stable_hovered_button(self):
+        for mode in ("fast", "slow/decode"):
+            with self.subTest(mode=mode):
+                driver, clicks, _, failure = self.run_updates_restart_probe(mode)
+                self.assertIsNone(failure)
+                self.assertEqual(len(clicks), 1)
+                self.assertEqual(clicks[0][1], (450, 240))
+                self.assertGreaterEqual(clicks[0][0], 1.0)
+                self.assertEqual(driver.stage, "restart/exit")
+                driver.app.wait.assert_not_called()
+        for mode in ("missing", "changing"):
+            with self.subTest(mode=mode):
+                driver, clicks, elapsed, failure = self.run_updates_restart_probe(mode)
+                self.assertIsInstance(failure, ui_acceptance.AcceptanceFailure)
+                self.assertEqual(clicks, [])
+                self.assertEqual(driver.stage, "restart/settings")
+                self.assertGreaterEqual(elapsed, 10)
+                self.assertLess(elapsed, 10.1)
+
+    def test_updates_restart_retries_only_before_reaction(self):
+        for mode, count in (("lost/first", 2), ("prompt", 1), ("settings", 1)):
+            with self.subTest(mode=mode):
+                driver, clicks, _, failure = self.run_updates_restart_probe(mode)
+                self.assertIsNone(failure)
+                self.assertEqual(len(clicks), count)
+                self.assertEqual(driver.stage, "restart/exit")
+                if count == 2:
+                    self.assertGreaterEqual(clicks[1][0] - clicks[0][0], 1.0)
+                else:
+                    self.assertLess(driver.app.wait.call_args.kwargs["timeout"], 20)
+
+    def test_updates_restart_failures_keep_click_limit_and_deadline(self):
+        for mode, count, stage in (("lost/all", 3, "restart/click"),
+                                   ("hung", 1, "restart/exit"),
+                                   ("nonzero", 1, "restart/exit"),
+                                   ("early/exit", 0, "restart/settings"),
+                                   ("capture/error", 0, "restart/settings")):
+            with self.subTest(mode=mode):
+                driver, clicks, elapsed, failure = self.run_updates_restart_probe(mode)
+                self.assertIsNotNone(failure)
+                self.assertEqual(len(clicks), count)
+                self.assertEqual(driver.stage, stage)
+                if mode in ("lost/all", "hung"):
+                    self.assertGreaterEqual(elapsed - clicks[0][0], 20)
+                    self.assertLess(elapsed - clicks[0][0], 20.1)
+
+    def test_updates_diagnostic_stages_preserve_only_known_context(self):
+        for stage in ("restart/settings", "restart/click", "restart/exit",
+                      "restart/window", "restart/validation"):
+            error = subprocess.TimeoutExpired(["SYNTHETIC_SECRET"], 20)
+            lines = ui_acceptance.failure_diagnostics("updates", stage, error)
+            self.assertIn(f"stage={stage}", lines[0])
+            for line in lines:
+                self.assertEqual(ci.safe_line(line), line)
+                self.assertEqual(ci.safe_line(ci.safe_line(line)), line)
+                self.assertNotIn("SYNTHETIC_SECRET", line)
+                self.assertIsNone(ci.safe_line(line + " detail=SYNTHETIC_SECRET"))
+                self.assertIsNone(ci.safe_line(line.replace("scenario=updates", "scenario=ai")))
+        with self.assertRaises(ValueError):
+            ui_acceptance.failure_diagnostics("updates", "SYNTHETIC_SECRET", RuntimeError())
+
     def test_protection_waits_for_delayed_worker_but_requires_original_path(self):
         for result in ("delayed", "missing", "wrong_path"):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as directory:

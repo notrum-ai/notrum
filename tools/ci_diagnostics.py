@@ -18,6 +18,10 @@ UI_SCENARIOS = frozenset({
     "updates",
 })
 UI_COMMON_STAGES = frozenset({"startup", "scenario", "capture", "cleanup", "artifacts"})
+UI_UPDATES_STAGES = frozenset({
+    "restart/settings", "restart/click", "restart/exit", "restart/window",
+    "restart/validation",
+})
 UI_SEARCH_STAGES = frozenset({
     "initial/index", "query/results", "selection/open", "selection/save",
     "external/index", "rebuild/index", "final/validation",
@@ -154,6 +158,7 @@ def ui_diagnostic_context_valid(scenario, stage):
         stage in UI_COMMON_STAGES
         or (scenario == "password_change" and stage in UI_PASSWORD_CHANGE_STAGES)
         or (scenario == "search" and stage in UI_SEARCH_STAGES)
+        or (scenario == "updates" and stage in UI_UPDATES_STAGES)
     )
 
 

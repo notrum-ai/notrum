@@ -7827,26 +7827,122 @@ UPDATES_PROMPT_LEFT = SCREEN_WIDTH - 348
 UPDATES_ACCENT_LUMINANCE = 150.0
 UPDATES_BUTTON_MIN_HEIGHT = 20
 UPDATES_OFFERED_VERSION = "9.9.9"
+UPDATES_SETTINGS_CROP = (280, 100, 700, 400)
 
 
 def accent_button(image: Path, region: tuple[int, int, int, int]) -> tuple[int, int, int]:
     """Left edge, right edge and centre row of the filled button in a region."""
+    button = find_accent_button(crop_luminances(image, region), region)
+    if button is None:
+        raise AcceptanceFailure("no filled update action is visible")
+    return button
+
+
+def find_accent_button(
+    luminances: dict[tuple[int, int], float], region: tuple[int, int, int, int]
+) -> tuple[int, int, int] | None:
+    """Inspect one decoded crop; absence is distinct from a capture/decode error."""
     left, top, width, height = region
     columns: list[tuple[int, tuple[int, int]]] = []
     for x in range(left, left + width, 2):
         runs = [
             run
-            for run in shaded_row_runs(
-                image, x=x, y=top, height=height, max_luminance=UPDATES_ACCENT_LUMINANCE
-            )
+            for run in column_runs({
+                row for row in range(top, top + height)
+                if luminances[(x, row)] <= UPDATES_ACCENT_LUMINANCE
+            }, merge_gap=0)
             if run[1] - run[0] >= UPDATES_BUTTON_MIN_HEIGHT
         ]
         if runs:
             columns.append((x, max(runs, key=lambda run: run[1] - run[0])))
     if not columns:
-        raise AcceptanceFailure("no filled update action is visible")
+        return None
     start, end = columns[-1][1]
     return columns[0][0], columns[-1][0], (start + end) // 2
+
+
+def restart_from_update_settings(driver: WindowDriver) -> None:
+    """Retry only an unacknowledged click, within one process-exit deadline."""
+    if driver.app is None or driver.window_id is None:
+        raise AcceptanceFailure("restart requires the running application")
+    driver.set_stage("restart/settings")
+    deadline = time.monotonic() + 10.0
+    clicks = 0
+    last_click = 0.0
+    button = None
+    hovered = None
+    stable_since = None
+    previous = None
+    baseline = None
+    current = None
+    try:
+        while time.monotonic() < deadline:
+            code = driver.app.poll()
+            if code is not None:
+                if clicks == 0 or code != 0:
+                    raise AcceptanceFailure("old process failed during restart")
+                driver.set_stage("restart/exit")
+                return
+            current = driver.capture("updates-restart-observe")
+            if baseline is not None and any(
+                image_difference(baseline, current, crop=region) >= 50
+                for region in (UPDATES_PROMPT_CROP, UPDATES_SETTINGS_CROP)
+            ):
+                # The settings action opens the prompt and disables Restart.
+                # Any reaction stops retries, but only process exit is success.
+                driver.set_stage("restart/exit")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if driver.app.wait(timeout=remaining) != 0:
+                    raise AcceptanceFailure("old process failed during restart")
+                return
+            if clicks < 3 and (clicks == 0 or time.monotonic() - last_click >= 1.0):
+                unchanged = previous is not None and image_difference(
+                    previous, current, crop=UPDATES_SETTINGS_CROP
+                ) == 0
+                # Decoding the large crop is expensive on a loaded runner.
+                # Identical pixels retain the already verified button geometry.
+                if not unchanged:
+                    button = find_accent_button(
+                        crop_luminances(current, UPDATES_SETTINGS_CROP), UPDATES_SETTINGS_CROP
+                    )
+                point = None if button is None else ((button[0] + button[1]) // 2, button[2])
+                if point is None:
+                    stable_since = None
+                elif point != hovered:
+                    driver.xdotool("mousemove", "--sync", "--window", driver.window_id,
+                                   str(point[0]), str(point[1]))
+                    hovered = point
+                    stable_since = None
+                elif not unchanged:
+                    stable_since = None
+                elif stable_since is None:
+                    stable_since = time.monotonic()
+                elif time.monotonic() - stable_since >= 0.4:
+                    now = time.monotonic()
+                    if now >= deadline:
+                        break
+                    if driver.app.poll() is not None:
+                        continue
+                    driver.set_stage("restart/click")
+                    if clicks == 0:
+                        deadline = now + 20.0
+                        baseline = current
+                    clicks += 1
+                    last_click = now
+                    # The pointer is already over the freshly verified button.
+                    driver.xdotool("click", "1")
+                    stable_since = None
+            if previous is not None and previous is not baseline:
+                previous.unlink(missing_ok=True)
+            previous = current
+            time.sleep(0.05)
+        raise AcceptanceFailure("timed out restarting from update settings")
+    finally:
+        for frame in (previous, baseline, current):
+            if frame is not None:
+                frame.unlink(missing_ok=True)
 
 
 def release_fixture(directory: Path, *, published_at: str) -> None:
@@ -7983,13 +8079,12 @@ def updates_scenario(driver: WindowDriver, workspace: Path) -> None:
     global_config.setdefault("updates", {})["automatic"] = False
     config.write_text(json.dumps(global_config))
     old_pid = driver.app.pid
-    driver.click_point((left + right) // 2, row)
-    if driver.app.wait(timeout=20) != 0:
-        raise AcceptanceFailure("old process failed during restart")
+    restart_from_update_settings(driver)
     driver.app = None
     driver.window_id = None
     new_pid = None
     try:
+        driver.set_stage("restart/window")
         driver.window_id = driver._wait_for_window()
         new_pid = int(driver.xdotool("getwindowpid", driver.window_id).stdout.strip())
         if new_pid == old_pid:
@@ -7999,6 +8094,7 @@ def updates_scenario(driver: WindowDriver, workspace: Path) -> None:
         wait_for_first_paint(driver.window_id, driver.environment)
         driver.wait_for_stable_frame("restarted workspace", stable_for=0.4)
         driver.capture("updates-restarted")
+        driver.set_stage("restart/validation")
         arguments = Path(f"/proc/{new_pid}/cmdline").read_bytes().split(b"\0")
         if str(workspace).encode() not in arguments:
             raise AcceptanceFailure("Restart did not preserve the current workspace")
@@ -8012,6 +8108,7 @@ def updates_scenario(driver: WindowDriver, workspace: Path) -> None:
             driver.window_id = None
         if new_pid is not None:
             wait_until("restarted process exiting", lambda: not Path(f"/proc/{new_pid}/exe").exists())
+    driver.set_stage("scenario")
     global_config["updates"]["automatic"] = True
     config.write_text(json.dumps(global_config))
     executable.write_bytes(b"updated executable\n")

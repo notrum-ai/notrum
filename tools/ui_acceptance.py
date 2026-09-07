@@ -7076,6 +7076,24 @@ def cached_rss_workspace(
     return workspace, config_path, cache
 
 
+def wait_for_rss_card_at_top(driver: WindowDriver, *, stable_for: float = 0.0) -> None:
+    # Only the selected card has this accent border, 20px below the fixed
+    # 56px toolbar. An open edit bar shifts it down, even in a stable frame.
+    stable_since: float | None = None
+
+    def aligned() -> bool:
+        nonlocal stable_since
+        if driver.window_color_pixel_count((54, 94, 130), crop=(320, 75, 600, 3)) < 500:
+            stable_since = None
+            return False
+        now = time.monotonic()
+        if stable_since is None:
+            stable_since = now
+        return now - stable_since >= stable_for
+
+    wait_until("selected RSS card is top-aligned below the closed toolbar", aligned)
+
+
 def rss_keyboard_scenario(driver: WindowDriver, workspace: Path) -> None:
     del workspace
     workspace, config_path, cache = cached_rss_workspace(driver, "rss-keyboard", [
@@ -7098,12 +7116,7 @@ def rss_keyboard_scenario(driver: WindowDriver, workspace: Path) -> None:
         wait_until(f"RSS read entries {sorted(expected)}", lambda: read_ids() == expected)
 
     def expect_card_at_top() -> None:
-        # Only the selected card has this accent border. Its top edge must
-        # stay 20px below the fixed 56px toolbar, including at the feed's end.
-        wait_until("selected RSS card is top-aligned", lambda: near_color_pixel_count(
-            driver.capture("rss-top-alignment"), (54, 94, 130),
-            crop=(320, 75, 600, 3),
-        ) >= 500)
+        wait_for_rss_card_at_top(driver)
 
     driver.start_app(workspace, "sidebar")
     counts = {"favorites": 0, "all": 1, "trash": 1}
@@ -7156,10 +7169,24 @@ def rss_keyboard_scenario(driver: WindowDriver, workspace: Path) -> None:
     )["subscriptions"][0]["title_override"] == "jk")
     expect_read([0, 1, 2])
     # Config persistence precedes the toolbar closing and restoring feed focus.
-    driver.wait_for_stable_frame("RSS rename closes and restores focus", crop=EDITOR_CROP, stable_for=0.3)
+    wait_for_rss_card_at_top(driver, stable_for=0.3)
     driver.key("j")
     expect_read([0, 1, 2, 3])
-    for index in range(4, 12):
+    expect_card_at_top()
+    # Escape discards J/K text and returns focus without a click into the feed.
+    driver.click_point(1052, 28)
+    driver.click_point(520, 80)
+    driver.key("ctrl+a")
+    driver.type_text("kj")
+    driver.key("Escape")
+    wait_for_rss_card_at_top(driver, stable_for=0.3)
+    expect_read([0, 1, 2, 3])
+    if json.loads(config_path.read_text(encoding="utf-8"))["subscriptions"][0]["title_override"] != "jk":
+        raise AcceptanceFailure("Escape saved the RSS rename draft")
+    driver.key("j")
+    expect_read([0, 1, 2, 3, 4])
+    expect_card_at_top()
+    for index in range(5, 12):
         driver.key("j")
         expect_read(range(index + 1))
         expect_card_at_top()

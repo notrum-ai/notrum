@@ -7,6 +7,7 @@
 use crate::i18n::{self, Key};
 use floem::context::{ComputeLayoutCx, EventCx, LayoutCx, PaintCx, StyleCx, UpdateCx};
 use floem::event::{Event, EventPropagation};
+use floem::keyboard::{Key as LogicalKey, NamedKey};
 use floem::kurbo::{Point, Rect};
 use floem::reactive::{RwSignal, SignalGet, create_effect};
 use floem::style::{FontFamily, FontSize, TextColor};
@@ -22,6 +23,7 @@ pub(crate) struct LocalizedInput {
     hint: Key,
     attrs: AttrsList,
     layout: TextLayout,
+    on_escape: Option<Box<dyn Fn()>>,
 }
 
 impl LocalizedInput {
@@ -38,7 +40,13 @@ impl LocalizedInput {
             hint,
             attrs: AttrsList::new(Attrs::new()),
             layout: TextLayout::new(),
+            on_escape: None,
         }
+    }
+
+    pub(crate) fn on_escape(mut self, action: impl Fn() + 'static) -> Self {
+        self.on_escape = Some(Box::new(action));
+        self
     }
 }
 
@@ -53,6 +61,14 @@ impl View for LocalizedInput {
         self.input.update(cx, state);
     }
     fn event_before_children(&mut self, cx: &mut EventCx, event: &Event) -> EventPropagation {
+        // Native TextInput consumes Escape to clear focus before decorators
+        // run. Forms may instead close themselves and choose the next focus.
+        if matches!(event, Event::KeyDown(key) if key.key.logical_key == LogicalKey::Named(NamedKey::Escape))
+            && let Some(action) = &self.on_escape
+        {
+            action();
+            return EventPropagation::Stop;
+        }
         self.input.event_before_children(cx, event)
     }
     fn style_pass(&mut self, cx: &mut StyleCx<'_>) {

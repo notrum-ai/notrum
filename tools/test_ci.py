@@ -130,6 +130,46 @@ class CITests(unittest.TestCase):
                             driver.wait_for_stable_frame("editor", **kwargs)
                         self.assertGreaterEqual(clock[0], 10)
 
+    def test_rss_toolbar_wait_requires_continuous_closed_card_alignment(self):
+        for state in ("closed", "delayed", "reopened", "open", "unstable"):
+            with self.subTest(state=state):
+                clock = [0.0]
+                driver = Mock(spec=ui_acceptance.WindowDriver)
+
+                def advance(seconds):
+                    clock[0] += seconds
+
+                def count(*_args, **_kwargs):
+                    now = clock[0]
+                    closed = (
+                        state == "closed"
+                        or state == "delayed" and now >= 0.6
+                        or state == "reopened" and (now < 0.15 or now >= 0.6)
+                        or state == "unstable" and int(now / 0.15) % 2 == 0
+                    )
+                    return 600 if closed else 0
+
+                driver.window_color_pixel_count.side_effect = count
+                with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(ui_acceptance.time, "sleep", side_effect=advance):
+                    if state in {"open", "unstable"}:
+                        with self.assertRaises(ui_acceptance.AcceptanceFailure):
+                            ui_acceptance.wait_for_rss_card_at_top(driver, stable_for=0.3)
+                        self.assertGreaterEqual(clock[0], ui_acceptance.DEFAULT_TIMEOUT_SECONDS)
+                        self.assertLess(clock[0], ui_acceptance.DEFAULT_TIMEOUT_SECONDS + 0.1)
+                    else:
+                        ui_acceptance.wait_for_rss_card_at_top(driver, stable_for=0.3)
+                        earliest = 0.3 if state == "closed" else 0.9
+                        self.assertGreaterEqual(clock[0], earliest)
+                        self.assertLess(clock[0], earliest + 0.1)
+                for call in driver.window_color_pixel_count.call_args_list:
+                    self.assertEqual(call.args, ((54, 94, 130),))
+                    self.assertEqual(call.kwargs, {"crop": (320, 75, 600, 3)})
+                driver.key.assert_not_called()
+                driver.click_point.assert_not_called()
+                driver.wait_for_stable_frame.assert_not_called()
+                driver.capture.assert_not_called()
+
     def test_private_search_wait_never_captures_note_pixels_to_disk(self):
         for state in ("delayed", "empty", "changing"):
             with self.subTest(state=state):

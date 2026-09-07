@@ -12095,22 +12095,26 @@ fn rss_panel(
         .keyboard_navigable()
         .into_any();
     let focus_id = panel.id();
-    create_effect(move |_| {
+    create_effect(move |mounted: Option<()>| {
         feed_focus_request.get();
         let editing =
             signals.rename.open.get() || signals.categories.open.get() || signals.ai_open.get();
         if !editing {
-            // The sidebar/form still owns focus during activation. Wait until
-            // the feed is mounted (or the clicked card has been replaced),
-            // then focus the stable panel instead of a now-hidden text field.
-            exec_after(Duration::from_millis(10), move |_| {
-                if signals.rename.open.try_get_untracked() == Some(false)
-                    && signals.categories.open.try_get_untracked() == Some(false)
-                    && signals.ai_open.try_get_untracked() == Some(false)
-                {
-                    focus_id.request_focus();
-                }
-            });
+            if mounted.is_some() {
+                // The panel survives form closure and card replacement. Queue
+                // focus now so the hidden field cannot consume the next key.
+                focus_id.request_focus();
+            } else {
+                // Only initial activation needs to wait for the panel to mount.
+                exec_after(Duration::from_millis(10), move |_| {
+                    if signals.rename.open.try_get_untracked() == Some(false)
+                        && signals.categories.open.try_get_untracked() == Some(false)
+                        && signals.ai_open.try_get_untracked() == Some(false)
+                    {
+                        focus_id.request_focus();
+                    }
+                });
+            }
         }
     });
     panel
@@ -15304,30 +15308,36 @@ fn toolbar_edit_bar(
     let submit: Rc<dyn Fn()> = Rc::new(on_submit);
     let key_submit = submit.clone();
     let input = localized_input::LocalizedInput::new(bar.value, bar.placeholder)
+        .on_escape(move || bar.open.set(false))
         .on_event(EventListener::KeyDown, move |event| {
             let Event::KeyDown(key) = event else {
                 return EventPropagation::Continue;
             };
-            match &key.key.logical_key {
-                Key::Named(NamedKey::Enter) => {
-                    key_submit();
-                    EventPropagation::Stop
-                }
-                Key::Named(NamedKey::Escape) => {
-                    bar.open.set(false);
-                    EventPropagation::Stop
-                }
-                _ => EventPropagation::Continue,
+            if key.key.logical_key == Key::Named(NamedKey::Enter) {
+                key_submit();
+                EventPropagation::Stop
+            } else {
+                EventPropagation::Continue
             }
         })
         .style(move |style| form_field_style(style, palette, false).width(bar.field_width));
     // Opening the bar hands the field the caret, so the control that opened it
     // does not have to be followed by a click into the field.
     let input_id = input.id();
+    let focus_generation = create_rw_signal(0_u64);
     create_effect(move |_| {
-        if bar.open.get() {
+        let open = bar.open.get();
+        let generation = focus_generation.get_untracked().wrapping_add(1);
+        focus_generation.set(generation);
+        if open {
             exec_after(Duration::from_millis(10), move |_| {
-                input_id.request_focus();
+                // Closing, reopening or disposing the bar invalidates this
+                // request, even if its timer was already queued by Floem.
+                if bar.open.try_get_untracked() == Some(true)
+                    && focus_generation.try_get_untracked() == Some(generation)
+                {
+                    input_id.request_focus();
+                }
             });
         }
     });

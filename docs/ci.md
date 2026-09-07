@@ -13,17 +13,22 @@ A newer CI run cancels the older run for the same PR or branch.
 
 | Job | Runner | Command and scope | Timeout |
 | --- | --- | --- | --- |
-| Linux | `ubuntu-24.04`, x64 | Build the Compose toolchain; `make ci-linux` executes `make check-linux` (tests, UI, audits and Linux/macOS checks) and packages Linux | 120 min |
+| Linux | `ubuntu-24.04`, x64 | Build the Compose toolchain; `make ci-linux` executes `make check-linux` (tests, audits and Linux/macOS checks) and packages Linux | 120 min |
+| UI acceptance | `ubuntu-24.04`, x64 | `make ci-ui` builds the application and runs `make ui-check` (UI smoke tests and click-driven acceptance scenarios) | 90 min |
 | Windows build | `ubuntu-24.04`, x64 | `make ci-windows-build` cross-compiles the Windows application and test kit, then packages both | 90 min |
 | macOS | `macos-15`, Apple Silicon | `make NATIVE=1 ci-macos` builds with pinned Rust and executes the native launch and Finder smoke checks | 90 min |
 | Windows | `windows-2025`, x64 | Verify and unpack the Windows build job's test package from this run; execute its existing PowerShell test runner and native smoke checks | 30 min |
 
-Linux, macOS and the Windows cross-build start independently. Native Windows tests
-wait only for the Windows build job; Linux UI failures do not block them.
+Linux checks, UI acceptance, macOS and the Windows cross-build start independently.
+UI acceptance has no job dependencies or downloaded build artifacts: it waits
+only for an available runner, its own toolchain setup and application build.
+Native Windows tests wait only for the Windows build job; Linux UI failures do
+not block them.
 The local `make check` still includes the full gate. Its Windows build targets
 are grouped under `check-windows-build`, while `check-linux` runs the remaining
-checks. CI runs both groups on separate runners without duplicating the Windows
-compilation. `ci-package-linux` packages Linux only; `ci-package-windows` packages
+non-UI checks. CI runs these groups and `ui-check` on separate runners without
+duplicating the acceptance suite or Windows compilation. The UI runner compiles
+its own debug application. `ci-package-linux` packages Linux only; `ci-package-windows` packages
 the Windows application and test kit with the same source SHA.
 Tests remain in Makefile and the shared test scripts, including desktop file
 opening, multiple processes, localization, crash reporting, clipboard, recovery
@@ -68,7 +73,7 @@ Intel Python installation running under Rosetta cannot change the build architec
 
 ## Caches and runner storage
 
-Both Ubuntu jobs set `COMPOSE_FILE=compose.yaml:compose.ci.yaml`. Buildx Bake
+All three Ubuntu jobs set `COMPOSE_FILE=compose.yaml:compose.ci.yaml`. Buildx Bake
 reads those same Compose files, loads `notrum-toolchain:ci`, and restores/exports
 Docker layers through the GitHub Actions cache backend. No image is pushed to a
 registry. The local Compose configuration and its named volumes are unchanged.
@@ -81,8 +86,8 @@ disposable runner; macOS target remains on that runner's local filesystem.
 Before cache archiving, Linux returns ownership of `.ci/cargo` to the runner.
 Some published crates contain owner-only source files; extraction by Docker's
 root user otherwise makes those files unreadable to the host cache action.
-The Windows build job performs the same ownership cleanup and uses a separate
-Cargo cache key, with Linux sources as a fallback. The jobs share the Docker
+The UI acceptance and Windows build jobs perform the same ownership cleanup and
+use separate Cargo cache keys, with Linux sources as a fallback. The jobs share the Docker
 toolchain layer cache but have separate working directories and target volumes.
 
 Only CI disables incremental compilation and debug symbols for dev/test via
@@ -100,7 +105,7 @@ Artifacts are retained for **one day**, the minimum supported retention period:
 - `notrum-windows`: portable application ZIP, without the test executables.
 - `windows-test-package`: separate ZIP containing that Windows application,
   runtime DLLs and the compiled test kit for the dependent job in the same run.
-- `reports-linux`, `reports-macos`, `reports-windows-build`, `reports-windows`: status and cleaned diagnostics,
+- `reports-linux`, `reports-ui`, `reports-macos`, `reports-windows-build`, `reports-windows`: status and cleaned diagnostics,
   uploaded also when checks fail or a run is cancelled after checkout.
 
 Build archives include the project license, existing runtime notices where

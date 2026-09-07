@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import contextlib
+from collections import Counter
 import io
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import subprocess
 import tarfile
@@ -24,6 +26,38 @@ SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    def test_split_ci_gates_preserve_all_local_checks_without_duplicates(self):
+        def commands(target):
+            result = subprocess.run(
+                ["make", "--dry-run", "--no-print-directory", target, "MAKE=:", "RUN=:", "GIT=:"],
+                cwd=ci.ROOT, check=True, text=True, capture_output=True,
+            )
+            return Counter(result.stdout.splitlines())
+
+        linux = commands("check-linux")
+        ui = commands("ui-check")
+        windows = commands("check-windows-build")
+        self.assertEqual(commands("check"), linux + ui + windows)
+        self.assertTrue(any("tools/ui_acceptance.py" in line for line in ui))
+        self.assertTrue(any("tools/desktop_smoke.py" in line for line in ui))
+        self.assertFalse(any("tools/ui_acceptance.py" in line or "tools/desktop_smoke.py" in line
+                             for line in linux))
+        self.assertFalse(any("cargo test" in line or "cargo clippy" in line or "cargo audit" in line
+                             for line in ui))
+
+    def test_ui_workflow_job_starts_independently_and_keeps_failure_reports(self):
+        workflow = (ci.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)",
+                               workflow.split("\njobs:\n", 1)[1], re.MULTILINE | re.DOTALL))
+        ui = jobs["ui"]
+        self.assertNotRegex(ui, r"(?m)^    (needs|if|continue-on-error):")
+        self.assertNotIn("actions/download-artifact@", ui)
+        self.assertIn("run: make ci-ui\n", ui)
+        self.assertIn('if: always()\n        run: python3 tools/ci.py finish linux "${{ job.status }}"', ui)
+        self.assertRegex(ui, r"if: always\(\)\n        uses: actions/upload-artifact@[^\n]+\n"
+                            r"        with:\n          name: reports-ui\n          path: .ci/reports/linux/")
+        self.assertNotIn("make ci-ui", jobs["linux"])
+
     @staticmethod
     def editor_frame(*, caret_x=None, text_shift=0, overlay=False):
         width, height = 64, 32

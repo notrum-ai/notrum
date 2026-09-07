@@ -61,13 +61,14 @@ help:
 		"  make ui-click-<scenario> | make ui-acceptance | make test-<crate>" \
 		"Не запускайте target, а затем включающий его aggregate на неизменном diff."'
 
-# CI runs the Windows cross-build on its own runner; local check retains the full gate.
+# CI runs UI acceptance and the Windows cross-build on their own runners.
+# Local check retains the full gate.
 CHECK_HOST_TARGETS := ci-validate fmt-check lint test test-release test-demo-data test-publish check-macos package-macos-smoke build-linux-smoke
 
 .PHONY: check-linux check-windows-build
 check: $(CHECK_HOST_TARGETS) check-windows-build ui-check audit diff-check
 
-check-linux: $(CHECK_HOST_TARGETS) ui-check audit diff-check
+check-linux: $(CHECK_HOST_TARGETS) audit diff-check
 
 check-windows-build: build-windows test-windows-build
 
@@ -357,10 +358,10 @@ ui-click-external: ui-build
 ui-click-crash: ui-build-test-utils
 	$(RUN) python3 -B tools/desktop_smoke.py crash
 
-.PHONY: native-check revision-check ci-linux ci-macos ci-windows-build ci-package-linux ci-package-macos ci-package-windows ci-validate
+.PHONY: native-check revision-check ci-linux ci-ui ci-macos ci-windows-build ci-package-linux ci-package-macos ci-package-windows ci-validate
 
 revision-check:
-	$(PYTHON) tools/source_revision.py "$(SOURCE_REVISION)"
+	python3 -B tools/source_revision.py "$(SOURCE_REVISION)"
 
 # Reuse the native entry points, including future platform smoke additions.
 native-check: revision-check native-smoke native-external-smoke
@@ -368,6 +369,9 @@ native-check: revision-check native-smoke native-external-smoke
 ci-linux: revision-check
 	python3 -B tools/ci.py run linux -- $(MAKE) check-linux
 	$(MAKE) ci-package-linux
+
+ci-ui: revision-check
+	python3 -B tools/ci.py run linux -- $(MAKE) ui-check
 
 ci-windows-build: revision-check
 	python3 -B tools/ci.py run windows-tests -- $(MAKE) check-windows-build ci-package-windows

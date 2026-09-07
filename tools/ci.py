@@ -92,7 +92,8 @@ def digest(path):
 
 def windows_files(directory, tests=False):
     names = {"Notrum.exe", "LICENSE.txt", "Register.ps1", "dependencies.json"} if not tests else {
-        "Run-Tests.ps1", "ci_diagnostics.py", "tests.json", "dependencies.json",
+        "Run-Tests.ps1", "ci_diagnostics.py", "windows_test_support.ps1", "test_windows_support.ps1",
+        "tests.json", "dependencies.json",
         *json.loads((directory / "tests.json").read_text()),
     }
     dependencies = json.loads((directory / "dependencies.json").read_text())

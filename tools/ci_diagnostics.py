@@ -70,6 +70,13 @@ DELETE_ERRORS = frozenset({
 
 
 def native_line(line):
+    if re.fullmatch(
+        r"NATIVE_RUNNER stage=(rust|start|window|state|close|verify|complete) "
+        r"reason=(none|test/timeout|test/failed|window/timeout|state/timeout|process/early/exit|"
+        r"process/exit/code|process/close|process/cleanup|state/mismatch|content/changed|runner/error) "
+        r"duration_ms=[0-9]{1,10}", line,
+    ):
+        return line
     retry = re.fullmatch(
         r"NATIVE_REPLACE_RETRY thread=ThreadId\(([1-9][0-9]{0,19})\) "
         r"attempt=([1-4]) delay_ms=(10|20|40|80) os_error=(5|32)", line,
@@ -230,5 +237,8 @@ def rust_test_report(lines):
 
 
 if __name__ == "__main__":
-    with Path(sys.argv[1]).open(encoding="utf-8-sig", errors="replace") as source:
-        print(json.dumps(rust_test_report(source)))
+    def lines():
+        for name in sys.argv[1:]:
+            with Path(name).open(encoding="utf-8-sig", errors="replace") as source:
+                yield from source
+    print(json.dumps(rust_test_report(lines())))

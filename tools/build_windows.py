@@ -220,7 +220,8 @@ def package_tests() -> None:
     (destination / "tests.json").write_text(json.dumps(sorted(path.name for path in tests), indent=2) + "\n")
     (destination / "dependencies.json").write_text(json.dumps(dependencies, indent=2) + "\n")
     shutil.copy2(ROOT / "tools/test_windows.ps1", destination / "Run-Tests.ps1")
-    shutil.copy2(ROOT / "tools/ci_diagnostics.py", destination / "ci_diagnostics.py")
+    for name in ("ci_diagnostics.py", "windows_test_support.ps1", "test_windows_support.ps1"):
+        shutil.copy2(ROOT / "tools" / name, destination / name)
     print(f"BUILT_WINDOWS_TESTS path={destination} executables={len(tests)}")
 
 

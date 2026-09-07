@@ -12,6 +12,8 @@ mod i18n;
 mod localized_input;
 mod rss_card;
 mod settings;
+#[cfg(test)]
+mod test_support;
 mod update;
 
 use std::cell::{Cell, RefCell};
@@ -2037,8 +2039,8 @@ impl AppModel {
             .send(SearchCommand::Shutdown(finished_sender))
             .is_ok()
         {
-            finished_receiver
-                .recv_timeout(Duration::from_secs(5))
+            test_support::Deadline::new()
+                .receive(&finished_receiver)
                 .expect("search worker acknowledges shutdown");
         }
         if let Some(worker) = self.search_worker.take() {
@@ -15152,6 +15154,7 @@ fn tooltip_label(title: String, palette: Palette) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::{Deadline, workspace as test_workspace};
     use super::{
         AppModel, CategoryDropPosition, EDITOR_CHARACTER_WIDTH_PX, EDITOR_LINE_HEIGHT_PX,
         EDITOR_LINE_NUMBER_GAP_PX, EDITOR_LINE_NUMBER_MIN_WIDTH_PX, EDITOR_PADDING_X_PX,
@@ -15198,8 +15201,7 @@ mod tests {
         SecureWorkerEvent, ToolbarAction, WorkspaceSession,
     };
     use std::fs;
-    use std::sync::mpsc::RecvTimeoutError;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::Duration;
 
     #[cfg(feature = "test-utils")]
     use super::SecurityActionOutcome;
@@ -15226,14 +15228,7 @@ mod tests {
 
     #[test]
     fn language_switch_preserves_dirty_editor_selection_undo_and_files() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-locale-state-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-locale-state");
         fs::create_dir_all(root.join("notes")).unwrap();
         let path = root.join("notes/Existing.md");
         let original = "# Existing\nKeep this text unchanged on disk.\n";
@@ -15274,14 +15269,7 @@ mod tests {
 
     #[test]
     fn external_file_picker_uses_registered_extensions() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-file-picker-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-file-picker");
         fs::create_dir_all(root.join("notes")).expect("create picker workspace");
         let workspace = WorkspaceSession::open(&root).unwrap();
         let spec = external_file_picker_spec(workspace.external_file_extensions()).unwrap();
@@ -15478,14 +15466,7 @@ mod tests {
 
     #[test]
     fn external_batches_keep_order_duplicates_and_errors() {
-        let root = std::env::temp_dir().join(format!(
-            "notrum-open-batch-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = test_workspace("notrum-open-batch");
         fs::create_dir_all(root.join("notes")).unwrap();
         let first = root.join("日本語 one.MD");
         let second = root.join("second.txt");
@@ -15557,14 +15538,7 @@ mod tests {
 
     #[test]
     fn startup_workspace_prefers_explicit_then_available_global_then_picker() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let home = std::env::temp_dir().join(format!(
-            "notrum-app-startup-selection-{}-{nonce}",
-            std::process::id()
-        ));
+        let home = test_workspace("notrum-app-startup-selection");
         let remembered = home.join("remembered");
         fs::create_dir_all(home.join("Downloads")).unwrap();
         fs::create_dir_all(remembered.join("notes")).unwrap();
@@ -15599,14 +15573,7 @@ mod tests {
 
     #[test]
     fn unavailable_remembered_workspace_opens_picker_without_recreating_it() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let home = std::env::temp_dir().join(format!(
-            "notrum-app-stale-startup-{}-{nonce}",
-            std::process::id()
-        ));
+        let home = test_workspace("notrum-app-stale-startup");
         let missing = home.join("missing");
         fs::create_dir_all(home.join("Downloads")).unwrap();
         let global = GlobalSettings {
@@ -15628,15 +15595,7 @@ mod tests {
 
     #[test]
     fn startup_candidate_requires_confirmation_for_a_new_notes_directory() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-startup-candidate-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir(&root).unwrap();
+        let root = test_workspace("notrum-app-startup-candidate");
         fs::write(root.join("keep.bin"), b"keep").unwrap();
 
         assert!(matches!(
@@ -15675,14 +15634,7 @@ mod tests {
             Some(tr!(EnterAbsoluteWorkspace))
         );
 
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-workspace-switch-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-workspace-switch");
         fs::create_dir_all(root.join("notes")).expect("create target workspace");
         fs::write(root.join("notes/Target.md"), "Target\n").expect("write target note");
 
@@ -15695,14 +15647,7 @@ mod tests {
 
     #[test]
     fn workspace_switch_blocker_protects_dirty_and_active_operations() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-workspace-switch-blocker-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-workspace-switch-blocker");
         fs::create_dir_all(root.join("notes")).expect("create source workspace");
         fs::write(root.join("notes/Source.md"), "Source\n").expect("write source note");
         let mut model = AppModel::load(&root);
@@ -15748,14 +15693,7 @@ mod tests {
 
     #[test]
     fn secure_progress_ignores_stale_operations_and_regressions() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-secure-progress-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-secure-progress");
         fs::create_dir_all(root.join("notes")).expect("create progress workspace");
         fs::write(root.join("notes/Source.md"), "Source\n").expect("write source note");
         let mut model = AppModel::load(&root);
@@ -15928,14 +15866,7 @@ mod tests {
     #[cfg(feature = "test-utils")]
     #[test]
     fn dirty_protect_and_relock_wait_for_canonical_persistence_before_retrying() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-pending-security-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-pending-security");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create pending-security workspace");
         fs::write(notes.join("Private.md"), "private body\n").expect("write private note");
@@ -15996,14 +15927,7 @@ mod tests {
     #[cfg(feature = "test-utils")]
     #[test]
     fn failed_authentication_before_protect_keeps_password_dialog_open_for_retry() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-pending-auth-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-pending-auth");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create pending-auth workspace");
         fs::write(notes.join("A Private.md"), "private\n").expect("write private note");
@@ -16128,12 +16052,10 @@ mod tests {
 
     #[cfg(feature = "test-utils")]
     fn finish_pending_search_security(model: &mut AppModel) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Deadline::new();
         while model.search_security_operation.is_some() || model.secure_worker_active {
             if model.secure_worker_active {
-                let event = model
-                    .secure_receiver
-                    .recv_timeout(Duration::from_millis(50));
+                let event = deadline.receive(&model.secure_receiver);
                 match event {
                     Ok(SecureWorkerEvent::Progress(progress)) => {
                         model.finish_secure_progress(progress);
@@ -16141,68 +16063,59 @@ mod tests {
                     Ok(SecureWorkerEvent::Completed(completion)) => {
                         model.finish_secure_completion(*completion);
                     }
-                    Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
                     Err(error) => panic!("secure operation did not finish: {error}"),
                 }
-                assert!(Instant::now() < deadline, "secure operation timed out");
                 continue;
             }
-            let event = model
-                .search_receiver
-                .recv_timeout(Duration::from_millis(50));
+            let event = deadline.receive(&model.search_receiver);
             match event {
                 Ok(SearchEvent::PurgeFinished {
                     operation_id,
                     result,
-                }) => {
+                }) if matches!(model.search_security_operation, Some(super::SearchSecurityOperation::Purging { operation_id: expected }) if expected == operation_id) =>
+                {
                     assert!(model.finish_search_purge(operation_id, result));
                 }
                 Ok(SearchEvent::RestoreFinished {
                     operation_id,
                     result,
-                }) => {
+                }) if matches!(model.search_security_operation, Some(super::SearchSecurityOperation::Restoring { operation_id: expected, .. }) if expected == operation_id) =>
+                {
                     assert!(model.finish_search_restore(operation_id, result));
                 }
                 Ok(_) => {}
-                Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
                 Err(error) => panic!("search security operation did not finish: {error}"),
             }
-            assert!(
-                Instant::now() < deadline,
-                "search security operation timed out"
-            );
         }
     }
 
     #[cfg(feature = "test-utils")]
     fn finish_pending_secure(model: &mut AppModel) {
+        let deadline = Deadline::new();
         loop {
-            let event = model
-                .secure_receiver
-                .recv_timeout(Duration::from_secs(10))
+            let event = deadline
+                .receive(&model.secure_receiver)
                 .expect("secure worker completes");
             match event {
-                SecureWorkerEvent::Progress(progress) => {
+                SecureWorkerEvent::Progress(progress)
+                    if model.secure_operation_id == Some(progress.operation_id) =>
+                {
                     assert!(model.finish_secure_progress(progress));
                 }
-                SecureWorkerEvent::Completed(completion) => {
+                SecureWorkerEvent::Completed(completion)
+                    if model.secure_operation_id == Some(completion.operation_id()) =>
+                {
                     assert!(model.finish_secure_completion(*completion));
                     break;
                 }
+                _ => {}
             }
         }
     }
 
     #[test]
     fn search_worker_acknowledges_async_purge_and_safe_restore() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-search-purge-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-search-purge");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create search-purge test workspace");
         let target = notes.join("Needle.md");
@@ -16243,14 +16156,7 @@ mod tests {
     #[cfg(feature = "test-utils")]
     #[test]
     fn protected_note_switch_reuses_only_the_authenticated_process_session() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-protected-session-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-protected-session");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create protected-session workspace");
         fs::write(notes.join("A.md"), "alpha\n").expect("write first note");
@@ -16371,22 +16277,15 @@ mod tests {
     fn search_results_for(model: &mut AppModel, query: &str) -> Vec<notrum_search::SearchResult> {
         model.submit_search(query.to_owned());
         let generation = model.search_query_generation;
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            match model
-                .search_receiver
-                .recv_timeout(Duration::from_millis(50))
-            {
-                Ok(SearchEvent::Results {
+        Deadline::new()
+            .matching(&model.search_receiver, |event| match event {
+                SearchEvent::Results {
                     generation: incoming,
                     results,
-                }) if incoming == generation => return results,
-                Ok(_) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
-                Err(error) => panic!("search worker did not answer query: {error}"),
-            }
-            assert!(Instant::now() < deadline, "search query timed out");
-        }
+                } if incoming == generation => Some(results),
+                _ => None,
+            })
+            .expect("search worker answers the requested query")
     }
 
     fn wait_for_search_operation(
@@ -16394,28 +16293,19 @@ mod tests {
         operation_id: u64,
         restore: bool,
     ) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            match model
-                .search_receiver
-                .recv_timeout(Duration::from_millis(50))
-            {
-                Ok(SearchEvent::PurgeFinished {
+        Deadline::new()
+            .matching(&model.search_receiver, |event| match event {
+                SearchEvent::PurgeFinished {
                     operation_id: incoming,
                     result,
-                }) if !restore && incoming == operation_id => return result,
-                Ok(SearchEvent::RestoreFinished {
+                } if !restore && incoming == operation_id => Some(result),
+                SearchEvent::RestoreFinished {
                     operation_id: incoming,
                     result,
-                }) if restore && incoming == operation_id => return result,
-                Ok(_) => {}
-                Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
-                Err(error) => {
-                    return Err(format!("search worker did not answer operation: {error}"));
-                }
-            }
-            assert!(Instant::now() < deadline, "search operation timed out");
-        }
+                } if restore && incoming == operation_id => Some(result),
+                _ => None,
+            })
+            .map_err(|error| format!("search worker did not answer operation: {error}"))?
     }
 
     #[test]
@@ -16427,14 +16317,7 @@ mod tests {
 
     #[test]
     fn search_worker_coalesces_a_queued_query_burst_to_the_latest_request() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-search-coalesce-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-search-coalesce");
         fs::create_dir_all(root.join("notes")).expect("create coalescing workspace");
         fs::write(root.join("notes/Needle.md"), "latestquerymarker\n")
             .expect("write searchable note");
@@ -16454,18 +16337,16 @@ mod tests {
             search_worker(worker_root, command_receiver, event_sender, false);
         });
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Deadline::new();
         let (generation, results) = loop {
-            match event_receiver.recv_timeout(Duration::from_millis(50)) {
+            match deadline.receive(&event_receiver) {
                 Ok(SearchEvent::Results {
                     generation,
                     results,
                 }) => break (generation, results),
                 Ok(_) => {}
-                Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
                 Err(error) => panic!("search worker did not return coalesced query: {error}"),
             }
-            assert!(Instant::now() < deadline, "coalesced query timed out");
         };
         assert_eq!(generation, 3);
         assert_eq!(results.len(), 1);
@@ -16474,8 +16355,8 @@ mod tests {
         command_sender
             .send(SearchCommand::Shutdown(finished_sender))
             .expect("queue worker shutdown");
-        finished_receiver
-            .recv_timeout(Duration::from_secs(5))
+        Deadline::new()
+            .receive(&finished_receiver)
             .expect("worker acknowledges shutdown");
         worker.join().expect("search worker exits cleanly");
         fs::remove_dir_all(root).expect("remove coalescing workspace");
@@ -16483,14 +16364,7 @@ mod tests {
 
     #[test]
     fn security_barrier_drops_cached_results_and_rejects_stale_worker_results() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-search-barrier-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-search-barrier");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create search-barrier workspace");
         fs::write(notes.join("Private.md"), "search-plaintext-marker\n")
@@ -16515,14 +16389,7 @@ mod tests {
 
     #[test]
     fn note_click_queues_the_target_while_the_current_note_is_dirty() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-pending-note-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-pending-note");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create pending-note test workspace");
         fs::write(notes.join("A Alpha.md"), "alpha\n").expect("write first note");
@@ -16793,14 +16660,7 @@ mod tests {
         use floem::reactive::{Scope, with_scope};
         use std::{cell::RefCell, rc::Rc};
 
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-disposed-window-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-disposed-window");
         fs::create_dir_all(root.join("notes")).unwrap();
         let note_path = root.join("notes/Private.md");
         fs::write(&note_path, "late completion fixture\n").unwrap();
@@ -16950,14 +16810,7 @@ mod tests {
 
     #[test]
     fn app_tag_mutation_reports_duplicate_and_missing_as_no_ops() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-tag-outcome-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-tag-outcome");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create tag-outcome workspace");
         let note = notes.join("Tagged.md");
@@ -17679,14 +17532,7 @@ mod tests {
 
     #[test]
     fn category_notes_use_manual_order_then_persisted_automatic_date_sort() {
-        let root = std::env::temp_dir().join(format!(
-            "notrum-note-sort-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = test_workspace("notrum-note-sort");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).unwrap();
         let fixtures = [
@@ -17826,14 +17672,7 @@ mod tests {
 
     #[test]
     fn editor_metrics_fill_the_available_surface_width() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-left-aligned-editor-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-left-aligned-editor");
         fs::create_dir_all(root.join("notes")).expect("create editor metrics workspace");
 
         let mut model = AppModel::load(&root);
@@ -17929,14 +17768,7 @@ mod tests {
 
     #[test]
     fn go_to_line_moves_to_the_line_start_without_changing_note_bytes() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-go-to-line-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-go-to-line");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create go-to-line workspace");
         let note = notes.join("Lines.md");
@@ -17996,14 +17828,7 @@ mod tests {
 
     #[test]
     fn note_find_reveals_match_hidden_below_wrapped_visual_rows() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-find-reveal-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-find-reveal");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create find-reveal workspace");
         let note = notes.join("Find.md");
@@ -18088,14 +17913,7 @@ mod tests {
 
     #[test]
     fn line_numbers_label_only_the_first_visual_row_of_a_wrapped_line() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-line-numbers-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-line-numbers");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create line-number workspace");
         let body = std::iter::once("abcdefghijklmnop".to_owned())
@@ -18128,14 +17946,7 @@ mod tests {
 
     #[test]
     fn rss_rows_share_sidebar_groups_and_keyboard_navigation_marks_entries_read() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-rss-sidebar-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-rss-sidebar");
         fs::create_dir_all(root.join("notes")).expect("create RSS workspace");
         fs::write(
             root.join("notes/Note.md"),
@@ -18218,14 +18029,7 @@ mod tests {
     }
 
     fn group_activation_round(round: usize) {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-group-activation-{}-{nonce}-{round}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-group-activation");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create group-activation workspace");
         fs::write(notes.join("A Trash.md"), "trash\n").expect("write initially selected note");
@@ -18296,14 +18100,7 @@ mod tests {
 
     #[test]
     fn wrapped_rows_map_pointer_columns_caret_and_selection_back_to_the_line() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-wrapped-rows-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-wrapped-rows");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create wrapped-rows test workspace");
         fs::write(notes.join("Wrap.md"), "alpha bravo charlie\nsecond\n")
@@ -18403,14 +18200,7 @@ mod tests {
 
     #[test]
     fn wrapped_documents_can_scroll_until_their_final_line_is_visible() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-wrapped-scroll-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-wrapped-scroll");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create wrapped-scroll test workspace");
         let body = (0..40)
@@ -18475,14 +18265,7 @@ mod tests {
 
     #[test]
     fn double_click_hit_testing_selects_the_word_under_the_glyph() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-word-selection-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-word-selection");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create word-selection test workspace");
         fs::write(notes.join("Word.md"), "alpha bravo charlie\n")
@@ -18576,14 +18359,7 @@ mod tests {
 
     #[test]
     fn app_model_restores_selected_note_by_path_and_falls_back_when_stale() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-settings-selection-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-settings-selection");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create settings selection workspace");
         let first = notes.join("A First.md");
@@ -18607,14 +18383,7 @@ mod tests {
 
     #[test]
     fn canonical_and_native_paths_restore_notes_and_external_selection() {
-        let root = std::env::temp_dir().join(format!(
-            "notrum-paths 日本語 {}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = test_workspace("notrum-paths 日本語");
         fs::create_dir_all(root.join("notes")).unwrap();
         let note = root.join("notes/Selected 日本語.md");
         let external = root.join("External 日本語.txt");
@@ -18668,14 +18437,7 @@ mod tests {
 
     #[test]
     fn note_mutations_with_search_worker_keep_metadata_and_search_consistent() {
-        let root = std::env::temp_dir().join(format!(
-            "notrum-search-mutations-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = test_workspace("notrum-search-mutations");
         fs::create_dir_all(root.join("notes")).unwrap();
         let note = root.join("notes/Selected.md");
         fs::write(
@@ -18717,14 +18479,7 @@ mod tests {
 
     #[test]
     fn external_settings_restore_selection_unavailable_rows_and_clean_close() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-external-selection-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-external-selection");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create external selection workspace");
         fs::write(notes.join("Fallback.md"), "# Fallback\n").expect("write fallback note");
@@ -18792,14 +18547,7 @@ mod tests {
     #[cfg(feature = "test-utils")]
     #[test]
     fn note_creation_waits_for_an_active_autosave_and_then_focuses_the_editor() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-pending-note-creation-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-pending-note-creation");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create pending-note workspace");
         fs::write(notes.join("Existing.md"), "# Existing\n").expect("write existing note");
@@ -18822,14 +18570,7 @@ mod tests {
 
     #[test]
     fn triple_click_hit_testing_selects_the_whole_line_with_its_break() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock is after the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "notrum-app-line-selection-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = test_workspace("notrum-app-line-selection");
         let notes = root.join("notes");
         fs::create_dir_all(&notes).expect("create line-selection test workspace");
         fs::write(notes.join("Line.md"), "alpha bravo\nsecond\n\nlast")

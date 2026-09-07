@@ -119,7 +119,9 @@ fn relative(path: &str) -> Result<PathBuf, UpdateError> {
     {
         return Err(UpdateError::Package("disallowed manifest path"));
     }
-    Ok(path.split('/').collect())
+    crate::archive::relative(path, 0)
+        .map_err(|_| UpdateError::Package("disallowed manifest path"))?
+        .ok_or(UpdateError::Package("disallowed manifest path"))
 }
 
 fn files(root: &Path, prefix: &Path, result: &mut Vec<PathBuf>) -> Result<(), UpdateError> {
@@ -293,8 +295,50 @@ mod tests {
     #[test]
     fn manifest_paths_stay_inside_the_package() {
         assert_eq!(relative("a/b.txt").unwrap(), PathBuf::from("a/b.txt"));
-        for rejected in ["", "/etc/passwd", "a//b", "a/../b"] {
+        for rejected in [
+            "",
+            "/etc/passwd",
+            "a//b",
+            "a/../b",
+            "a\\b",
+            "C:/outside",
+            "C:outside",
+            "\\\\server\\share",
+            "a/..\\outside",
+            "a:stream",
+            ".",
+        ] {
             assert!(relative(rejected).is_err(), "{rejected}");
+        }
+    }
+
+    #[test]
+    fn unsafe_manifest_paths_are_rejected_before_reading_files() {
+        for path in [
+            "a\\b",
+            "a/..\\outside",
+            "C:/outside",
+            "\\\\server\\share",
+            "a/../outside",
+        ] {
+            let fixture = Fixture::new();
+            let installation = linux_package(&fixture, "abc123\n");
+            fixture.write(
+                "staged/build.json",
+                &serde_json::json!({
+                    "platform": "linux", "source_revision": "abc123",
+                    "files": [{"path": path, "sha256": digest(b"untrusted")}]
+                })
+                .to_string(),
+            );
+            assert_eq!(
+                validate(
+                    &fixture.path().join("staged"),
+                    &installation,
+                    Version::new(1, 0, 0)
+                ),
+                Err(UpdateError::Package("disallowed manifest path"))
+            );
         }
     }
 }

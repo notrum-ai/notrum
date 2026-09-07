@@ -72,6 +72,13 @@ The script deliberately leaves manual acceptance unconfirmed.
 
 ## Persistence details
 
+The automated Windows kit checks native startup and external-file launch by
+waiting for a responsive process window and saved selection, then closing it
+normally. It does not depend on a fixed launch delay. Readiness has a 60-second
+deadline and closing has a 30-second deadline; failures retain their stage and
+reason in the report. The helper regression tests are included in the kit.
+This does not replace the interactive checklist above.
+
 The shared filesystem layer obtains volume/file IDs from open handles, rejects
 reparse-point ancestors and non-local Windows prefixes, and retains Windows
 ACL entries when replacing a file. A new private file is opened exclusively,

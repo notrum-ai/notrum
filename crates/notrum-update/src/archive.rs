@@ -12,7 +12,7 @@
 use crate::UpdateError;
 use std::fs;
 use std::io::{Cursor, Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 const MAX_ENTRIES: usize = 20_000;
 const MAX_TOTAL_BYTES: u64 = 600 * 1024 * 1024;
@@ -78,11 +78,10 @@ fn extract_tar(bytes: &[u8], strip: usize, destination: &Path) -> Result<(), Upd
         }
         let size = header.size().unwrap_or(u64::MAX);
         let mode = header.mode().unwrap_or(0o644);
-        let raw = entry
-            .path()
-            .map_err(|_| UpdateError::Package("unreadable archive path"))?
-            .into_owned();
-        let Some(relative) = relative(&raw, strip)? else {
+        let raw = entry.path_bytes();
+        let raw = std::str::from_utf8(&raw)
+            .map_err(|_| UpdateError::Package("archive path is not UTF-8"))?;
+        let Some(relative) = relative(raw, strip)? else {
             continue;
         };
         let path = destination.join(relative);
@@ -116,13 +115,12 @@ fn extract_zip(bytes: &[u8], strip: usize, destination: &Path) -> Result<(), Upd
         let mut entry = archive
             .by_index(index)
             .map_err(|_| UpdateError::Package("unreadable archive entry"))?;
-        let Some(name) = entry.enclosed_name() else {
-            return Err(UpdateError::Package("disallowed archive path"));
-        };
+        let name = std::str::from_utf8(entry.name_raw())
+            .map_err(|_| UpdateError::Package("archive path is not UTF-8"))?;
         let is_dir = entry.is_dir();
         let size = entry.size();
         let mode = entry.unix_mode();
-        let Some(relative) = relative(&name, strip)? else {
+        let Some(relative) = relative(name, strip)? else {
             continue;
         };
         let path = destination.join(relative);
@@ -207,33 +205,29 @@ fn set_mode(_path: &Path, _mode: Option<u32>) -> Result<(), UpdateError> {
 
 /// Validates one archive path and removes `strip` leading components.
 /// Returns `None` for the stripped root itself.
-fn relative(raw: &Path, strip: usize) -> Result<Option<PathBuf>, UpdateError> {
-    let mut parts: Vec<&str> = Vec::new();
-    for component in raw.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(part) => {
-                let part = part
-                    .to_str()
-                    .ok_or(UpdateError::Package("archive path is not UTF-8"))?;
-                if part.is_empty()
-                    || part.len() > MAX_COMPONENT_BYTES
-                    || part == ".."
-                    || part.contains('\\')
-                    || part.contains(':')
-                    || part.chars().any(char::is_control)
-                    || part.ends_with(' ')
-                    || part.ends_with('.')
-                {
-                    return Err(UpdateError::Package("disallowed archive path"));
-                }
-                parts.push(part);
-            }
-            _ => return Err(UpdateError::Package("disallowed archive path")),
-        }
+pub(crate) fn relative(raw: &str, strip: usize) -> Result<Option<PathBuf>, UpdateError> {
+    // Archive names are POSIX text, not host paths. Windows components() and
+    // ZIP enclosed_name() can erase forbidden separators or parent components.
+    if raw.starts_with('/') || raw.contains(['\\', ':']) {
+        return Err(UpdateError::Package("disallowed archive path"));
     }
-    if parts.len() > MAX_COMPONENTS {
-        return Err(UpdateError::Package("archive path is too deep"));
+    let mut parts: Vec<&str> = Vec::new();
+    for part in raw.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part.len() > MAX_COMPONENT_BYTES
+            || part == ".."
+            || part.chars().any(char::is_control)
+            || part.ends_with(' ')
+            || part.ends_with('.')
+        {
+            return Err(UpdateError::Package("disallowed archive path"));
+        }
+        parts.push(part);
+        if parts.len() > MAX_COMPONENTS {
+            return Err(UpdateError::Package("archive path is too deep"));
+        }
     }
     if parts.len() <= strip {
         return Ok(None);
@@ -300,19 +294,110 @@ mod tests {
     }
 
     #[test]
-    fn the_root_directory_is_stripped_and_traversal_refused() {
+    fn the_root_directory_is_stripped() {
         assert_eq!(
-            relative(Path::new("notrum-linux-x86_64/notrum"), 1).unwrap(),
+            relative("notrum-linux-x86_64/notrum", 1).unwrap(),
             Some(PathBuf::from("notrum"))
         );
-        assert_eq!(relative(Path::new("notrum-linux-x86_64"), 1).unwrap(), None);
+        assert_eq!(relative("notrum-linux-x86_64", 1).unwrap(), None);
         assert_eq!(
-            relative(Path::new("./root/a/b.txt"), 1).unwrap(),
+            relative("./root/a/b.txt", 1).unwrap(),
             Some(PathBuf::from("a/b.txt"))
         );
-        for rejected in ["/etc/passwd", "root/../../escape", "root/a\\b", "root/a:b"] {
-            assert!(relative(Path::new(rejected), 1).is_err(), "{rejected}");
+    }
+
+    fn zip_file(name: &str, data: &[u8]) -> Vec<u8> {
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        archive
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(data).unwrap();
+        archive.finish().unwrap().into_inner()
+    }
+
+    fn assert_rejected(name: &str) {
+        assert!(relative(name, 1).is_err());
+        for (archive, kind) in [
+            (gzip(&raw_tar(name, b"untrusted")), ArchiveKind::TarGz),
+            (zip_file(name, b"untrusted"), ArchiveKind::Zip),
+        ] {
+            let parent = tempfile::tempdir().unwrap();
+            let staged = parent.path().join("staged");
+            fs::create_dir(&staged).unwrap();
+            assert!(extract(&archive, kind, &staged).is_err(), "{kind:?}");
+            assert_eq!(fs::read_dir(&staged).unwrap().count(), 0);
+            assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 1);
         }
+    }
+
+    #[test]
+    fn archive_paths_reject_backslashes_before_host_normalization() {
+        assert_rejected("root/a\\b");
+    }
+
+    #[test]
+    fn archive_paths_reject_mixed_separator_traversal() {
+        assert_rejected("root/a/..\\escape");
+    }
+
+    #[test]
+    fn archive_paths_reject_internal_parent_components() {
+        assert_rejected("root/a/../escape");
+    }
+
+    #[test]
+    fn archive_paths_reject_absolute_paths() {
+        assert_rejected("/root/escape");
+    }
+
+    #[test]
+    fn archive_paths_reject_windows_drive_and_stream_prefixes() {
+        for name in ["C:/root/escape", "C:escape", "root/a:b"] {
+            assert_rejected(name);
+        }
+    }
+
+    #[test]
+    fn archive_paths_reject_unc_and_verbatim_prefixes() {
+        for name in [
+            "\\\\server\\share\\escape",
+            "\\\\?\\C:\\escape",
+            "//server/share/escape",
+        ] {
+            assert_rejected(name);
+        }
+    }
+
+    #[test]
+    fn archive_paths_preserve_unicode_and_initial_dot() {
+        for (archive, kind, expected) in [
+            (
+                gzip(&raw_tar("./root/日本語/file.txt", b"fixture")),
+                ArchiveKind::TarGz,
+                "日本語/file.txt",
+            ),
+            (
+                zip_file("./日本語/file.txt", b"fixture"),
+                ArchiveKind::Zip,
+                "日本語/file.txt",
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            extract(&archive, kind, directory.path()).unwrap();
+            assert_eq!(
+                fs::read(directory.path().join(expected)).unwrap(),
+                b"fixture"
+            );
+        }
+    }
+
+    #[test]
+    fn archive_path_limits_and_invalid_components_are_preserved() {
+        for name in ["root/trailing.", "root/trailing ", "root/control\n"] {
+            assert_rejected(name);
+        }
+        assert!(relative(&"a".repeat(MAX_COMPONENT_BYTES + 1), 0).is_err());
+        assert!(relative(&vec!["a"; MAX_COMPONENTS + 1].join("/"), 0).is_err());
     }
 
     #[test]

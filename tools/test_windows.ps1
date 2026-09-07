@@ -5,6 +5,7 @@
 param([switch]$Interactive, [switch]$CI, [string]$ReportDirectory = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'windows_test_support.ps1')
 if (-not [Environment]::Is64BitOperatingSystem -or [Environment]::OSVersion.Version.Build -lt 10240) {
     throw 'Windows 10/11 x64 is required.'
 }
@@ -22,13 +23,19 @@ $report = [ordered]@{
     platform = 'Windows'; build = [Environment]::OSVersion.Version.ToString()
     architecture = $env:PROCESSOR_ARCHITECTURE; filesystem = $drive.DriveFormat
     started = [DateTime]::UtcNow.ToString('o'); tests = @(); status = 'running'
-    interactive = 'not performed'; temporaryWorkspace = $root
+    interactive = 'not performed'; temporaryWorkspace = $root; smokeChecks = @(); reason = 'none'
 }
 if ($CI) {
     $report.Remove('temporaryWorkspace')
     $report.sourceRevision = $env:SOURCE_REVISION
 }
+function Save-WindowsReport {
+    New-Item -ItemType Directory -Path $ReportDirectory -Force | Out-Null
+    $report | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $ReportDirectory 'windows-results.json')
+}
 try {
+    $report.phase = 'runner self tests'
+    & (Join-Path $PSScriptRoot 'test_windows_support.ps1')
     $env:TEMP = $root
     $env:TMP = $root
     $env:USERPROFILE = $root
@@ -39,36 +46,31 @@ try {
     $env:NOTRUM_TEST_JUNCTION = Join-Path $root 'junction'
     New-Item -ItemType Junction -Path $env:NOTRUM_TEST_JUNCTION -Target $junctionTarget | Out-Null
     $report.phase = 'rust tests'
-    $failedExecutables = 0
     $executables = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'tests.json') | ConvertFrom-Json
-    foreach ($name in $executables) {
-        if ([IO.Path]::GetFileName($name) -ne $name -or -not $name.EndsWith('.exe')) {
-            throw "Invalid test executable name: $name"
-        }
-        Write-Host "Running $name"
-        $log = Join-Path $root ($name + '.log')
+    Invoke-NativeTestSuite -Executables $executables -Directory $PSScriptRoot -LogDirectory $root -Report $report -AfterEach {
+        param($entry, $log)
+        $logs = @($log, ($log + '.stderr')) | Where-Object { Test-Path -LiteralPath $_ }
         if ($CI) {
-            & (Join-Path $PSScriptRoot $name) --test-threads=1 *> $log
+            $entry.failedTests = @()
+            $entry.diagnostics = @()
+            if (@($logs).Count -ne 0) {
+                $safeReport = & python (Join-Path $PSScriptRoot 'ci_diagnostics.py') @logs
+                if ($LASTEXITCODE -ne 0) { throw 'Could not sanitize Rust test diagnostics.' }
+                $safeReport = $safeReport | ConvertFrom-Json
+                $entry.failedTests = @($safeReport.failedTests)
+                $entry.diagnostics = @($safeReport.diagnostics)
+                $safeReport.diagnostics | Write-Output
+            }
         } else {
-            & (Join-Path $PSScriptRoot $name) --test-threads=1 2>&1 | Tee-Object -FilePath $log
+            $entry.log = $log
+            $logs | ForEach-Object { Get-Content -LiteralPath $_ }
         }
-        $code = $LASTEXITCODE
-        $entry = [ordered]@{ executable = $name; exitCode = $code }
-        if ($CI) {
-            $safeReport = & python (Join-Path $PSScriptRoot 'ci_diagnostics.py') $log
-            if ($LASTEXITCODE -ne 0) { throw 'Could not sanitize Rust test diagnostics.' }
-            $safeReport = $safeReport | ConvertFrom-Json
-            $entry.failedTests = @($safeReport.failedTests)
-            $entry.diagnostics = @($safeReport.diagnostics)
-            $safeReport.diagnostics | Write-Output
-        } else { $entry.log = $log }
-        $report.tests += $entry
-        if ($code -ne 0) {
-            if (-not $CI) { throw "Test executable failed: $name (exit $code)" }
-            $failedExecutables += 1
-        }
+        Write-Output "NATIVE_RUNNER stage=rust reason=$($entry.reason) duration_ms=$($entry.durationMs)"
+        Save-WindowsReport
     }
-    if ($failedExecutables -ne 0) { throw 'Rust test executables failed; inspect the recorded results.' }
+    if (@($report.tests | Where-Object { $_.reason -ne 'none' }).Count -ne 0) {
+        Throw-NativeFailure 'test/failed'
+    }
     $report.phase = 'native startup'
     $application = Join-Path (Split-Path -Parent $PSScriptRoot) 'Notrum.exe'
     $report.applicationSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $application).Hash
@@ -76,26 +78,40 @@ try {
     $workspace = Join-Path $root 'Workspace with spaces 日本語'
     New-Item -ItemType Directory -Path (Join-Path $workspace 'notes') -Force | Out-Null
     if (-not (Test-Path -LiteralPath $application)) { throw 'Notrum.exe is missing beside the test package.' }
-    $process = Start-Process -FilePath $application -ArgumentList @(('"' + $workspace + '"'), '--smoke-exit-ms', '1800') -PassThru
-    if (-not $process.WaitForExit(30000)) {
-        $process.Kill()
-        throw 'The native application smoke test timed out.'
+    # A selection change guarantees settings are written: an empty workspace can
+    # legitimately keep defaults in memory without creating settings.json.
+    $startupNote = Join-Path $workspace 'notes/Ready.md'
+    $startupBody = "---`ntitle: Ready`n---`n# Ready`n"
+    [IO.File]::WriteAllText($startupNote, $startupBody, [Text.UTF8Encoding]::new($false))
+    $settingsPath = Join-Path $workspace '.notrum/settings.json'
+    $startupCheck = [ordered]@{ scenario = 'startup' }
+    $report.smokeChecks += $startupCheck
+    Invoke-NativeSmoke -Application $application -Arguments @(('"' + $workspace + '"')) -Record $startupCheck -State {
+        Test-NativeSettings -Path $settingsPath -SelectedNote 'notes/Ready.md'
     }
-    if ($process.ExitCode -ne 0) { throw "The native application exited with $($process.ExitCode)." }
+    if ([IO.File]::ReadAllText($startupNote) -cne $startupBody) {
+        $startupCheck.stage = 'verify'
+        $startupCheck.reason = 'content/changed'
+        Throw-NativeFailure 'content/changed'
+    }
+    Save-WindowsReport
     $report.phase = 'external file launch'
     $external = Join-Path $root 'External 日本語 #1.MD'
     $second = Join-Path $root 'External two.txt'
     [IO.File]::WriteAllText($external, "External unchanged`n", [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($second, "Second unchanged`n", [Text.UTF8Encoding]::new($false))
-    $arguments = @('--workspace', ('"' + $workspace + '"'), '--open', ('"' + $external + '"'), ('"' + $second + '"'), '--smoke-exit-ms', '1800')
-    $process = Start-Process -FilePath $application -ArgumentList $arguments -PassThru
-    if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'External file launch timed out.' }
-    if ($process.ExitCode -ne 0) { throw 'External file launch failed.' }
-    $settings = Get-Content -Raw -LiteralPath (Join-Path $workspace '.notrum/settings.json') | ConvertFrom-Json
-    $selectedPath = $settings.selected_external
-    if ($selectedPath.StartsWith('\\?\')) { $selectedPath = $selectedPath.Substring(4) }
-    if ($settings.external_files.Count -ne 2 -or $selectedPath -ne $external) { throw 'External file order/selection differs.' }
-    if ([IO.File]::ReadAllText($external) -ne "External unchanged`n") { throw 'Opening modified external content.' }
+    $arguments = @('--workspace', ('"' + $workspace + '"'), '--open', ('"' + $external + '"'), ('"' + $second + '"'))
+    $externalCheck = [ordered]@{ scenario = 'external' }
+    $report.smokeChecks += $externalCheck
+    Invoke-NativeSmoke -Application $application -Arguments $arguments -Record $externalCheck -State {
+        Test-NativeSettings -Path $settingsPath -ExternalPaths @($external, $second)
+    }
+    if ([IO.File]::ReadAllText($external) -cne "External unchanged`n" -or
+        [IO.File]::ReadAllText($second) -cne "Second unchanged`n") {
+        $externalCheck.stage = 'verify'
+        $externalCheck.reason = 'content/changed'
+        Throw-NativeFailure 'content/changed'
+    }
     $report.externalLaunch = 'passed'
     $report.phase = 'Open With registration'
     $registration = Join-Path (Split-Path -Parent $PSScriptRoot) 'Register.ps1'
@@ -127,16 +143,18 @@ try {
     $report.status = 'automated tests passed'
 } catch {
     $report.status = 'failed'
+    $report.reason = Get-NativeFailureReason $_
     $report.error = if ($CI) { 'Native test kit failed; inspect the recorded test exit codes.' } else { $_.Exception.Message }
     throw
 } finally {
     $report.finished = [DateTime]::UtcNow.ToString('o')
-    New-Item -ItemType Directory -Path $ReportDirectory -Force | Out-Null
-    $reportPath = Join-Path $ReportDirectory 'windows-results.json'
-    $report | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -LiteralPath $reportPath
+    foreach ($check in $report.smokeChecks) {
+        Write-Output "NATIVE_RUNNER stage=$($check.stage) reason=$($check.reason) duration_ms=$($check.durationMs)"
+    }
+    Save-WindowsReport
     foreach ($name in $previous.Keys) {
         [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
     }
-    Write-Host "Results: $reportPath"
+    Write-Host "Results recorded."
     Write-Host "Test workspace and logs retained: $root"
 }

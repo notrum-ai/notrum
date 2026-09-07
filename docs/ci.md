@@ -134,6 +134,25 @@ error messages, path strings or file contents. Malformed records are rejected
 before the legacy diagnostic extractors, and filtering the records again is safe.
 The same records survive in `checks.log` and `windows-results.json`.
 
+The Windows runner waits for its own responsive window and persisted selection,
+with one monotonic 60-second deadline, before requesting a normal close (30
+seconds maximum). Startup uses a synthetic note so that a selection change
+actually requires settings to be saved. External-file launch checks both paths
+in order, the selected file, and unchanged contents after closing. These are
+launch/state smoke checks, not visual UI acceptance.
+
+Each Rust test executable has a ten-minute limit. Failed and timed-out
+executables remain failures while the remaining executables still run.
+`windows-results.json` is checkpointed after each executable and adds
+`durationMs`, `stage`, `reason`, and `smokeChecks`; a timed-out executable has
+no invented exit code. `NATIVE_RUNNER` console records contain only fixed stage
+and reason labels and a numeric duration. Raw stdout/stderr remain local.
+The checksummed test package includes `windows_test_support.ps1` and its
+standalone behavior tests, which run before the native kit. They exercise
+delayed readiness, shared deadlines, early exits, closing/cleanup, continued
+execution after failure, and real process exit-code/output collection.
+No failed scenario is retried automatically.
+
 Rust captures these diagnostics with each test, so successful tests remain quiet
 and failed tests retain their diagnostic context. The platform instrumentation is
 enabled by `test-utils` (included in the native kit's `--all-features` build);

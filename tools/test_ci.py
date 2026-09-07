@@ -452,6 +452,41 @@ class CITests(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout), report)
             self.assertNotIn("SYNTHETIC_SECRET", result.stdout + result.stderr)
 
+    def test_windows_runner_diagnostics_preserve_only_bounded_known_fields(self):
+        valid = [
+            "NATIVE_RUNNER stage=rust reason=test/timeout duration_ms=600000",
+            "NATIVE_RUNNER stage=state reason=state/timeout duration_ms=60000",
+            "NATIVE_RUNNER stage=close reason=process/close duration_ms=30000",
+            "NATIVE_RUNNER stage=complete reason=none duration_ms=2100",
+        ]
+        for line in valid:
+            self.assertEqual(ci.safe_line(line), line)
+            self.assertEqual(ci.safe_line(ci.safe_line(line)), line)
+        for line in [
+            valid[0] + " path=SYNTHETIC_SECRET",
+            valid[0].replace("rust", "SYNTHETIC_SECRET"),
+            valid[0].replace("test/timeout", "SYNTHETIC_SECRET"),
+            valid[0].replace("600000", "-1"),
+            valid[0].replace("600000", "999999999999999"),
+        ]:
+            self.assertIsNone(ci.safe_line(line))
+
+    def test_windows_separate_output_streams_keep_failure_locations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            stdout = Path(temporary) / "stdout.log"
+            stderr = Path(temporary) / "stderr.log"
+            stdout.write_text("test fixture::failed ... FAILED\n", encoding="utf-8")
+            stderr.write_text("thread 'SYNTHETIC_SECRET' panicked at crates/notrum-update/src/archive.rs:1:2:\n"
+                              "SYNTHETIC_SECRET\n", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(Path(ci.__file__).with_name("ci_diagnostics.py")), str(stdout), str(stderr)],
+                check=True, text=True, capture_output=True,
+            )
+            report = json.loads(result.stdout)
+            self.assertEqual(report["failedTests"], ["fixture::failed"])
+            self.assertIn("Rust diagnostic location: crates/notrum-update/src/archive.rs:1:2", report["diagnostics"])
+            self.assertNotIn("SYNTHETIC_SECRET", result.stdout + result.stderr)
+
     def test_linux_archive_preserves_mode_and_excludes_unrelated_files(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, SOURCE_REVISION=SHA):
             root = Path(temporary)
@@ -475,7 +510,7 @@ class CITests(unittest.TestCase):
             root = Path(temporary)
             directory = root / "dist/windows/x86_64"
             (directory / "tests").mkdir(parents=True)
-            for name in ("Notrum.exe", "LICENSE.txt", "Register.ps1", "tests/test.exe", "tests/Run-Tests.ps1", "tests/ci_diagnostics.py"):
+            for name in ("Notrum.exe", "LICENSE.txt", "Register.ps1", "tests/test.exe", "tests/Run-Tests.ps1", "tests/ci_diagnostics.py", "tests/windows_test_support.ps1", "tests/test_windows_support.ps1"):
                 (directory / name).write_text("fixture")
             for folder in (directory, directory / "tests"):
                 (folder / "dependencies.json").write_text("{}")

@@ -989,6 +989,9 @@ class CITests(unittest.TestCase):
             "NATIVE_RUNNER stage=rust reason=test/timeout duration_ms=600000",
             "NATIVE_RUNNER stage=state reason=state/timeout duration_ms=60000",
             "NATIVE_RUNNER stage=close reason=process/close duration_ms=30000",
+            "NATIVE_RUNNER stage=close/request reason=process/close/rejected duration_ms=5100",
+            "NATIVE_RUNNER stage=close/wait reason=process/exit/timeout duration_ms=31000",
+            "NATIVE_RUNNER stage=close/wait reason=process/exit/code duration_ms=1100",
             "NATIVE_RUNNER stage=complete reason=none duration_ms=2100",
         ]
         for line in valid:
@@ -1002,6 +1005,32 @@ class CITests(unittest.TestCase):
             valid[0].replace("600000", "999999999999999"),
         ]:
             self.assertIsNone(ci.safe_line(line))
+
+    def test_native_shutdown_diagnostics_keep_stages_and_process_state_without_payloads(self):
+        stages = ("WindowClosed", "WindowSettingsFlushed", "WindowSettingsFailed",
+                  "EventLoopExited", "FinalSettingsFlushed", "FinalSettingsFailed", "ShutdownComplete")
+        records = [f"NATIVE_LIFECYCLE stage={stage}" for stage in stages]
+        window = ("NATIVE_WINDOW scenario=startup process=running window=present responding=false "
+                  "close_accepted=true close_attempts=1")
+        records += [window, window.replace("present", "absent").replace("responding=false", "responding=unknown")]
+        for line in records:
+            self.assertEqual(ci.safe_line(line), line)
+            self.assertEqual(ci.safe_line(ci.safe_line(line)), line)
+            self.assertIsNone(ci.safe_line(line + " path=SYNTHETIC_SECRET"))
+        for line in (
+            "NATIVE_LIFECYCLE stage=SYNTHETIC_SECRET",
+            "NATIVE_LIFECYCLE stage=WindowClosed os_error=32",
+            window.replace("startup", "SYNTHETIC_SECRET"),
+            window.replace("running", "SYNTHETIC_SECRET"),
+            window.replace("present", "SYNTHETIC_SECRET"),
+            window.replace("responding=false", "responding=SYNTHETIC_SECRET"),
+            window.replace("close_accepted=true", "close_accepted=SYNTHETIC_SECRET"),
+            window.replace("attempts=1", "attempts=-1"),
+            window.replace("attempts=1", "attempts=9999999999999"),
+        ):
+            self.assertIsNone(ci.safe_line(line))
+        report = rust_test_report(records + ["SYNTHETIC_SECRET"])
+        self.assertEqual(report, {"failedTests": [], "diagnostics": records})
 
     def test_windows_separate_output_streams_keep_failure_locations(self):
         with tempfile.TemporaryDirectory() as temporary:

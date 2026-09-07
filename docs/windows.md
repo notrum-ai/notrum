@@ -26,7 +26,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Run-Tests.ps1
 No Rust installation is required. The runner requires a local NTFS temporary
 directory, creates isolated Unicode paths with spaces, redirects global settings
 to that test profile, creates an NTFS junction fixture, runs every compiled test
-executable, starts the native application with a timed exit, opens multiple external files,
+executable, checks native startup and normal window closing, opens multiple external files,
 and tests registration in an isolated registry subtree. Tests and logs
 are retained under the printed temporary directory for diagnosis. Existing
 workspaces and the user's real `.notrum.cfg` are not used.
@@ -73,10 +73,14 @@ The script deliberately leaves manual acceptance unconfirmed.
 ## Persistence details
 
 The automated Windows kit checks native startup and external-file launch by
-waiting for a responsive process window and saved selection, then closing it
-normally. It does not depend on a fixed launch delay. Readiness has a 60-second
-deadline and closing has a 30-second deadline; failures retain their stage and
-reason in the report. The helper regression tests are included in the kit.
+waiting for the same responsive process window and saved selection to remain
+ready for 500 ms, then closing it normally. Readiness has a 60-second deadline
+and closing has a shared 30-second deadline. Only rejected close requests are
+retried, for at most five seconds. Reports distinguish rejection, exit timeout,
+and nonzero exit codes, and retain the window state before forced cleanup.
+Opt-in application lifecycle diagnostics identify the last reached shutdown
+stage without logging note contents or paths. The helper regression tests are
+included in the kit; see [CI diagnostics](ci.md) for the record names.
 This does not replace the interactive checklist above.
 
 The shared filesystem layer obtains volume/file IDs from open handles, rejects

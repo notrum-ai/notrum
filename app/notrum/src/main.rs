@@ -10,6 +10,7 @@ mod crash_dialog;
 mod editor_geometry;
 mod i18n;
 mod localized_input;
+mod native_diagnostics;
 mod restart;
 mod rss_card;
 mod rss_filters;
@@ -404,11 +405,15 @@ fn main() -> Result<(), LaunchError> {
         ),
     )
     .run();
+    native_diagnostics::emit(native_diagnostics::Stage::EventLoopExited);
     if let Err(error) = final_settings_store.borrow_mut().flush() {
+        native_diagnostics::emit(native_diagnostics::Stage::FinalSettingsFailed);
         if pending_restart.borrow().is_some() {
             return Err(LaunchError::Restart(error.to_string()));
         }
         eprintln!("Notrum: {error}");
+    } else {
+        native_diagnostics::emit(native_diagnostics::Stage::FinalSettingsFlushed);
     }
     if let Some(restart) = pending_restart.borrow_mut().take() {
         // Stop the only long-lived cache writer before letting the new copy
@@ -426,6 +431,7 @@ fn main() -> Result<(), LaunchError> {
             .complete()
             .map_err(|error| LaunchError::Restart(error.to_string()))?;
     }
+    native_diagnostics::emit(native_diagnostics::Stage::ShutdownComplete);
     Ok(())
 }
 
@@ -5420,8 +5426,12 @@ fn app_view(
             }
         })
         .on_event_cont(EventListener::WindowClosed, move |_| {
+            native_diagnostics::emit(native_diagnostics::Stage::WindowClosed);
             if let Err(error) = close_settings_store.borrow_mut().flush() {
+                native_diagnostics::emit(native_diagnostics::Stage::WindowSettingsFailed);
                 eprintln!("Notrum: {error}");
+            } else {
+                native_diagnostics::emit(native_diagnostics::Stage::WindowSettingsFlushed);
             }
         })
 }

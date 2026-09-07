@@ -16,7 +16,7 @@ if ($drive.DriveType -ne [IO.DriveType]::Fixed -or $drive.DriveFormat -ne 'NTFS'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('Notrum Windows 日本語 ' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 $previous = @{}
-foreach ($name in @('TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'NOTRUM_TEST_JUNCTION')) {
+foreach ($name in @('TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'NOTRUM_TEST_JUNCTION', 'NOTRUM_NATIVE_DIAGNOSTICS')) {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 $report = [ordered]@{
@@ -32,6 +32,20 @@ if ($CI) {
 function Save-WindowsReport {
     New-Item -ItemType Directory -Path $ReportDirectory -Force | Out-Null
     $report | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $ReportDirectory 'windows-results.json')
+}
+$collectSmokeDiagnostics = {
+    param($OutputPath, $Entry)
+    $logs = @($OutputPath, ($OutputPath + '.stderr')) | Where-Object { Test-Path -LiteralPath $_ }
+    $Entry.diagnostics = @()
+    if ($CI -and @($logs).Count -ne 0) {
+        $safeReport = & python (Join-Path $PSScriptRoot 'ci_diagnostics.py') @logs
+        if ($LASTEXITCODE -ne 0) { throw 'Could not sanitize native smoke diagnostics.' }
+        $Entry.diagnostics = @(($safeReport | ConvertFrom-Json).diagnostics)
+        $Entry.diagnostics | Write-Output
+    } elseif (-not $CI) {
+        $Entry.log = $OutputPath
+        $logs | ForEach-Object { Get-Content -LiteralPath $_ }
+    }
 }
 try {
     $report.phase = 'runner self tests'
@@ -72,6 +86,7 @@ try {
         Throw-NativeFailure 'test/failed'
     }
     $report.phase = 'native startup'
+    $env:NOTRUM_NATIVE_DIAGNOSTICS = '1'
     $application = Join-Path (Split-Path -Parent $PSScriptRoot) 'Notrum.exe'
     $report.applicationSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $application).Hash
     $report.applicationVersion = (Get-Item -LiteralPath $application).VersionInfo.FileVersion
@@ -86,7 +101,7 @@ try {
     $settingsPath = Join-Path $workspace '.notrum/settings.json'
     $startupCheck = [ordered]@{ scenario = 'startup' }
     $report.smokeChecks += $startupCheck
-    Invoke-NativeSmoke -Application $application -Arguments @(('"' + $workspace + '"')) -Record $startupCheck -State {
+    Invoke-NativeSmoke -Application $application -Arguments @(('"' + $workspace + '"')) -Record $startupCheck -Log (Join-Path $root 'startup.log') -CollectDiagnostics $collectSmokeDiagnostics -State {
         Test-NativeSettings -Path $settingsPath -SelectedNote 'notes/Ready.md'
     }
     if ([IO.File]::ReadAllText($startupNote) -cne $startupBody) {
@@ -103,7 +118,7 @@ try {
     $arguments = @('--workspace', ('"' + $workspace + '"'), '--open', ('"' + $external + '"'), ('"' + $second + '"'))
     $externalCheck = [ordered]@{ scenario = 'external' }
     $report.smokeChecks += $externalCheck
-    Invoke-NativeSmoke -Application $application -Arguments $arguments -Record $externalCheck -State {
+    Invoke-NativeSmoke -Application $application -Arguments $arguments -Record $externalCheck -Log (Join-Path $root 'external.log') -CollectDiagnostics $collectSmokeDiagnostics -State {
         Test-NativeSettings -Path $settingsPath -ExternalPaths @($external, $second)
     }
     if ([IO.File]::ReadAllText($external) -cne "External unchanged`n" -or
@@ -144,12 +159,13 @@ try {
 } catch {
     $report.status = 'failed'
     $report.reason = Get-NativeFailureReason $_
-    $report.error = if ($CI) { 'Native test kit failed; inspect the recorded test exit codes.' } else { $_.Exception.Message }
+    $report.error = if ($CI) { "Native test kit failed: phase=$($report.phase), reason=$($report.reason)." } else { $_.Exception.Message }
     throw
 } finally {
     $report.finished = [DateTime]::UtcNow.ToString('o')
     foreach ($check in $report.smokeChecks) {
         Write-Output "NATIVE_RUNNER stage=$($check.stage) reason=$($check.reason) duration_ms=$($check.durationMs)"
+        Write-Output "NATIVE_WINDOW scenario=$($check.scenario) process=$($check.processState) window=$($check.windowState) responding=$($check.responding) close_accepted=$($check.closeAccepted.ToString().ToLowerInvariant()) close_attempts=$($check.closeAttempts)"
     }
     Save-WindowsReport
     foreach ($name in $previous.Keys) {

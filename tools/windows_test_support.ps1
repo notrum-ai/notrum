@@ -14,11 +14,24 @@ function Throw-NativeFailure([string]$Reason) {
 
 function Get-NativeFailureReason($Failure) {
     $allowed = @('test/timeout', 'test/failed', 'window/timeout', 'state/timeout',
-        'process/early/exit', 'process/exit/code', 'process/close', 'process/cleanup',
+        'process/early/exit', 'process/exit/code', 'process/close/rejected', 'process/exit/timeout', 'process/cleanup',
         'state/mismatch', 'content/changed')
     $reason = $Failure.Exception.Data['NotrumReason']
     if ($reason -in $allowed) { return $reason }
     return 'runner/error'
+}
+
+function Update-NativeProcessState($Process, $Record) {
+    $Process.Refresh()
+    $Record.processState = if ($Process.HasExited) { 'exited' } else { 'running' }
+    $Record.windowState = 'unknown'
+    $Record.responding = 'unknown'
+    if (-not $Process.HasExited) {
+        $Record.windowState = if ($Process.MainWindowHandle -eq [IntPtr]::Zero) { 'absent' } else { 'present' }
+        if ($Record.windowState -eq 'present') {
+            $Record.responding = $Process.Responding.ToString().ToLowerInvariant()
+        }
+    }
 }
 
 function Wait-NativeReady {
@@ -26,29 +39,65 @@ function Wait-NativeReady {
         [scriptblock]$Now = { Get-NativeTime },
         [scriptblock]$Pause = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds })
     $deadline = (& $Now) + 60
+    $stableSince = $null
+    $stableWindow = [IntPtr]::Zero
     while ($true) {
-        $Process.Refresh()
+        Update-NativeProcessState $Process $Record
         if ($Process.HasExited) { Throw-NativeFailure 'process/early/exit' }
         $Record.stage = 'window'
         $ready = $Process.MainWindowHandle -ne [IntPtr]::Zero -and $Process.Responding
         if ($ready) { $Record.stage = 'state' }
         if ((& $Now) -ge $deadline) { Throw-NativeFailure ($Record.stage + '/timeout') }
         if ($ready -and (& $State)) {
-            if ((& $Now) -ge $deadline) { Throw-NativeFailure 'state/timeout' }
+            $nowSeconds = & $Now
+            if ($nowSeconds -ge $deadline) { Throw-NativeFailure 'state/timeout' }
+            # Require the same responsive window and saved state continuously;
+            # the first settings write can precede the end of UI initialization.
+            if ($null -eq $stableSince -or $stableWindow -ne $Process.MainWindowHandle) {
+                $stableSince = $nowSeconds
+                $stableWindow = $Process.MainWindowHandle
+            }
             $Process.Refresh()
             if ($Process.HasExited) { Throw-NativeFailure 'process/early/exit' }
-            return
+            if ($Process.MainWindowHandle -ne $stableWindow -or -not $Process.Responding) {
+                $stableSince = $null
+            } elseif ($nowSeconds - $stableSince -ge 0.5) { return }
+        } else {
+            $stableSince = $null
         }
         & $Pause 100
     }
 }
 
-function Close-NativeProcess($Process) {
-    $Process.Refresh()
-    if ($Process.HasExited) { Throw-NativeFailure 'process/early/exit' }
-    if (-not $Process.CloseMainWindow() -or -not $Process.WaitForExit(30000)) {
-        Throw-NativeFailure 'process/close'
+function Close-NativeProcess {
+    param($Process, $Record = @{},
+        [scriptblock]$Now = { Get-NativeTime },
+        [scriptblock]$Pause = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds })
+    $started = & $Now
+    $deadline = $started + 30
+    $Record.stage = 'close/request'
+    $Record.closeAccepted = $false
+    $Record.closeAttempts = 0
+    while (-not $Record.closeAccepted) {
+        Update-NativeProcessState $Process $Record
+        if ($Process.HasExited) { Throw-NativeFailure 'process/early/exit' }
+        if ((& $Now) -ge $started + 5) { Throw-NativeFailure 'process/close/rejected' }
+        if ($Record.windowState -eq 'present' -and $Record.responding -eq 'true') {
+            $Record.closeAttempts++
+            $Record.closeAccepted = $Process.CloseMainWindow()
+        }
+        # Retry only a request that Windows did not accept. Once accepted, a
+        # second close could hide a shutdown defect or dismiss another window.
+        if (-not $Record.closeAccepted) { & $Pause 100 }
     }
+    $Record.stage = 'close/wait'
+    $remaining = [int][Math]::Max(0, [Math]::Ceiling(($deadline - (& $Now)) * 1000))
+    $exited = $remaining -gt 0 -and $Process.WaitForExit($remaining)
+    Update-NativeProcessState $Process $Record
+    if (-not $exited) {
+        Throw-NativeFailure 'process/exit/timeout'
+    }
+    $Record.exitCode = $Process.ExitCode
     if ($Process.ExitCode -ne 0) { Throw-NativeFailure 'process/exit/code' }
 }
 
@@ -97,21 +146,28 @@ function Test-NativeSettings {
 
 function Invoke-NativeSmoke {
     param([string]$Application, [string[]]$Arguments, [scriptblock]$State, $Record,
-        [scriptblock]$Start = { param($Executable, $Arguments)
-            Start-Process -FilePath $Executable -ArgumentList $Arguments -PassThru
-        })
+        [string]$Log,
+        [scriptblock]$Start = { param($Executable, $Arguments, $OutputPath)
+            Start-Process -FilePath $Executable -ArgumentList $Arguments -PassThru -RedirectStandardOutput $OutputPath -RedirectStandardError ($OutputPath + '.stderr')
+        },
+        [scriptblock]$CollectDiagnostics = { param($OutputPath, $Entry) },
+        [scriptblock]$Now = { Get-NativeTime },
+        [scriptblock]$Pause = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds })
     $process = $null
-    $started = Get-NativeTime
+    $started = & $Now
     $Record.stage = 'start'
     $Record.reason = 'none'
+    $Record.closeAccepted = $false
+    $Record.closeAttempts = 0
+    $Record.processState = 'unknown'
+    $Record.windowState = 'unknown'
+    $Record.responding = 'unknown'
     try {
-        $process = & $Start $Application $Arguments
+        $process = & $Start $Application $Arguments $Log
         # Cache the owned handle so ExitCode remains available after termination.
         $null = $process.Handle
-        Wait-NativeReady -Process $process -State $State -Record $Record
-        $Record.stage = 'close'
-        Close-NativeProcess $process
-        $Record.exitCode = $process.ExitCode
+        Wait-NativeReady -Process $process -State $State -Record $Record -Now $Now -Pause $Pause
+        Close-NativeProcess -Process $process -Record $Record -Now $Now -Pause $Pause
         $Record.stage = 'verify'
         if (-not (& $State)) { Throw-NativeFailure 'state/mismatch' }
         $Record.stage = 'complete'
@@ -126,7 +182,14 @@ function Invoke-NativeSmoke {
                 throw
             }
         } finally {
-            $Record.durationMs = [long](([Math]::Max(0, (Get-NativeTime) - $started)) * 1000)
+            $Record.durationMs = [long](([Math]::Max(0, (& $Now) - $started)) * 1000)
+            try { & $CollectDiagnostics $Log $Record } catch {
+                $Record.diagnosticsError = 'collection/failed'
+                if ($Record.reason -eq 'none') {
+                    $Record.reason = 'runner/error'
+                    throw
+                }
+            }
         }
     }
 }

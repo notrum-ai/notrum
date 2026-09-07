@@ -79,9 +79,9 @@ DELETE_ERRORS = frozenset({
 
 def native_line(line):
     if re.fullmatch(
-        r"NATIVE_RUNNER stage=(rust|start|window|state|close|verify|complete) "
+        r"NATIVE_RUNNER stage=(rust|start|window|state|close|close/request|close/wait|verify|complete) "
         r"reason=(none|test/timeout|test/failed|window/timeout|state/timeout|process/early/exit|"
-        r"process/exit/code|process/close|process/cleanup|state/mismatch|content/changed|runner/error) "
+        r"process/exit/code|process/close|process/close/rejected|process/exit/timeout|process/cleanup|state/mismatch|content/changed|runner/error) "
         r"duration_ms=[0-9]{1,10}", line,
     ):
         return line
@@ -140,6 +140,8 @@ def native_line(line):
                         and match[3] in NATIVE_IO_KINDS
                         and -(2**31) <= int(match[4]) < 2**31) else None
     patterns = (
+        r"NATIVE_LIFECYCLE stage=(WindowClosed|WindowSettingsFlushed|WindowSettingsFailed|EventLoopExited|FinalSettingsFlushed|FinalSettingsFailed|ShutdownComplete)",
+        r"NATIVE_WINDOW scenario=(startup|external) process=(unknown|running|exited) window=(unknown|present|absent) responding=(unknown|true|false) close_accepted=(true|false) close_attempts=[0-9]{1,3}",
         r"NATIVE_DELETE_TEST round=([1-9]|[12][0-9]|3[0-2]) deletion=[12] phase=(Begin|End)",
         r"NATIVE_VERSION site=(MetadataOpened|OpenVersioned|RewriteTarget|RewriteOpened|RewriteBeforeReplace|RewriteRetryTarget) identity_equal=(true|false|Unavailable) size_equal=(true|false) modified_equal=(true|false) changed_equal=(true|false|Unavailable) digest_equal=(true|false|Unavailable)",
         r"NATIVE_SAVE stage=(OpenTarget|Scan|CreateTemp|Write|FileSync|ConflictCheck|Replace|SourceRemove|ParentSync) outcome=PreCommit",

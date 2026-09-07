@@ -161,10 +161,12 @@ error messages, path strings or file contents. Malformed records are rejected
 before the legacy diagnostic extractors, and filtering the records again is safe.
 The same records survive in `checks.log` and `windows-results.json`.
 
-The Windows runner waits for its own responsive window and persisted selection,
-with one monotonic 60-second deadline, before requesting a normal close (30
-seconds maximum). Startup uses a synthetic note so that a selection change
-actually requires settings to be saved. External-file launch checks both paths
+The Windows runner requires the same responsive window and persisted selection
+continuously for 500 ms, within one monotonic 60-second deadline. It then requests
+a normal close within a shared 30-second shutdown deadline. For up to five
+seconds it retries only requests that Windows has not accepted; after acceptance
+it only waits for the process to exit. Startup uses a synthetic note so that a
+selection change actually requires settings to be saved. External-file launch checks both paths
 in order, the selected file, and unchanged contents after closing. These are
 launch/state smoke checks, not visual UI acceptance.
 
@@ -173,7 +175,22 @@ executables remain failures while the remaining executables still run.
 `windows-results.json` is checkpointed after each executable and adds
 `durationMs`, `stage`, `reason`, and `smokeChecks`; a timed-out executable has
 no invented exit code. `NATIVE_RUNNER` console records contain only fixed stage
-and reason labels and a numeric duration. Raw stdout/stderr remain local.
+and reason labels and a numeric duration. `process/close/rejected` at
+`close/request` means no request was accepted; `process/exit/timeout` at
+`close/wait` means an accepted request did not finish within the deadline.
+`process/exit/code` retains the actual nonzero exit code in the JSON report.
+`NATIVE_WINDOW` records the last process/window/responsiveness state, whether
+close was accepted, and the attempt count before forced cleanup.
+
+Native smoke launches opt into `NOTRUM_NATIVE_DIAGNOSTICS=1`. Fixed-vocabulary
+`NATIVE_LIFECYCLE` records show entry into `WindowClosed`, success or failure of
+the close-time settings flush, return from the event loop, the final settings
+flush, and the end of main's explicit shutdown code. `ShutdownComplete` precedes
+the remaining local destructors; the runner still requires actual process exit.
+Both application output streams are collected after cleanup, including on
+failure; only sanitized records enter the CI console
+and each smoke check's `diagnostics`. A collection failure is recorded separately
+and never replaces the original smoke failure. Raw stdout/stderr remain local.
 The checksummed test package includes `windows_test_support.ps1` and its
 standalone behavior tests, which run before the native kit. They exercise
 delayed readiness, shared deadlines, early exits, closing/cleanup, continued
@@ -183,8 +200,9 @@ No failed scenario is retried automatically.
 Rust captures these diagnostics with each test, so successful tests remain quiet
 and failed tests retain their diagnostic context. The platform instrumentation is
 enabled by `test-utils` (included in the native kit's `--all-features` build);
-ordinary release builds do not emit it. A failing first-use lock test identifies
-creation/acquisition failures separately from save conflicts. A Windows rerun is
+ordinary release builds do not emit it. The opt-in lifecycle records above are
+also available in the packaged release executable. A failing first-use lock test
+identifies creation/acquisition failures separately from save conflicts. A Windows rerun is
 still required to establish which remaining native failures are resolved.
 
 UI acceptance failures additionally emit `UI_ACCEPTANCE_DIAGNOSTIC` lines to

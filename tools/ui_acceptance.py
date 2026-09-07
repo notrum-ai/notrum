@@ -7211,6 +7211,24 @@ def rss_keyboard_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.close_app()
 
 
+def assert_rss_filter_carets(driver: WindowDriver, *, focused: int | None) -> None:
+    # Home places the caret just before each fixture's first glyph. Observe
+    # more than a full 500ms blink cycle so hidden phases cannot mask a leak.
+    crops = ((578, 130, 2, 24), (578, 277, 2, 24))
+    deadline = time.monotonic() + 1.1
+    focused_visible = False
+    while time.monotonic() < deadline:
+        for index, crop in enumerate(crops):
+            visible = driver.window_color_pixel_count((35, 39, 45), crop=crop) >= 12
+            if index == focused:
+                focused_visible |= visible
+            elif visible:
+                raise AcceptanceFailure("unfocused RSS filter field paints a caret")
+        time.sleep(0.05)
+    if focused is not None and not focused_visible:
+        raise AcceptanceFailure("focused RSS filter field never paints a caret")
+
+
 def rss_filters_scenario(driver: WindowDriver, workspace: Path) -> None:
     del workspace
     workspace, config_path, cache = cached_rss_workspace(driver, "rss-filters", [
@@ -7234,6 +7252,15 @@ def rss_filters_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.click_note(1, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
     driver.click_point(1014, 28)
     driver.wait_for_stable_frame("RSS filter popup", crop=(550, 55, 480, 520), stable_for=0.15)
+    assert_rss_filter_carets(driver, focused=None)
+    driver.click_point(640, 150)
+    driver.key("Home")
+    assert_rss_filter_carets(driver, focused=0)
+    driver.click_point(640, 300)
+    driver.key("Home")
+    assert_rss_filter_carets(driver, focused=1)
+    driver.click_point(770, 82)
+    assert_rss_filter_carets(driver, focused=None)
     driver.click_point(640, 150)
     driver.key("ctrl+a")
     driver.type_text("jk")

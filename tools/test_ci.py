@@ -170,6 +170,34 @@ class CITests(unittest.TestCase):
                 driver.wait_for_stable_frame.assert_not_called()
                 driver.capture.assert_not_called()
 
+    def test_rss_filter_caret_check_rejects_unfocused_and_missing_cursors(self):
+        for focused, behavior in ((None, "correct"), (0, "correct"), (1, "correct"),
+                                  (None, "both"), (0, "both"), (1, "missing")):
+            with self.subTest(focused=focused, behavior=behavior):
+                clock = [0.0]
+                driver = Mock(spec=ui_acceptance.WindowDriver)
+
+                def advance(seconds):
+                    clock[0] += seconds
+
+                def count(_color, *, crop):
+                    index = 0 if crop[1] == 130 else 1
+                    blinking = clock[0] % 1.0 >= 0.5
+                    visible = behavior == "both" or behavior == "correct" and index == focused
+                    return 24 if visible and blinking else 0
+
+                driver.window_color_pixel_count.side_effect = count
+                with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(ui_acceptance.time, "sleep", side_effect=advance):
+                    if behavior == "correct":
+                        ui_acceptance.assert_rss_filter_carets(driver, focused=focused)
+                        self.assertGreaterEqual(clock[0], 1.1)
+                    else:
+                        with self.assertRaises(ui_acceptance.AcceptanceFailure):
+                            ui_acceptance.assert_rss_filter_carets(driver, focused=focused)
+                driver.click_point.assert_not_called()
+                driver.key.assert_not_called()
+
     def test_private_search_wait_never_captures_note_pixels_to_disk(self):
         for state in ("delayed", "empty", "changing"):
             with self.subTest(state=state):

@@ -147,8 +147,6 @@ fn form(
         }
     })
     .style(move |s| s.font_size(12.0).color(palette.muted).width_full());
-    let retry_model = model.clone();
-    let retry_id = id.clone();
     v_stack((
         label(move || tr!(RssAiFilters)).style(move |s| s.font_size(16.0).color(palette.ink)),
         label(move || tr!(RssAiLikes)),
@@ -159,14 +157,6 @@ fn form(
         dropdown,
         status,
         h_stack((
-            text_button(
-                msg!(RefreshFeed),
-                IconButtonTone::Secondary,
-                palette,
-                move || {
-                    retry_model.borrow_mut().start_rss_refresh(retry_id.clone());
-                },
-            ),
             empty().style(|s| s.flex_grow(1.0)),
             text_button(
                 msg!(Cancel),

@@ -357,3 +357,17 @@ UpdateResponseFailed = Sürüm bilgileri okunamadı.
 UpdateNoPackage = Bu sürümün bu platform için paketi yok.
 UpdateChecksumFailed = İndirilen paket yayımlanan sağlama toplamıyla eşleşmedi.
 UpdateFailed = Güncelleme tamamlanamadı. Ayrıntılar: { $error }
+
+RssAiFilters = AI filtreleri
+RssAiLikes = Beğenilenler
+RssAiDislikes = Beğenilmeyenler
+RssAiLike = Beğen
+RssAiDislike = Beğenme
+RssAiReady = Tercihler bu akış için geçerlidir.
+RssAiBusy = AI çalışıyor…
+RssAiPaused = Sonraki ziyarete kadar duraklatıldı.
+RssAiRetry = AI hatası; sonraki döngüde yeniden denenecek.
+RssAiSettings = AI anahtarını ve model ayarlarını kontrol edin.
+RssAiConflict = Veriler değişti. Kaydetmek için yeniden açın.
+RssAiTooLong = Her alan en fazla 16 KiB olabilir.
+RssAiRepeat = Yeniden dene

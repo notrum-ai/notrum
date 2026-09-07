@@ -17,7 +17,7 @@ floem_renderer = "=0.2.0"
 chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
 pulldown-cmark = { version = "=0.13.4", default-features = false }
 url = "=2.5.8"
-floem = { version = "=0.2.0", default-features = false, features = ["rfd-async-std", "vger"] }
+floem = { version = "=0.2.0", default-features = false, features = ["rfd-async-std", "vger", "editor"] }
 notrum-core = { version = "0.1.0", path = "../../crates/notrum-core" }
 notrum-editor = { version = "0.1.0", path = "../../crates/notrum-editor" }
 notrum-search = { version = "0.1.0", path = "../../crates/notrum-search" }

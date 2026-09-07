@@ -358,3 +358,17 @@ UpdateResponseFailed = Die Release-Informationen konnten nicht gelesen werden.
 UpdateNoPackage = Dieses Release enthält kein Paket für diese Plattform.
 UpdateChecksumFailed = Das geladene Paket stimmt nicht mit der veröffentlichten Prüfsumme überein.
 UpdateFailed = Das Update konnte nicht abgeschlossen werden. Details: { $error }
+
+RssAiFilters = KI-Filter
+RssAiLikes = Gefällt mir
+RssAiDislikes = Gefällt mir nicht
+RssAiLike = Gefällt mir
+RssAiDislike = Gefällt mir nicht
+RssAiReady = Einstellungen gelten für diesen Feed.
+RssAiBusy = KI arbeitet…
+RssAiPaused = Bis zum nächsten Besuch pausiert.
+RssAiRetry = KI-Fehler; erneuter Versuch im nächsten Zyklus.
+RssAiSettings = KI-Schlüssel und Modell prüfen.
+RssAiConflict = Speichern fehlgeschlagen: Daten geändert. Erneut öffnen.
+RssAiTooLong = Maximal 16 KiB pro Feld.
+RssAiRepeat = Wiederholen

@@ -85,6 +85,25 @@ Checking and refreshing use only the fixed HTTPS model catalog endpoints at
 disabled; requests have time, page, model-count, and response-size limits.
 These operations never read or transmit notes, protected bodies, or RSS articles.
 
+RSS filtering additionally permits generation at exactly
+`https://api.openai.com/v1/responses` and `https://api.anthropic.com/v1/messages`.
+These clients disable redirects and proxies, bound total request and response
+sizes to 256 KiB and time to 60 seconds, and use typed JSON results. RSS text is
+untrusted data, never an instruction source. Keys and request/response contents
+are excluded from errors and diagnostics. See the provider specifications:
+[OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
+and [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create).
+
+RSS subscription configuration retains each feed's `preferences` (likes,
+dislikes, alias and version). Its `state.json` retains read IDs, versioned
+reactions and automatic decisions (including keep), pending learning and
+`schedule`: iteration, next check in Unix milliseconds, pause, visit generation,
+forced-cycle permission and the classification budget used. These fields default
+in memory when absent; reading does not migrate files. Unknown fields survive
+writes. RSS mutations use a cross-process operation lock, revision checks and
+atomic replacement. Background results recheck the workspace session, feed,
+preferences, reaction, content and read state before saving.
+
 ### Workspace encryption
 
 A protected note keeps its YAML front matter and title-derived filename in

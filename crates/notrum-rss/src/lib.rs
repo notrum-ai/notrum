@@ -3,11 +3,11 @@
 
 #![forbid(unsafe_code)]
 
-//! Persistent RSS/Atom subscriptions with disposable, bounded feed caches.
+//! Persistent RSS/Atom subscriptions, bounded feed caches and durable per-feed state.
 
 use notrum_platform::fs::{self, OpenOptions};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -29,8 +29,10 @@ pub const MAX_ENTRY_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_CACHED_ENTRIES: usize = 500;
 const CONFIG_VERSION: u32 = 1;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+mod filter;
+pub use filter::*;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct RssEntry {
     pub id: String,
     pub title: String,
@@ -54,6 +56,22 @@ pub struct RssFeedCache {
 pub struct RssReadState {
     pub read_entry_ids: BTreeSet<String>,
     pub last_read_at: Option<String>,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub entries: BTreeMap<String, RssEntryState>,
+    #[serde(default)]
+    pub schedule: RssSchedule,
+    #[serde(default)]
+    pub model_version: String,
+    #[serde(default)]
+    pub ai_error: Option<String>,
+    #[serde(default)]
+    pub ai_error_model: String,
+    #[serde(default)]
+    pub ai_error_iteration: u32,
+    #[serde(flatten)]
+    pub additional: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -69,6 +87,10 @@ pub struct RssSubscription {
     pub deleted: bool,
     pub order: BTreeMap<String, u32>,
     pub revision: u64,
+    #[serde(default)]
+    pub preferences: RssPreferences,
+    #[serde(flatten)]
+    pub additional: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,6 +127,8 @@ struct SubscriptionFile {
     #[serde(default)]
     revision: u64,
     subscriptions: Vec<RssSubscription>,
+    #[serde(flatten)]
+    additional: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Default)]
@@ -147,6 +171,7 @@ impl FileEngineFactory for RssEngineFactory {
             presentation: ItemPresentation::Feed,
             toolbar_actions: vec![
                 ToolbarAction::Refresh,
+                ToolbarAction::AiFilters,
                 ToolbarAction::Rename,
                 ToolbarAction::Categories,
                 ToolbarAction::Pin,
@@ -171,6 +196,7 @@ impl FileEngineFactory for RssEngineFactory {
     }
 }
 
+#[derive(Clone)]
 pub struct RssEngine {
     workspace: PathBuf,
     subscriptions: Vec<RssSubscription>,
@@ -182,7 +208,7 @@ impl RssEngine {
     pub fn open(workspace: impl AsRef<Path>) -> Result<Self, EngineError> {
         let workspace = workspace.as_ref().to_path_buf();
         let path = config_path(&workspace);
-        let (subscriptions, config_revision, diagnostic) = match fs::read(&path) {
+        let (subscriptions, config_revision, diagnostic) = match read_bounded(&path) {
             Ok(bytes) => match serde_json::from_slice::<SubscriptionFile>(&bytes) {
                 Ok(file) if file.version == CONFIG_VERSION => {
                     match validate_subscription_file(&file) {
@@ -224,6 +250,10 @@ impl RssEngine {
         &self.subscriptions
     }
 
+    pub fn config_revision(&self) -> u64 {
+        self.config_revision
+    }
+
     pub fn summaries(&self) -> Vec<RssSubscriptionSummary> {
         self.subscriptions
             .iter()
@@ -234,7 +264,9 @@ impl RssEngine {
                 let unread = cache
                     .entries
                     .iter()
-                    .filter(|entry| !state.read_entry_ids.contains(&entry.id))
+                    .filter(|entry| {
+                        !state.read_entry_ids.contains(&entry.id) && !state.hidden(&entry.id)
+                    })
                     .count() as u64;
                 let display_title = subscription
                     .title_override
@@ -276,6 +308,8 @@ impl RssEngine {
             deleted: false,
             order: BTreeMap::new(),
             revision: 1,
+            preferences: RssPreferences::default(),
+            additional: BTreeMap::new(),
         });
         if let Err(error) = self.persist() {
             self.subscriptions.pop();
@@ -312,7 +346,7 @@ impl RssEngine {
         }
         Ok((
             self.load_cache(item_id).unwrap_or_default(),
-            self.load_read_state(item_id).unwrap_or_default(),
+            self.load_read_state(item_id)?,
         ))
     }
 
@@ -322,11 +356,13 @@ impl RssEngine {
         entry_id: &str,
         timestamp: &str,
     ) -> Result<bool, EngineError> {
+        let _lock = self.operation_lock()?;
         let (_, mut state) = self.feed(item_id)?;
         if !state.read_entry_ids.insert(entry_id.to_owned()) {
             return Ok(false);
         }
         state.last_read_at = Some(timestamp.to_owned());
+        state.revision = state.revision.checked_add(1).ok_or(EngineError::Conflict)?;
         write_json_atomic(&read_state_path(&self.workspace, item_id), &state)?;
         Ok(true)
     }
@@ -347,11 +383,16 @@ impl RssEngine {
     }
 
     pub fn apply_refresh(&mut self, result: RssRefreshResult) -> Result<(), EngineError> {
+        let _lock = self.operation_lock()?;
         let item_id = match &result {
             RssRefreshResult::NotModified { item_id, .. }
             | RssRefreshResult::Fetched { item_id, .. } => item_id.clone(),
         };
-        if !self.subscriptions.iter().any(|item| item.id == item_id) {
+        if !self
+            .subscriptions
+            .iter()
+            .any(|item| item.id == item_id && !item.deleted)
+        {
             return Err(EngineError::Io("unknown RSS subscription".to_owned()));
         }
         match result {
@@ -362,8 +403,8 @@ impl RssEngine {
             }
             RssRefreshResult::Fetched { mut cache, .. } => {
                 let previous = self.load_cache(&item_id).unwrap_or_default();
-                let state_missing = !read_state_path(&self.workspace, &item_id).exists();
-                let mut state = self.load_read_state(&item_id).unwrap_or_default();
+                let state_missing = previous.fetched_at.is_none() && previous.entries.is_empty();
+                let mut state = self.load_read_state(&item_id)?;
                 let mut seen = HashSet::new();
                 cache.entries.retain(|entry| seen.insert(entry.id.clone()));
                 cache.entries.truncate(MAX_CACHED_ENTRIES);
@@ -380,6 +421,10 @@ impl RssEngine {
                 state
                     .read_entry_ids
                     .retain(|entry_id| current_ids.contains(entry_id.as_str()));
+                state
+                    .entries
+                    .retain(|entry_id, _| current_ids.contains(entry_id.as_str()));
+                state.revision = state.revision.checked_add(1).ok_or(EngineError::Conflict)?;
                 let changed = previous.title != cache.title || previous.entries != cache.entries;
                 write_json_atomic(&cache_path(&self.workspace, &item_id), &cache)?;
                 write_json_atomic(&read_state_path(&self.workspace, &item_id), &state)?;
@@ -401,8 +446,10 @@ impl RssEngine {
     }
 
     fn persist(&mut self) -> Result<(), EngineError> {
+        let _lock = self.operation_lock()?;
         let path = config_path(&self.workspace);
-        let disk_revision = match fs::read(&path) {
+        let additional = read_json_or_default::<SubscriptionFile>(&path)?.additional;
+        let disk_revision = match read_bounded(&path) {
             Ok(bytes) => {
                 serde_json::from_slice::<SubscriptionFile>(&bytes)
                     .map_err(|error| EngineError::Io(format!("RSS config is invalid: {error}")))?
@@ -424,6 +471,7 @@ impl RssEngine {
                 version: CONFIG_VERSION,
                 revision: next_revision,
                 subscriptions: self.subscriptions.clone(),
+                additional,
             },
         )?;
         self.config_revision = next_revision;
@@ -436,6 +484,13 @@ impl RssEngine {
 
     fn load_read_state(&self, item_id: &ItemId) -> Result<RssReadState, EngineError> {
         read_json_or_default(&read_state_path(&self.workspace, item_id))
+    }
+
+    pub fn operation_lock(&self) -> Result<notrum_platform::OperationLock, EngineError> {
+        let directory = self.workspace.join(".notrum/engines/rss");
+        ensure_directories(&directory)?;
+        notrum_platform::OperationLock::directory(&directory)
+            .map_err(|_| EngineError::Io("RSS lock unavailable".into()))
     }
 }
 
@@ -552,7 +607,7 @@ impl FileEngine for RssEngine {
         vec![notrum_engine::BackgroundTaskDescriptor {
             id: notrum_engine::TaskId("refresh".to_owned()),
             label: "Обновить".to_owned(),
-            scheduled: false,
+            scheduled: true,
             manual: true,
         }]
     }
@@ -860,11 +915,23 @@ fn read_json_or_default<T>(path: &Path) -> Result<T, EngineError>
 where
     T: serde::de::DeserializeOwned + Default,
 {
-    match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).or_else(|_| Ok(T::default())),
+    match read_bounded(path) {
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).map_err(|_| EngineError::Io("invalid RSS state".into()))
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(error) => Err(EngineError::Io(error.to_string())),
     }
+}
+
+fn read_bounded(path: &Path) -> std::io::Result<Vec<u8>> {
+    let file = OpenOptions::new().read(true).open(path)?;
+    let mut bytes = Vec::new();
+    file.take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > 64 * 1024 * 1024 {
+        return Err(std::io::Error::other("RSS file exceeds limit"));
+    }
+    Ok(bytes)
 }
 
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), EngineError> {
@@ -881,8 +948,20 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), EngineE
     }
     let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let temporary = directory.join(format!(".rss.notrum-tmp-{}-{sequence}", std::process::id()));
-    let mut bytes =
-        serde_json::to_vec_pretty(value).map_err(|error| EngineError::Io(error.to_string()))?;
+    let mut value =
+        serde_json::to_value(value).map_err(|_| EngineError::Io("invalid RSS data".into()))?;
+    // Cache formats predate typed extension maps. Preserve future object fields
+    // and future fields of surviving entries without resurrecting removed IDs.
+    if let Ok(bytes) = read_bounded(path)
+        && let Ok(old) = serde_json::from_slice::<serde_json::Value>(&bytes)
+    {
+        preserve_unknown(&mut value, &old);
+    }
+    let mut bytes = serde_json::to_vec_pretty(&value)
+        .map_err(|_| EngineError::Io("invalid RSS data".into()))?;
+    if bytes.len() > 64 * 1024 * 1024 {
+        return Err(EngineError::Io("RSS file exceeds limit".into()));
+    }
     bytes.push(b'\n');
     let write_result = (|| -> Result<(), EngineError> {
         let mut file = OpenOptions::new()
@@ -904,6 +983,29 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), EngineE
         let _ = fs::remove_file(&temporary);
     }
     write_result
+}
+
+fn preserve_unknown(value: &mut serde_json::Value, old: &serde_json::Value) {
+    if let (Some(current), Some(previous)) = (value.as_object_mut(), old.as_object()) {
+        for (key, field) in previous {
+            if !current.contains_key(key) {
+                current.insert(key.clone(), field.clone());
+            }
+        }
+        if let Some(entries) = current
+            .get_mut("entries")
+            .and_then(serde_json::Value::as_array_mut)
+            && let Some(previous) = previous
+                .get("entries")
+                .and_then(serde_json::Value::as_array)
+        {
+            for entry in entries {
+                if let Some(old) = previous.iter().find(|old| old["id"] == entry["id"]) {
+                    preserve_unknown(entry, old);
+                }
+            }
+        }
+    }
 }
 
 fn ensure_directories(path: &Path) -> Result<(), EngineError> {

@@ -358,3 +358,17 @@ UpdateResponseFailed = রিলিজের তথ্য পড়া যায
 UpdateNoPackage = এই রিলিজে এই প্ল্যাটফর্মের প্যাকেজ নেই।
 UpdateChecksumFailed = ডাউনলোড করা প্যাকেজ প্রকাশিত চেকসামের সঙ্গে মেলেনি।
 UpdateFailed = আপডেট সম্পূর্ণ করা যায়নি। বিবরণ: { $error }
+
+RssAiFilters = AI ফিল্টার
+RssAiLikes = পছন্দ
+RssAiDislikes = অপছন্দ
+RssAiLike = পছন্দ
+RssAiDislike = অপছন্দ
+RssAiReady = পছন্দগুলি এই ফিডে প্রযোজ্য।
+RssAiBusy = AI কাজ করছে…
+RssAiPaused = পরবর্তী ভিজিট পর্যন্ত স্থগিত।
+RssAiRetry = AI ত্রুটি; পরবর্তী চক্রে আবার চেষ্টা হবে।
+RssAiSettings = AI কী এবং মডেল সেটিংস দেখুন।
+RssAiConflict = ডেটা বদলেছে। সংরক্ষণ করতে আবার খুলুন।
+RssAiTooLong = প্রতি ঘরে সর্বোচ্চ 16 KiB।
+RssAiRepeat = আবার চেষ্টা

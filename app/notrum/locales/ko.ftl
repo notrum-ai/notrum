@@ -357,3 +357,17 @@ UpdateResponseFailed = 릴리스 정보를 읽을 수 없습니다.
 UpdateNoPackage = 이 릴리스에는 이 플랫폼용 패키지가 없습니다.
 UpdateChecksumFailed = 내려받은 패키지가 공개된 체크섬과 일치하지 않습니다.
 UpdateFailed = 업데이트를 완료할 수 없습니다. 세부 정보: { $error }
+
+RssAiFilters = AI 필터
+RssAiLikes = 좋아요
+RssAiDislikes = 싫어요
+RssAiLike = 좋아요
+RssAiDislike = 싫어요
+RssAiReady = 이 피드에 적용됩니다.
+RssAiBusy = AI 처리 중…
+RssAiPaused = 다음 방문까지 일시 중지됩니다.
+RssAiRetry = AI 오류. 다음 주기에 재시도합니다.
+RssAiSettings = AI 키와 모델을 확인하세요.
+RssAiConflict = 데이터가 변경되었습니다. 다시 열어 주세요.
+RssAiTooLong = 각 필드는 최대 16 KiB입니다.
+RssAiRepeat = 재시도

@@ -357,3 +357,17 @@ UpdateResponseFailed = リリース情報を読み取れませんでした。
 UpdateNoPackage = このリリースにはこのプラットフォーム向けのパッケージがありません。
 UpdateChecksumFailed = ダウンロードしたパッケージが公開されたチェックサムと一致しませんでした。
 UpdateFailed = アップデートを完了できませんでした。詳細: { $error }
+
+RssAiFilters = AIフィルター
+RssAiLikes = 好き
+RssAiDislikes = 嫌い
+RssAiLike = 好き
+RssAiDislike = 嫌い
+RssAiReady = このフィードに適用されます。
+RssAiBusy = AI処理中…
+RssAiPaused = 次の訪問まで一時停止。
+RssAiRetry = AIエラー。次の周期で再試行します。
+RssAiSettings = AIキーとモデルを確認してください。
+RssAiConflict = データが変更されました。開き直してください。
+RssAiTooLong = 各欄は16 KiBまでです。
+RssAiRepeat = 再試行

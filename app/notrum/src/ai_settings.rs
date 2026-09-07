@@ -965,7 +965,7 @@ fn aliases_section(controller: Controller, palette: Palette) -> impl IntoView {
     })
 }
 
-fn alias_dropdown<T: Clone + 'static>(
+pub(crate) fn alias_dropdown<T: Clone + 'static>(
     value: RwSignal<Option<T>>,
     items: Vec<T>,
     display: impl Fn(Option<T>) -> String + 'static,

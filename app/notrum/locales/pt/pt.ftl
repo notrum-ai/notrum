@@ -358,3 +358,17 @@ UpdateResponseFailed = Não foi possível ler as informações da versão.
 UpdateNoPackage = Esta versão não tem pacote para esta plataforma.
 UpdateChecksumFailed = O pacote transferido não corresponde à soma de verificação publicada.
 UpdateFailed = Não foi possível concluir a atualização. Detalhes: { $error }
+
+RssAiFilters = Filtros de IA
+RssAiLikes = Gosto
+RssAiDislikes = Não gosto
+RssAiLike = Gosto
+RssAiDislike = Não gosto
+RssAiReady = Preferências deste feed.
+RssAiBusy = IA a processar…
+RssAiPaused = Em pausa até à próxima visita.
+RssAiRetry = Erro de IA; nova tentativa no próximo ciclo.
+RssAiSettings = Verifique a chave e o modelo de IA.
+RssAiConflict = Os dados mudaram. Reabra para guardar.
+RssAiTooLong = Máximo de 16 KiB por campo.
+RssAiRepeat = Tentar novamente

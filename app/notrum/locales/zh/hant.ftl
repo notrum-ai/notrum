@@ -357,3 +357,17 @@ UpdateResponseFailed = 無法讀取發布資訊。
 UpdateNoPackage = 此版本沒有適用於此平台的安裝包。
 UpdateChecksumFailed = 下載的安裝包與發布的校驗和不一致。
 UpdateFailed = 更新未能完成。詳細資訊：{ $error }
+
+RssAiFilters = AI 篩選
+RssAiLikes = 喜歡
+RssAiDislikes = 不喜歡
+RssAiLike = 讚
+RssAiDislike = 不讚
+RssAiReady = 偏好僅適用於此訂閱。
+RssAiBusy = AI 正在處理…
+RssAiPaused = 已暫停，等待下次造訪。
+RssAiRetry = AI 出錯，將在下個週期重試。
+RssAiSettings = 請檢查 AI 金鑰和模型設定。
+RssAiConflict = 資料已變更，請重新開啟後儲存。
+RssAiTooLong = 每個欄位最多 16 KiB。
+RssAiRepeat = 重試

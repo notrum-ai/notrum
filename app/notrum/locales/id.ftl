@@ -357,3 +357,17 @@ UpdateResponseFailed = Informasi rilis tidak dapat dibaca.
 UpdateNoPackage = Rilis ini tidak memiliki paket untuk platform ini.
 UpdateChecksumFailed = Paket yang diunduh tidak cocok dengan checksum yang diterbitkan.
 UpdateFailed = Pembaruan tidak dapat diselesaikan. Detail: { $error }
+
+RssAiFilters = Filter AI
+RssAiLikes = Suka
+RssAiDislikes = Tidak suka
+RssAiLike = Suka
+RssAiDislike = Tidak suka
+RssAiReady = Preferensi berlaku untuk feed ini.
+RssAiBusy = AI sedang bekerja…
+RssAiPaused = Dijeda sampai kunjungan berikutnya.
+RssAiRetry = AI gagal; coba lagi pada siklus berikutnya.
+RssAiSettings = Periksa kunci dan model AI.
+RssAiConflict = Data berubah. Buka kembali untuk menyimpan.
+RssAiTooLong = Maksimal 16 KiB per kolom.
+RssAiRepeat = Coba lagi

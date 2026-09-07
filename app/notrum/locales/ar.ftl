@@ -362,3 +362,17 @@ UpdateResponseFailed = تعذّرت قراءة معلومات الإصدار.
 UpdateNoPackage = لا توجد حزمة لهذه المنصة في هذا الإصدار.
 UpdateChecksumFailed = لا تطابق الحزمة المنزَّلة المجموع الاختباري المنشور.
 UpdateFailed = تعذّر إكمال التحديث. التفاصيل: { $error }
+
+RssAiFilters = فلاتر الذكاء الاصطناعي
+RssAiLikes = يعجبني
+RssAiDislikes = لا يعجبني
+RssAiLike = إعجاب
+RssAiDislike = عدم إعجاب
+RssAiReady = تسري التفضيلات على هذه الخلاصة.
+RssAiBusy = الذكاء الاصطناعي يعمل…
+RssAiPaused = متوقف حتى زيارتك التالية.
+RssAiRetry = خطأ؛ ستتم المحاولة في الدورة التالية.
+RssAiSettings = تحقق من مفتاح الذكاء الاصطناعي والنموذج.
+RssAiConflict = تغيرت البيانات. أعد الفتح للحفظ.
+RssAiTooLong = الحد الأقصى لكل حقل 16 KiB.
+RssAiRepeat = إعادة المحاولة

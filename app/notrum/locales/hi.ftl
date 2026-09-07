@@ -358,3 +358,17 @@ UpdateResponseFailed = रिलीज़ जानकारी पढ़ी न
 UpdateNoPackage = इस रिलीज़ के लिए इस प्लेटफ़ॉर्म का पैकेज नहीं है।
 UpdateChecksumFailed = डाउनलोड किया गया पैकेज प्रकाशित चेकसम से मेल नहीं खाया।
 UpdateFailed = अपडेट पूरा नहीं हो सका। विवरण: { $error }
+
+RssAiFilters = AI फ़िल्टर
+RssAiLikes = पसंद
+RssAiDislikes = नापसंद
+RssAiLike = पसंद
+RssAiDislike = नापसंद
+RssAiReady = पसंद इस फ़ीड पर लागू होती हैं।
+RssAiBusy = AI काम कर रहा है…
+RssAiPaused = अगली बार आने तक रुका हुआ है।
+RssAiRetry = AI त्रुटि; अगले चक्र में फिर प्रयास होगा।
+RssAiSettings = AI कुंजी और मॉडल की सेटिंग जाँचें।
+RssAiConflict = डेटा बदल गया है। सहेजने के लिए फिर खोलें।
+RssAiTooLong = हर फ़ील्ड की सीमा 16 KiB है।
+RssAiRepeat = फिर प्रयास करें

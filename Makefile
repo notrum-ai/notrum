@@ -25,7 +25,7 @@ endif
 UI_JOBS ?= 2
 
 UI_ACCEPTANCE_STANDARD := ui-click-external ui-click-localization ui-click-rss-cards ui-click-rss-keyboard ui-click-workspace ui-click-compatibility ui-click-categories ui-click-interaction ui-click-lifecycle ui-click-tags ui-click-editor ui-click-context-menu ui-click-selection ui-click-persistence ui-click-recovery ui-click-conflict ui-click-search ui-click-find ui-click-resize ui-click-visual
-UI_ACCEPTANCE_SECURE := ui-click-ai ui-click-updates ui-click-crash ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
+UI_ACCEPTANCE_SECURE := ui-click-rss-filters ui-click-ai ui-click-updates ui-click-crash ui-click-password-change ui-click-secure ui-click-secure-recovery ui-click-secure-conflict ui-click-secure-integrity
 
 .PHONY: all help check clean build build-windows test-windows-build build-macos build-linux build-linux-smoke build-container native-smoke native-external-smoke demo-data test-demo-data check-macos test test-release lint fmt fmt-check lock tree audit audit-source audit-dependencies audit-vulnerabilities \
 	diff-check status log diff-stat diff image benchmark-generate \
@@ -412,3 +412,7 @@ ci-package-macos: revision-check
 ci-validate:
 	docker run --rm -v "$(CURDIR):/workspace:ro" -w /workspace rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color .github/workflows/*.yml
 	@SOURCE_REVISION="$$( $(GIT) rev-parse HEAD )" $(COMPOSE) -f compose.yaml -f compose.ci.yaml config --format json | $(COMPOSE) run --rm -T toolchain python3 -B tools/ci.py validate-compose
+
+.PHONY: ui-click-rss-filters
+ui-click-rss-filters: ui-build-test-utils
+	$(RUN) python3 -B tools/ui_acceptance.py rss_filters

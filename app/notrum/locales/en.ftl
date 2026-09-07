@@ -362,3 +362,17 @@ UpdateResponseFailed = The release information could not be read.
 UpdateNoPackage = This release has no package for this platform.
 UpdateChecksumFailed = The downloaded package did not match its published checksum.
 UpdateFailed = The update could not be completed. Details: { $error }
+
+RssAiFilters = AI filters
+RssAiLikes = Likes
+RssAiDislikes = Dislikes
+RssAiLike = Like
+RssAiDislike = Dislike
+RssAiReady = Preferences apply to this feed.
+RssAiBusy = AI is working…
+RssAiPaused = Paused until your next visit.
+RssAiRetry = AI failed; retry on the next cycle.
+RssAiSettings = Check the AI key and model settings.
+RssAiConflict = Could not save: state changed. Reopen and retry.
+RssAiTooLong = Each field is limited to 16 KiB.
+RssAiRepeat = Retry

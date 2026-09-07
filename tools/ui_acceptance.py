@@ -7184,6 +7184,111 @@ def rss_keyboard_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.close_app()
 
 
+def rss_filters_scenario(driver: WindowDriver, workspace: Path) -> None:
+    del workspace
+    workspace, config_path, cache = cached_rss_workspace(driver, "rss-filters", [
+        {"id": f"entry/{i}", "title": title, "author": None, "published": None,
+         "updated": None, "summary": "Native RSS content", "link": None}
+        for i, title in enumerate(["Promotion", "Ambiguous news", "Rust article"])
+    ])
+    config = json.loads(config_path.read_text())
+    config["subscriptions"][0]["deleted"] = False
+    config["subscriptions"][0]["preferences"] = {"likes": "Rust", "dislikes": "Promotions", "alias": "default", "version": 1}
+    config_path.write_text(json.dumps(config))
+    (cache / "state.json").write_text(json.dumps({"read_entry_ids": [], "last_read_at": None,
+        "schedule": {"next_check": 9999999999999}}))
+    global_path = driver.home / ".notrum.cfg"
+    global_path.write_text(json.dumps({"version": 1, "locale": "en", "ai": {
+        "connection": {"provider": "openai", "credential": "ai/key/fixture", "checked_at": 1,
+            "models": [{"id": "fixture", "name": "Fixture", "efforts": []}]},
+        "aliases": {"default": {"model": "fixture", "effort": None}, "reading": {"model": "fixture", "effort": None}}
+    }}))
+    driver.start_app(workspace, "filters", environment_overrides={"NOTRUM_TEST_RSS_AI": "1"})
+    driver.click_note(1, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
+    driver.click_point(1014, 28)
+    driver.wait_for_stable_frame("RSS filter popup", crop=(550, 55, 480, 520), stable_for=0.15)
+    driver.click_point(640, 150)
+    driver.key("ctrl+a")
+    driver.type_text("jk")
+    driver.key("Return")
+    driver.type_text("second line")
+    driver.capture("rss-filter-multiline")
+    # Escape discards both lines, even while a delayed background result arrives.
+    driver.key("Escape")
+    if json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["likes"] != "Rust":
+        raise AcceptanceFailure("Escape saved the RSS preference draft")
+    driver.click_point(1014, 28)
+    driver.click_point(640, 150)
+    driver.key("ctrl+a")
+    driver.type_text("jk")
+    driver.key("Return")
+    driver.type_text("second line")
+    driver.capture("rss-filter-save-draft")
+    driver.click_point(790, 441)
+    driver.key("Down")
+    driver.key("Down")
+    driver.key("Return")
+    driver.click_point(970, 506)
+    wait_until("multiline RSS preferences saved", lambda: json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["likes"] == "jk\nsecond line")
+    state_path = cache / "state.json"
+    def state() -> dict:
+        return json.loads(state_path.read_text())
+    if json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["alias"] != "reading":
+        raise AcceptanceFailure("RSS model alias selection was not saved")
+    wait_until("soft AI filter keeps ambiguous entry", lambda: state().get("entries", {}).get("entry/1", {}).get("decision") == "keep")
+    wait_until("AI hides promotion", lambda: state().get("entries", {}).get("entry/0", {}).get("decision") == "hide")
+    driver.key("j")
+    wait_until("J skips hidden entry", lambda: "entry/1" in state()["read_entry_ids"])
+    if "entry/0" in state()["read_entry_ids"]:
+        raise AcceptanceFailure("J selected a hidden entry")
+    driver.wait_for_stable_frame("filtered selection", crop=EDITOR_CROP, stable_for=0.2)
+    read_before = set(state()["read_entry_ids"])
+    driver.click_point(1054, 116)
+    wait_until("dislike persists", lambda: state()["entries"]["entry/1"].get("reaction") == "dislike")
+    if set(state()["read_entry_ids"]) != read_before:
+        raise AcceptanceFailure("reaction marked a card read")
+    # A hidden title expands inside the app while retaining its hidden state.
+    driver.click_point(440, 117)
+    driver.wait_for_stable_frame("hidden card expanded", crop=EDITOR_CROP, stable_for=0.2)
+    if state()["entries"]["entry/1"]["reaction"] != "dislike":
+        raise AcceptanceFailure("expansion removed a reaction")
+    driver.key("j")
+    wait_until("J selects the next visible entry", lambda: "entry/2" in state()["read_entry_ids"])
+    driver.click_point(1016, 116)
+    wait_until("like persists", lambda: state()["entries"]["entry/2"].get("reaction") == "like")
+    reaction_version = state()["entries"]["entry/2"]["reaction_version"]
+    driver.click_point(1016, 116)
+    driver.wait_for_stable_frame("repeated like", crop=EDITOR_CROP, stable_for=0.2)
+    if state()["entries"]["entry/2"]["reaction_version"] != reaction_version:
+        raise AcceptanceFailure("repeated reaction was not idempotent")
+    # A fresh opposite reaction completes while the popup owns an unsaved draft.
+    driver.click_point(1054, 116)
+    wait_until("opposite reaction", lambda: state()["entries"]["entry/2"].get("reaction") == "dislike")
+    driver.click_point(1014, 28)
+    driver.click_point(640, 150)
+    driver.key("ctrl+a")
+    driver.type_text("draft jk")
+    driver.key("Return")
+    driver.type_text("still here")
+    wait_until("learning completes while editing", lambda: state()["entries"]["entry/2"].get("learned_version") == state()["entries"]["entry/2"]["reaction_version"])
+    set_clipboard_text(driver.environment, "RSS clipboard sentinel")
+    driver.key("ctrl+a")
+    driver.key("ctrl+c")
+    wait_until("background result preserves text and focus", lambda: clipboard_text(driver.environment) == "draft jk\nstill here")
+    persisted = json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["likes"]
+    driver.click_note(0, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
+    driver.wait_for_stable_frame("leave feed with open popup", crop=EDITOR_CROP, stable_for=0.2)
+    driver.click_note(1, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
+    driver.click_point(1014, 28)
+    driver.click_point(640, 150)
+    set_clipboard_text(driver.environment, "RSS reopen sentinel")
+    driver.key("ctrl+a")
+    driver.key("ctrl+c")
+    wait_until("returning to feed loads saved preferences", lambda: clipboard_text(driver.environment) == persisted)
+    driver.key("Escape")
+    driver.close_app()
+
+
 def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
     del workspace
     linked = "[Sheet-Native Computing Foundation](https://example.test/foundation) · [первой статье](https://example.test/first)"
@@ -7303,13 +7408,13 @@ def rss_cards_scenario(driver: WindowDriver, workspace: Path) -> None:
     if image_difference(frame, hover_frame, crop=title_crop) != 0:
         raise AcceptanceFailure("RSS title hover changed its background")
     driver.xdotool("mousemove", "1100", "50")
-    # Feed -> six toolbar actions -> card -> title. Enter and Space must each
+    # Feed -> seven toolbar actions -> card -> title. Enter and Space must each
     # open once; each activation restores the stable feed focus for J/K.
-    for _ in range(8):
+    for _ in range(9):
         driver.key("Tab")
     driver.key("Return")
     expect_open("http://example.test/article")
-    for _ in range(8):
+    for _ in range(9):
         driver.key("Tab")
     driver.key("space")
     expect_open("http://example.test/article")
@@ -8162,6 +8267,7 @@ SCENARIOS: dict[str, Callable[[WindowDriver, Path], None]] = {
     "updates": updates_scenario,
     "localization": localization_scenario,
     "rss_cards": rss_cards_scenario,
+    "rss_filters": rss_filters_scenario,
     "rss_keyboard": rss_keyboard_scenario,
     "creation": creation_scenario,
     "workspace": workspace_scenario,

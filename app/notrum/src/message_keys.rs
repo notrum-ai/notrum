@@ -4,6 +4,20 @@
 #![forbid(unsafe_code)]
 
 message_keys! {
+    RssAiFilters,
+    RssAiLikes,
+    RssAiDislikes,
+    RssAiLike,
+    RssAiDislike,
+    RssAiReady,
+    RssAiBusy,
+    RssAiPaused,
+    RssAiRetry,
+    RssAiSettings,
+    RssAiConflict,
+    RssAiTooLong,
+    RssAiRepeat,
+
     AiAssistant,
     AiDescription,
     AiConnect,

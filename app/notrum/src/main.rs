@@ -12,6 +12,8 @@ mod i18n;
 mod localized_input;
 mod restart;
 mod rss_card;
+mod rss_filters;
+mod rss_service;
 mod settings;
 #[cfg(test)]
 mod test_support;
@@ -47,10 +49,10 @@ use i18n::{Locale, UiText, msg, tr};
 use notrum_core::{
     CatalogOrderItem, CoreError, DocumentTarget, EditorCommand, ExternalFileSummary, ExternalPoll,
     ExternalPollStart, FAVORITED_ORDER_KEY, IntegrityResolution, ItemId, NoteProtection,
-    PersistenceCompletion, RecoveryStatus, RssEntry, RssRefreshResult, RssSubscriptionSummary,
-    SaveStatus, SecureCompletion, SecureJob, SecureOutcome, SecurePhase, SecureProgress,
-    SecureWorkerEvent, ToolbarAction, ViewportRequest, WorkspaceSession, execute_rss_refresh,
-    format_utc_timestamp, initialize_workspace, open_rss_original,
+    PersistenceCompletion, RecoveryStatus, RssEntry, RssSubscriptionSummary, SaveStatus,
+    SecureCompletion, SecureJob, SecureOutcome, SecurePhase, SecureProgress, SecureWorkerEvent,
+    ToolbarAction, ViewportRequest, WorkspaceSession, format_utc_timestamp, initialize_workspace,
+    open_rss_original,
 };
 use notrum_editor::{ByteRange, word_range_in_text};
 use notrum_search::{MAX_RESULTS as MAX_SEARCH_RESULTS, MatchKind, SearchIndex, SearchResult};
@@ -1107,13 +1109,10 @@ impl SecurityUi {
     }
 }
 
-struct RssWorkerEvent {
-    workspace: PathBuf,
-    item_id: ItemId,
-    result: Result<RssRefreshResult, String>,
-}
+static RSS_UI_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 struct AppModel {
+    rss_session: u64,
     workspace: Option<WorkspaceSession>,
     viewport_first_line: usize,
     viewport_first_visual_row: usize,
@@ -1162,8 +1161,14 @@ struct AppModel {
     search_query: String,
     search_results_generation: Option<u64>,
     search_results: Vec<SearchResult>,
-    rss_sender: Sender<RssWorkerEvent>,
-    rss_receiver: Receiver<RssWorkerEvent>,
+    rss_service: Option<rss_service::Service>,
+    rss_poll_scheduled: bool,
+    rss_filters_open: Option<RwSignal<bool>>,
+    rss_status: BTreeMap<String, rss_service::Status>,
+    rss_saves: BTreeMap<String, (u64, bool)>,
+    rss_save_sequence: u64,
+    rss_pending_reactions: BTreeMap<(String, String), (u64, notrum_core::RssReaction)>,
+    expanded_rss_entry: Option<String>,
     rss_refreshing: BTreeSet<String>,
     selected_rss_entry: Option<String>,
 }
@@ -1174,7 +1179,6 @@ impl AppModel {
         let (secure_sender, secure_receiver) = mpsc::channel();
         let (search_sender, _search_commands) = mpsc::channel();
         let (_search_events, search_receiver) = mpsc::channel();
-        let (rss_sender, rss_receiver) = mpsc::channel();
         Self {
             workspace: None,
             viewport_first_line: 0,
@@ -1226,8 +1230,15 @@ impl AppModel {
             search_query: String::new(),
             search_results_generation: None,
             search_results: Vec::new(),
-            rss_sender,
-            rss_receiver,
+            rss_session: RSS_UI_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            rss_service: None,
+            rss_poll_scheduled: false,
+            rss_filters_open: None,
+            rss_status: BTreeMap::new(),
+            rss_saves: BTreeMap::new(),
+            rss_save_sequence: 0,
+            rss_pending_reactions: BTreeMap::new(),
+            expanded_rss_entry: None,
             rss_refreshing: BTreeSet::new(),
             selected_rss_entry: None,
         }
@@ -1251,7 +1262,6 @@ impl AppModel {
     ) -> Self {
         let (save_sender, save_receiver) = mpsc::channel();
         let (secure_sender, secure_receiver) = mpsc::channel();
-        let (rss_sender, rss_receiver) = mpsc::channel();
         let workspace_result = WorkspaceSession::open(path);
         let password_change_blocked = match &workspace_result {
             Err(CoreError::PasswordChange(_)) => true,
@@ -1399,8 +1409,15 @@ impl AppModel {
                     search_query: String::new(),
                     search_results_generation: None,
                     search_results: Vec::new(),
-                    rss_sender,
-                    rss_receiver,
+                    rss_session: RSS_UI_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    rss_service: None,
+                    rss_poll_scheduled: false,
+                    rss_filters_open: None,
+                    rss_status: BTreeMap::new(),
+                    rss_saves: BTreeMap::new(),
+                    rss_save_sequence: 0,
+                    rss_pending_reactions: BTreeMap::new(),
+                    expanded_rss_entry: None,
                     rss_refreshing: BTreeSet::new(),
                     selected_rss_entry: None,
                 }
@@ -1459,8 +1476,15 @@ impl AppModel {
                 search_query: String::new(),
                 search_results_generation: None,
                 search_results: Vec::new(),
-                rss_sender,
-                rss_receiver,
+                rss_session: RSS_UI_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                rss_service: None,
+                rss_poll_scheduled: false,
+                rss_filters_open: None,
+                rss_status: BTreeMap::new(),
+                rss_saves: BTreeMap::new(),
+                rss_save_sequence: 0,
+                rss_pending_reactions: BTreeMap::new(),
+                expanded_rss_entry: None,
                 rss_refreshing: BTreeSet::new(),
                 selected_rss_entry: None,
             },
@@ -1480,6 +1504,7 @@ impl AppModel {
         match result {
             Ok(()) => {
                 self.selected_rss_entry = None;
+                self.expanded_rss_entry = None;
                 self.error = None;
                 true
             }
@@ -1507,6 +1532,7 @@ impl AppModel {
         match result {
             Ok(item_id) => {
                 self.selected_rss_entry = None;
+                self.expanded_rss_entry = None;
                 self.error = None;
                 Some(item_id)
             }
@@ -1525,73 +1551,89 @@ impl AppModel {
         }
     }
 
-    fn start_rss_refresh(&mut self, item_id: ItemId) -> bool {
-        if self.rss_refreshing.contains(item_id.as_str()) {
-            return false;
-        }
-        let Some(workspace) = self.workspace.as_ref() else {
-            self.error = Some(("workspace is not open".to_owned()).into());
-            return false;
-        };
-        if workspace
-            .rss_subscriptions()
-            .iter()
-            .any(|summary| summary.subscription.id == item_id && summary.subscription.deleted)
-        {
-            return false;
-        }
-        let request = match workspace.rss_refresh_request(&item_id) {
-            Ok(request) => request,
-            Err(error) => {
-                self.error = Some(UiText::Failure {
-                    details: error.to_string(),
-                });
+    fn rss_command(&mut self, command: rss_service::Command) -> bool {
+        if self.rss_service.is_none() {
+            let Some(workspace) = &self.workspace else {
                 return false;
-            }
-        };
-        let workspace_path = workspace.root().to_path_buf();
-        self.rss_refreshing.insert(item_id.as_str().to_owned());
-        let sender = self.rss_sender.clone();
-        thread::spawn(move || {
-            let result = execute_rss_refresh(request).map_err(|error| error.to_string());
-            let _ = sender.send(RssWorkerEvent {
-                workspace: workspace_path,
-                item_id,
-                result,
-            });
-        });
+            };
+            self.rss_service = Some(rss_service::Service::start(workspace.root().to_path_buf()));
+        }
+        if self
+            .rss_service
+            .as_ref()
+            .expect("RSS service")
+            .sender
+            .try_send(command)
+            .is_err()
+        {
+            self.error = Some(msg!(RssAiConflict).into());
+            return false;
+        }
         true
     }
 
+    fn rss_hidden(&self, feed: &ItemId, entry: &str, saved: bool) -> bool {
+        self.rss_pending_reactions
+            .get(&(feed.as_str().into(), entry.into()))
+            .map_or(saved, |(_, reaction)| {
+                *reaction == notrum_core::RssReaction::Dislike
+            })
+    }
+
+    fn react_rss_entry(&mut self, feed: ItemId, entry: String, reaction: notrum_core::RssReaction) {
+        let key = (feed.as_str().into(), entry.clone());
+        let current = self
+            .rss_pending_reactions
+            .get(&key)
+            .map(|(_, r)| *r)
+            .or_else(|| {
+                self.workspace
+                    .as_ref()
+                    .and_then(|w| w.rss_feed(&feed).ok())
+                    .and_then(|(_, s)| s.entries.get(&entry).and_then(|e| e.reaction))
+            });
+        if current == Some(reaction) {
+            return;
+        }
+        self.rss_save_sequence += 1;
+        let token = self.rss_save_sequence;
+        if self.rss_command(rss_service::Command::Reaction(
+            feed,
+            entry.clone(),
+            token,
+            reaction,
+        )) {
+            self.rss_pending_reactions.insert(key, (token, reaction));
+            if reaction == notrum_core::RssReaction::Dislike
+                && self.expanded_rss_entry.as_deref() == Some(&entry)
+            {
+                self.expanded_rss_entry = None;
+            }
+        }
+    }
+
+    fn start_rss_refresh(&mut self, item_id: ItemId) -> bool {
+        self.rss_command(rss_service::Command::Visit(item_id))
+    }
+
     fn poll_rss(&mut self) -> bool {
+        if self.rss_service.is_none()
+            && let Some(workspace) = &self.workspace
+        {
+            self.rss_service = Some(rss_service::Service::start(workspace.root().to_path_buf()));
+        }
         let mut changed = false;
-        while let Ok(event) = self.rss_receiver.try_recv() {
-            self.rss_refreshing.remove(event.item_id.as_str());
-            let current_workspace = self.workspace.as_ref().map(WorkspaceSession::root);
-            if current_workspace != Some(event.workspace.as_path()) {
-                continue;
-            }
-            if self.workspace.as_ref().is_some_and(|workspace| {
-                workspace.rss_subscriptions().iter().any(|summary| {
-                    summary.subscription.id == event.item_id && summary.subscription.deleted
-                })
-            }) {
-                continue;
-            }
-            changed = true;
-            match event.result {
-                Ok(result) => {
-                    if let Some(workspace) = self.workspace.as_mut()
-                        && let Err(error) = workspace.finish_rss_refresh(result)
-                    {
-                        self.error = Some(UiText::Failure {
-                            details: error.to_string(),
-                        });
-                    }
+        if let Some(service) = &self.rss_service {
+            while let Ok(snapshot) = service.receiver.try_recv() {
+                if let Some(workspace) = &mut self.workspace {
+                    workspace.accept_rss_snapshot(snapshot.engine);
                 }
-                Err(error) => {
-                    self.error = Some((msg!(RefreshFailed , "error" => error.to_string())).into())
-                }
+                self.rss_refreshing = snapshot.refreshing;
+                self.rss_status = snapshot.status;
+                self.rss_saves = snapshot.saves;
+                self.rss_pending_reactions
+                    .retain(|_, (token, _)| *token > snapshot.reaction_sequence);
+                changed = true;
             }
         }
         changed
@@ -1599,13 +1641,32 @@ impl AppModel {
 
     fn select_rss_entry(&mut self, entry_id: &str) -> bool {
         let result = format_utc_timestamp(SystemTime::now()).and_then(|timestamp| {
-            self.workspace
-                .as_mut()
-                .ok_or_else(|| CoreError::Workspace("workspace is not open".to_owned()))?
-                .mark_rss_read(entry_id, &timestamp)
+            let id = self
+                .workspace
+                .as_ref()
+                .and_then(WorkspaceSession::selected_rss)
+                .cloned()
+                .ok_or_else(|| CoreError::Workspace("workspace is not open".into()))?;
+            if self.rss_command(rss_service::Command::Read(id, entry_id.into(), timestamp)) {
+                Ok(true)
+            } else {
+                Err(CoreError::Workspace("RSS queue unavailable".into()))
+            }
         });
         match result {
             Ok(_) => {
+                let hidden = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|w| {
+                        w.selected_rss().and_then(|id| {
+                            w.rss_feed(id)
+                                .ok()
+                                .map(|(_, s)| self.rss_hidden(id, entry_id, s.hidden(entry_id)))
+                        })
+                    })
+                    .unwrap_or(false);
+                self.expanded_rss_entry = hidden.then(|| entry_id.to_owned());
                 self.selected_rss_entry = Some(entry_id.to_owned());
                 self.error = None;
                 true
@@ -1635,18 +1696,28 @@ impl AppModel {
                 else {
                     return false;
                 };
-                let next = current as i64 + i64::from(direction);
-                if next < 0 || next >= feed.entries.len() as i64 {
-                    return false;
-                }
-                feed.entries[next as usize].id.clone()
+                let indices: Box<dyn Iterator<Item = usize>> = if direction > 0 {
+                    Box::new(current + 1..feed.entries.len())
+                } else {
+                    Box::new((0..current).rev())
+                };
+                indices
+                    .filter_map(|i| feed.entries.get(i))
+                    .find(|entry| !self.rss_hidden(&item_id, &entry.id, state.hidden(&entry.id)))
+                    .map(|e| e.id.clone())
+                    .unwrap_or_default()
             }
             None => feed
                 .entries
                 .iter()
-                .find(|entry| !state.read_entry_ids.contains(&entry.id))
-                .or_else(|| feed.entries.first())
-                .map(|entry| entry.id.clone())
+                .filter(|e| !self.rss_hidden(&item_id, &e.id, state.hidden(&e.id)))
+                .find(|e| !state.read_entry_ids.contains(&e.id))
+                .or_else(|| {
+                    feed.entries
+                        .iter()
+                        .find(|e| !self.rss_hidden(&item_id, &e.id, state.hidden(&e.id)))
+                })
+                .map(|e| e.id.clone())
                 .unwrap_or_default(),
         };
         !target.is_empty() && self.select_rss_entry(&target)
@@ -4433,16 +4504,19 @@ fn schedule_external_poll(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>)
 }
 
 fn schedule_rss_poll(model: Rc<RefCell<AppModel>>, revision: RwSignal<u64>) {
+    if model.borrow().rss_poll_scheduled {
+        return;
+    }
+    model.borrow_mut().rss_poll_scheduled = true;
     exec_after(Duration::from_millis(RSS_POLL_MS), move |_| {
         if revision.try_get_untracked().is_none() {
             return;
         }
+        model.borrow_mut().rss_poll_scheduled = false;
         if model.borrow_mut().poll_rss() {
             revision.update(|value| *value = value.saturating_add(1));
         }
-        if !model.borrow().rss_refreshing.is_empty() {
-            schedule_rss_poll(model, revision);
-        }
+        schedule_rss_poll(model, revision);
     });
 }
 
@@ -4741,6 +4815,7 @@ fn switch_workspace(
     let rss_refresh = {
         let mut current = context.model.borrow_mut();
         current.request_search_worker_shutdown();
+        prepared.model.rss_poll_scheduled = current.rss_poll_scheduled;
         *current = prepared.model;
         current
             .workspace
@@ -4916,6 +4991,7 @@ fn app_view(
         schedule_settings_save(settings_effect_store.clone(), settings_generation, snapshot);
     });
     schedule_external_poll(model.clone(), revision);
+    schedule_rss_poll(model.clone(), revision);
     let restored_rss = {
         model
             .borrow()
@@ -5263,6 +5339,11 @@ fn app_view(
             let Event::KeyDown(key_event) = event else {
                 return EventPropagation::Continue;
             };
+            if let Some(open) = root_find_model.borrow().rss_filters_open
+                && open.try_get_untracked() == Some(true) {
+                if key_event.key.logical_key == Key::Named(NamedKey::Escape) { open.set(false); }
+                return EventPropagation::Stop;
+            }
             // Floem sends keys only to the focused view and then the window
             // root, not through the feed's ancestors. Handle unconsumed feed
             // navigation here so sidebar/buttons can retain keyboard focus.
@@ -11371,6 +11452,9 @@ struct NoteFindSignals {
 
 #[derive(Clone)]
 struct RssCardData {
+    expanded: bool,
+    hidden: bool,
+    reaction: Option<notrum_core::RssReaction>,
     entry: RssEntry,
     unread: bool,
     selected: bool,
@@ -11432,6 +11516,7 @@ fn rss_subscription_summary(
 
 #[derive(Clone, Copy)]
 struct RssToolbarSignals {
+    ai_open: RwSignal<bool>,
     rename: ToolbarEditBar,
     categories: ToolbarEditBar,
 }
@@ -11452,6 +11537,9 @@ fn rss_toolbar_control(
         rss_subscription_summary(&state_model, &state_id)
     };
     match action {
+        ToolbarAction::AiFilters => {
+            rss_filters::control(model, item_id, revision, signals.ai_open, palette)
+        }
         ToolbarAction::Refresh => {
             let busy_model = model.clone();
             let busy_id = item_id.clone();
@@ -11601,6 +11689,7 @@ fn rss_panel(
     let scroll_target = create_rw_signal(None::<Point>);
     let viewport_height = create_rw_signal(0.0_f64);
     let signals = RssToolbarSignals {
+        ai_open: create_rw_signal(false),
         rename: ToolbarEditBar {
             open: create_rw_signal(false),
             value: create_rw_signal(String::new()),
@@ -11648,12 +11737,13 @@ fn rss_panel(
     let actions_state_model = model.clone();
     let actions_id = item_id.clone();
     let actions_state_id = item_id.clone();
+    let deleted = floem::reactive::create_memo(move |_| {
+        revision.get();
+        rss_subscription_summary(&actions_state_model, &actions_state_id)
+            .is_some_and(|summary| summary.subscription.deleted)
+    });
     let actions = dyn_container(
-        move || {
-            revision.get();
-            rss_subscription_summary(&actions_state_model, &actions_state_id)
-                .is_some_and(|summary| summary.subscription.deleted)
-        },
+        move || deleted.get(),
         move |deleted| {
             rss_toolbar_controls(
                 &declared_actions,
@@ -11710,6 +11800,8 @@ fn rss_panel(
     let entries_model = model.clone();
     let entries_id = item_id.clone();
     let card_model = model.clone();
+    let card_feed_id = item_id.clone();
+    let last_revealed = Rc::new(RefCell::new(None::<String>));
     let cards = dyn_stack(
         move || {
             revision.get();
@@ -11723,6 +11815,18 @@ fn rss_panel(
                     feed.entries
                         .into_iter()
                         .map(|entry| RssCardData {
+                            hidden: model.rss_hidden(
+                                &entries_id,
+                                &entry.id,
+                                state.hidden(&entry.id),
+                            ),
+                            expanded: model.expanded_rss_entry.as_deref()
+                                == Some(entry.id.as_str()),
+                            reaction: model
+                                .rss_pending_reactions
+                                .get(&(entries_id.as_str().into(), entry.id.clone()))
+                                .map(|(_, r)| *r)
+                                .or_else(|| state.entries.get(&entry.id).and_then(|e| e.reaction)),
                             unread: !state.read_entry_ids.contains(&entry.id),
                             selected: selected == Some(entry.id.as_str()),
                             entry,
@@ -11731,7 +11835,16 @@ fn rss_panel(
                 })
                 .unwrap_or_default()
         },
-        |card| (card.entry.id.clone(), card.unread, card.selected),
+        |card| {
+            (
+                card.entry.clone(),
+                card.unread,
+                card.selected,
+                card.hidden,
+                card.expanded,
+                card.reaction,
+            )
+        },
         move |card| {
             let card_top = create_rw_signal(0.0_f64);
             let entry_id = card.entry.id.clone();
@@ -11776,7 +11889,18 @@ fn rss_panel(
                 revision.update(|value| *value = value.saturating_add(1));
                 selected
             });
-            let title = if let Some(url) = original_url {
+            let title = if card.hidden {
+                let select_title = select_entry.clone();
+                rss_article_link(
+                    card.entry.title.clone(),
+                    move || {
+                        select_title();
+                    },
+                    palette,
+                    ink,
+                )
+                .into_any()
+            } else if let Some(url) = original_url {
                 let select_title = select_entry.clone();
                 rss_article_link(
                     card.entry.title.clone(),
@@ -11795,9 +11919,47 @@ fn rss_panel(
             } else {
                 rss_title(card.entry.title.clone(), ink).into_any()
             };
+            let buttons = [
+                notrum_core::RssReaction::Like,
+                notrum_core::RssReaction::Dislike,
+            ]
+            .into_iter()
+            .map(|reaction| {
+                let model = card_model.clone();
+                let feed_id = card_feed_id.clone();
+                let entry = card.entry.id.clone();
+                let caption = match reaction {
+                    notrum_core::RssReaction::Like => msg!(RssAiLike),
+                    notrum_core::RssReaction::Dislike => msg!(RssAiDislike),
+                };
+                icon_toggle_button(
+                    if reaction == notrum_core::RssReaction::Like {
+                        rss_filters::LIKE
+                    } else {
+                        rss_filters::DISLIKE
+                    },
+                    move || caption.to_string(),
+                    palette,
+                    move || card.reaction == Some(reaction),
+                    move || {
+                        if card.reaction != Some(reaction) {
+                            let mut model = model.borrow_mut();
+                            model.react_rss_entry(feed_id.clone(), entry.clone(), reaction);
+                            drop(model);
+                            revision.update(|r| *r += 1);
+                        }
+                    },
+                )
+                .into_any()
+            })
+            .collect::<Vec<_>>();
             let select_pointer = select_entry.clone();
             let view = v_stack((
-                title,
+                h_stack((
+                    title,
+                    h_stack_from_iter(buttons).style(|s| s.gap(4.0).flex_shrink(0.0)),
+                ))
+                .style(|s| s.width_full().items_center().justify_between().gap(8.0)),
                 h_stack((
                     label(metadata)
                         .pointer_events(|| false)
@@ -11826,10 +11988,21 @@ fn rss_panel(
                             })
                     }),
                 ))
-                .style(|style| style.width_full().items_center().gap(12.0)),
+                .style(move |style| {
+                    style
+                        .width_full()
+                        .items_center()
+                        .gap(12.0)
+                        .apply_if(card.hidden && !card.expanded, |s| s.hide())
+                }),
                 floem::views::rich_text(move || summary_layout.clone())
                     .pointer_events(|| false)
-                    .style(|style| style.width_full().min_width(0.0)),
+                    .style(move |style| {
+                        style
+                            .width_full()
+                            .min_width(0.0)
+                            .apply_if(card.hidden && !card.expanded, |s| s.hide())
+                    }),
             ))
             .keyboard_navigable()
             .on_event(EventListener::PointerDown, move |event| {
@@ -11866,12 +12039,14 @@ fn rss_panel(
                     })
                     .border_radius(8.0)
             });
-            let revealed = Cell::new(false);
+            let last_revealed = last_revealed.clone();
+            let reveal_entry_id = card.entry.id.clone();
             view.on_resize(move |rect| {
                 card_top.set(rect.y0);
                 // Selected cards are remounted by the list's key. Their bounds
                 // are only available after layout, not during construction.
-                if card.selected && !revealed.replace(true) {
+                if card.selected && last_revealed.borrow().as_ref() != Some(&reveal_entry_id) {
+                    *last_revealed.borrow_mut() = Some(reveal_entry_id.clone());
                     // Coordinates are relative to the card stack, keeping the
                     // content's 20px inset above the selected card.
                     scroll_target.set(Some(Point::new(0.0, rect.y0)));
@@ -11922,7 +12097,8 @@ fn rss_panel(
     let focus_id = panel.id();
     create_effect(move |_| {
         feed_focus_request.get();
-        let editing = signals.rename.open.get() || signals.categories.open.get();
+        let editing =
+            signals.rename.open.get() || signals.categories.open.get() || signals.ai_open.get();
         if !editing {
             // The sidebar/form still owns focus during activation. Wait until
             // the feed is mounted (or the clicked card has been replaced),
@@ -11930,6 +12106,7 @@ fn rss_panel(
             exec_after(Duration::from_millis(10), move |_| {
                 if signals.rename.open.try_get_untracked() == Some(false)
                     && signals.categories.open.try_get_untracked() == Some(false)
+                    && signals.ai_open.try_get_untracked() == Some(false)
                 {
                     focus_id.request_focus();
                 }
@@ -11968,17 +12145,18 @@ fn main_content_panel(
     let feed = dyn_stack(
         move || {
             revision.get();
-            feed_state_model
-                .borrow()
+            let model = feed_state_model.borrow();
+            model
                 .workspace
                 .as_ref()
                 .and_then(WorkspaceSession::selected_rss)
                 .cloned()
+                .map(|id| (model.rss_session, id))
                 .into_iter()
                 .collect::<Vec<_>>()
         },
         Clone::clone,
-        move |item_id| rss_panel(feed_model.clone(), item_id, revision, feed_palette),
+        move |(_, item_id)| rss_panel(feed_model.clone(), item_id, revision, feed_palette),
     )
     .style(move |style| {
         revision.get();
@@ -14858,6 +15036,7 @@ enum ToolbarSubject {
 
 fn toolbar_action_icon(action: ToolbarAction) -> &'static str {
     match action {
+        ToolbarAction::AiFilters => ICON_SETTINGS,
         ToolbarAction::Refresh => ICON_RETRY,
         ToolbarAction::Rename => ICON_RENAME,
         ToolbarAction::Categories => ICON_TAG,
@@ -14884,6 +15063,7 @@ fn toolbar_action_is_toggle(action: ToolbarAction) -> bool {
 
 fn toolbar_action_title(action: ToolbarAction, subject: ToolbarSubject, active: bool) -> String {
     match action {
+        ToolbarAction::AiFilters => tr!(RssAiFilters),
         ToolbarAction::Refresh => {
             if active {
                 tr!(Refreshing)
@@ -16854,6 +17034,7 @@ mod tests {
                 field_width: 100.0,
             };
             let signals = super::RssToolbarSignals {
+                ai_open: super::create_rw_signal(false),
                 rename: bar(),
                 categories: bar(),
             };
@@ -18242,10 +18423,36 @@ mod tests {
         assert!(model.move_rss_selection(1));
         assert_eq!(model.selected_rss_entry.as_deref(), Some("second"));
         assert!(!model.move_rss_selection(1));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while model.workspace.as_ref().unwrap().rss_subscriptions()[0].unread != 0
+            && std::time::Instant::now() < deadline
+        {
+            model.poll_rss();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert_eq!(
             model.workspace.as_ref().unwrap().rss_subscriptions()[0].unread,
             0
         );
+
+        let feed_id = model
+            .workspace
+            .as_ref()
+            .unwrap()
+            .selected_rss()
+            .unwrap()
+            .clone();
+        model.react_rss_entry(
+            feed_id.clone(),
+            "second".into(),
+            notrum_core::RssReaction::Dislike,
+        );
+        assert_eq!(model.selected_rss_entry.as_deref(), Some("second"));
+        assert!(model.move_rss_selection(-1));
+        assert_eq!(model.selected_rss_entry.as_deref(), Some("first"));
+        assert!(!model.move_rss_selection(1));
+        model.react_rss_entry(feed_id, "second".into(), notrum_core::RssReaction::Like);
+        assert!(model.move_rss_selection(1));
 
         model.shutdown_search_worker();
         drop(model);

@@ -358,3 +358,17 @@ UpdateResponseFailed = ریلیز کی معلومات پڑھی نہ جا سکی�
 UpdateNoPackage = اس ریلیز میں اس پلیٹ فارم کا پیکیج نہیں ہے۔
 UpdateChecksumFailed = ڈاؤن لوڈ کیا گیا پیکیج شائع شدہ چیک سم سے میل نہیں کھایا۔
 UpdateFailed = اپ ڈیٹ مکمل نہ ہو سکا۔ تفصیلات: { $error }
+
+RssAiFilters = AI فلٹرز
+RssAiLikes = پسند
+RssAiDislikes = ناپسند
+RssAiLike = پسند
+RssAiDislike = ناپسند
+RssAiReady = ترجیحات اس فیڈ پر لاگو ہیں۔
+RssAiBusy = AI کام کر رہا ہے…
+RssAiPaused = اگلی آمد تک موقوف۔
+RssAiRetry = AI خرابی؛ اگلے دور میں دوبارہ کوشش ہوگی۔
+RssAiSettings = AI کلید اور ماڈل کی ترتیبات دیکھیں۔
+RssAiConflict = ڈیٹا بدل گیا ہے۔ محفوظ کرنے کے لیے دوبارہ کھولیں۔
+RssAiTooLong = ہر خانے کی حد 16 KiB ہے۔
+RssAiRepeat = دوبارہ کوشش

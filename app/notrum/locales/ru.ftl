@@ -364,3 +364,17 @@ UpdateResponseFailed = Не удалось прочитать сведения �
 UpdateNoPackage = В этом релизе нет пакета для этой платформы.
 UpdateChecksumFailed = Загруженный пакет не совпал с опубликованной контрольной суммой.
 UpdateFailed = Не удалось выполнить обновление. Подробности: { $error }
+
+RssAiFilters = AI-фильтры
+RssAiLikes = Нравится
+RssAiDislikes = Не нравится
+RssAiLike = Лайк
+RssAiDislike = Дизлайк
+RssAiReady = Предпочтения действуют для этой ленты.
+RssAiBusy = AI обрабатывает записи…
+RssAiPaused = Пауза до следующего посещения.
+RssAiRetry = Ошибка AI; повтор в следующем цикле.
+RssAiSettings = Проверьте ключ и модель в настройках AI.
+RssAiConflict = Не удалось сохранить: данные изменились. Откройте заново.
+RssAiTooLong = Не более 16 КиБ в каждом поле.
+RssAiRepeat = Повторить

@@ -140,7 +140,7 @@ available.
 Choose `+` → RSS feed and enter a direct HTTP or HTTPS feed URL. RSS 1.0, RSS 2.0,
 and Atom are supported. Subscriptions appear alongside notes; entries open in
 a native, read-only feed view. A feed refreshes when opened and through its
-toolbar button. There is no background refresh schedule.
+toolbar button, and automatically while its workspace is open.
 
 The first ten entries in the first successful response are marked unread.
 Scrolling alone does not change read status: open a card by clicking it or
@@ -160,6 +160,35 @@ unencrypted. Opening an article explicitly hands its HTTP or HTTPS URL to the
 system browser. Subscriptions, cached entries, and read status have different
 storage roles; see the
 [storage guide](storage.md).
+
+### Personal AI filters
+
+The RSS toolbar's **AI filters** popup has multiline **Likes** and **Dislikes**
+fields (16 KiB each) and a model alias from global AI settings. The initial alias
+is `default`; a missing alias falls back to it, while an existing unavailable
+model reports an error. Enter inserts a newline; J/K type normally; Escape and
+Cancel discard the draft. Background learning never replaces an open draft.
+
+Filtering sends preferences and bounded RSS text to the selected provider; it
+never downloads the linked page. Ambiguous entries stay visible. Like overrides
+automatic hiding, and Dislike collapses the card without marking it read. Click
+a collapsed title to expand and read it inside Notrum; it remains hidden from
+J/K navigation. Hidden unread entries do not contribute to the visible badge.
+Clear both fields to remove automatic hiding while keeping explicit reactions.
+
+Every refresh attempt, including errors and HTTP 304, advances a persisted
+backoff counter. After cycle `i`, the delay is `min(86400, 60 + 2^i)` seconds
+when any unread entries remain, or `min(86400, 60 + 1.5^i)` otherwise. Hidden
+entries count here. A visit or manual refresh resets the counter and requests
+an immediate cycle; an existing download is reused. An overdue schedule runs
+once after restart. No updates run while the application is closed.
+
+At 99 unread entries automatic refresh and classification pause until a visit.
+Each visit grants one forced refresh and up to 99 classifications, including
+rechecks. Learning from explicit reactions remains allowed while paused.
+Requests use batches of at most ten entries; two RSS downloads and one AI request
+can run concurrently. Temporary AI errors retry on a later cycle. Key/model
+errors wait for corrected settings or the popup's Retry button.
 
 ## Protected notes
 

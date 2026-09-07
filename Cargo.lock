@@ -1695,7 +1695,9 @@ dependencies = [
  "copypasta",
  "crossbeam",
  "crossbeam-channel",
+ "downcast-rs 1.2.1",
  "educe",
+ "floem-editor-core",
  "floem-winit",
  "floem_reactive",
  "floem_renderer",
@@ -1705,6 +1707,7 @@ dependencies = [
  "im-rc",
  "image",
  "indexmap",
+ "lapce-xi-rope 0.3.2",
  "parking_lot",
  "peniko",
  "raw-window-handle 0.6.2",
@@ -1713,11 +1716,27 @@ dependencies = [
  "sha2 0.10.9",
  "slotmap",
  "smallvec",
+ "strum",
+ "strum_macros",
  "taffy",
  "unicode-segmentation",
  "wasm-bindgen-futures",
  "web-time",
  "wgpu",
+]
+
+[[package]]
+name = "floem-editor-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e3e40a1b06cb878f44a172f51d506d56bae76e7b2b977ba7a40a9217b6c33e3"
+dependencies = [
+ "bitflags 2.13.1",
+ "itertools 0.12.1",
+ "lapce-xi-rope 0.3.2",
+ "memchr",
+ "strum",
+ "strum_macros",
 ]
 
 [[package]]
@@ -3048,6 +3067,15 @@ checksum = "4b3f7cef34251886990511df1c61443aa928499d598a9473929ab5a90a527304"
 
 [[package]]
 name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -3219,6 +3247,19 @@ dependencies = [
  "euclid",
  "serde",
  "smallvec",
+]
+
+[[package]]
+name = "lapce-xi-rope"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6516aaa99c5059dc1a1bc02ed782d5e524699c1b4330028a6bed8259f9d9ff0a"
+dependencies = [
+ "bytecount",
+ "memchr",
+ "regex",
+ "serde",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -3656,7 +3697,7 @@ dependencies = [
 name = "notrum-buffer-probe"
 version = "0.0.0"
 dependencies = [
- "lapce-xi-rope",
+ "lapce-xi-rope 0.4.0",
  "ropey",
 ]
 
@@ -3680,7 +3721,7 @@ dependencies = [
 name = "notrum-editor"
 version = "0.1.0"
 dependencies = [
- "lapce-xi-rope",
+ "lapce-xi-rope 0.4.0",
  "unicode-segmentation",
 ]
 
@@ -5627,6 +5668,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "strum"
+version = "0.26.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+
+[[package]]
+name = "strum_macros"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5753,7 +5813,7 @@ dependencies = [
  "fnv",
  "fs4",
  "htmlescape",
- "itertools",
+ "itertools 0.14.0",
  "levenshtein_automata",
  "log",
  "lru",
@@ -5801,7 +5861,7 @@ checksum = "c57166f5bcfd478f370ab8445afb4678dce44801fa5ce5c451aaf8595583c5dc"
 dependencies = [
  "downcast-rs 2.0.2",
  "fastdivide",
- "itertools",
+ "itertools 0.14.0",
  "serde",
  "tantivy-bitpacker",
  "tantivy-common",
@@ -5853,7 +5913,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a2cfc3ac5164cbadc28965ffb145a8f47582a60ae5897859ad8d4316596c606"
 dependencies = [
  "futures-util",
- "itertools",
+ "itertools 0.14.0",
  "tantivy-bitpacker",
  "tantivy-common",
  "tantivy-fst",

@@ -19,7 +19,8 @@ use notrum_editor::{
     next_word_boundary_in_text, previous_word_boundary_in_text,
 };
 pub use notrum_engine::{
-    EngineId, EngineUiCapabilities, ExternalFileSummary, ItemAvailability, ItemId, ToolbarAction,
+    EngineError, EngineId, EngineUiCapabilities, ExternalFileSummary, ItemAvailability, ItemId,
+    ToolbarAction,
 };
 use notrum_engine::{
     EngineRegistry, FileEngine, FileEngineFactory, ItemSummary, LocalSearchDocument,
@@ -30,12 +31,13 @@ use notrum_frontmatter::{
 };
 use notrum_markdown::{MarkdownEngineFactory, markdown_engine_id};
 use notrum_recovery::{RecoveryError, RecoveryKey, RecoveryRecord, RecoveryStore};
-use notrum_rss::{RssEngine, RssEngineFactory, rss_engine_id};
 pub use notrum_rss::{
-    RssEntry, RssFeedCache, RssReadState, RssRefreshRequest, RssRefreshResult, RssSubscription,
+    AI_VISIT_LIMIT, RssCheck, RssDecision, RssEngine, RssEntry, RssFeedCache, RssPreferences,
+    RssReaction, RssReadState, RssRefreshRequest, RssRefreshResult, RssSchedule, RssSubscription,
     RssSubscriptionSummary, execute_refresh as execute_rss_refresh,
     open_original as open_rss_original,
 };
+use notrum_rss::{RssEngineFactory, rss_engine_id};
 use notrum_secure::{MasterPassword, SecureError, decrypt_body};
 use notrum_security::{SecurityError, SecurityStore, VaultId, WorkspaceSecurityState};
 use notrum_storage::{
@@ -403,6 +405,60 @@ impl WorkspaceSession {
 
     pub fn rss_subscriptions(&self) -> Vec<RssSubscriptionSummary> {
         self.rss_engine.summaries()
+    }
+
+    pub fn rss_background_snapshot(&self) -> RssEngine {
+        self.rss_engine.clone()
+    }
+
+    pub fn accept_rss_snapshot(&mut self, engine: RssEngine) {
+        if engine.config_revision() >= self.rss_engine.config_revision() {
+            self.rss_engine = engine;
+        }
+    }
+
+    pub fn rss_preferences(&self, id: &ItemId) -> Result<RssPreferences, CoreError> {
+        self.rss_engine
+            .preferences(id)
+            .map_err(|e| CoreError::Workspace(e.to_string()))
+    }
+
+    pub fn rss_schedule(&self, id: &ItemId) -> Result<RssSchedule, CoreError> {
+        self.rss_feed(id).map(|(_, state)| state.schedule)
+    }
+
+    /// Caller supplies Unix milliseconds; background callers perform the write
+    /// off the UI thread, using the same operation as a manual visit.
+    pub fn visit_rss(&self, id: &ItemId, now: u64) -> Result<(), CoreError> {
+        self.rss_engine
+            .update_state(id, |state| {
+                state.schedule.visit(now);
+                state.ai_error = None;
+                Ok(())
+            })
+            .map_err(|e| CoreError::Workspace(e.to_string()))
+    }
+
+    pub fn save_rss_preferences(
+        &mut self,
+        id: &ItemId,
+        expected: u64,
+        preferences: RssPreferences,
+    ) -> Result<(), CoreError> {
+        self.rss_engine
+            .save_preferences(id, expected, preferences)
+            .map_err(|e| CoreError::Workspace(e.to_string()))
+    }
+
+    pub fn react_rss(
+        &self,
+        id: &ItemId,
+        entry: &str,
+        reaction: RssReaction,
+    ) -> Result<bool, CoreError> {
+        self.rss_engine
+            .react(id, entry, reaction)
+            .map_err(|e| CoreError::Workspace(e.to_string()))
     }
 
     pub fn selected_rss(&self) -> Option<&ItemId> {
@@ -5545,6 +5601,7 @@ mod tests {
             session.rss_toolbar_actions(),
             vec![
                 ToolbarAction::Refresh,
+                ToolbarAction::AiFilters,
                 ToolbarAction::Rename,
                 ToolbarAction::Categories,
                 ToolbarAction::Pin,

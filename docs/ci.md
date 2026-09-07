@@ -122,6 +122,17 @@ the CI console, and does not upload raw test logs. CI logs are deliberately
 reduced: reproduce a failing named check locally to inspect unrestricted fixture
 diagnostics.
 
+The Linux `search` acceptance scenario waits for painted result rows and a
+stable result area that excludes the blinking input caret. Before typing an edit,
+it requires the search controls to close and the expected note path to reach
+workspace settings. It then checks the marker in that note's canonical file.
+Search diagnostics use fixed stages (`initial/index`, `query/results`,
+`selection/open`, `selection/save`, `external/index`, `rebuild/index`, and
+`final/validation`), without logging queries, paths or note contents. A failed
+wait stops the scenario; neither selection nor text entry is retried.
+Search steps in the secure scenarios also wait for painted, stable results,
+using only in-memory color counts and image signatures, without screenshot files.
+
 Native test kits also emit fixed-vocabulary `NATIVE_IO`, `NATIVE_SAVE`,
 `NATIVE_OPERATION`, `NATIVE_CLEANUP`,
 `NATIVE_TEMP`, `NATIVE_RESULT`, `NATIVE_ASSERT` and `NATIVE_PATH` records.

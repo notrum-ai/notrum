@@ -24,6 +24,163 @@ SHA = "1234567890abcdef1234567890abcdef12345678"
 
 
 class CITests(unittest.TestCase):
+    def test_private_search_wait_never_captures_note_pixels_to_disk(self):
+        for state in ("delayed", "empty", "changing"):
+            with self.subTest(state=state):
+                clock = [0.0]
+                driver = Mock(spec=ui_acceptance.WindowDriver)
+
+                def advance(seconds):
+                    clock[0] += seconds
+
+                def signature(_crop):
+                    advance(0.05)
+                    return str(clock[0]) if state == "changing" else "private fingerprint"
+
+                driver.window_image_signature.side_effect = signature
+                driver.window_color_pixel_count.side_effect = lambda *_args, **_kwargs: (
+                    2_000 if state != "empty" and clock[0] >= 0.4 else 0
+                )
+                with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(ui_acceptance.time, "sleep", side_effect=advance):
+                    if state == "delayed":
+                        ui_acceptance.wait_for_private_search_results(driver)
+                        self.assertGreaterEqual(clock[0], 0.65)
+                    else:
+                        with self.assertRaises(ui_acceptance.AcceptanceFailure):
+                            ui_acceptance.wait_for_private_search_results(driver)
+                        self.assertGreaterEqual(clock[0], ui_acceptance.SEARCH_WAIT_SECONDS)
+                driver.capture.assert_not_called()
+                driver.type_sensitive_text.assert_not_called()
+                for call in driver.window_image_signature.call_args_list:
+                    self.assertEqual(call.args, (ui_acceptance.SEARCH_RESULTS_CROP,))
+
+    def test_window_signature_uses_only_memory_and_rejects_unexpected_output(self):
+        driver = object.__new__(ui_acceptance.WindowDriver)
+        driver.window_id = "123"
+        driver.environment = {"DISPLAY": ui_acceptance.DISPLAY}
+        with patch.object(ui_acceptance, "run_command", return_value=Mock(stdout="a" * 64)) as command:
+            self.assertEqual(driver.window_image_signature((12, 98, 232, 330)), "a" * 64)
+            self.assertEqual(command.call_args.args[0], [
+                "import", "-display", ui_acceptance.DISPLAY, "-window", "123",
+                "-crop", "232x330+12+98", "+repage", "-format", "%#", "info:",
+            ])
+        with patch.object(ui_acceptance, "run_command", return_value=Mock(stdout="SYNTHETIC_SECRET")):
+            with self.assertRaises(ui_acceptance.AcceptanceFailure) as caught:
+                driver.window_image_signature((12, 98, 232, 330))
+            self.assertNotIn("SYNTHETIC_SECRET", str(caught.exception))
+
+    def test_search_wait_requires_painted_and_stable_results(self):
+        for state in ("delayed", "empty", "changing"):
+            with self.subTest(state=state):
+                clock = [0.0]
+                frames = []
+
+                def advance(seconds):
+                    clock[0] += seconds
+
+                def capture(_name):
+                    advance(0.05)
+                    frame = Mock(painted=state != "empty" and clock[0] >= 0.4,
+                                 content=len(frames) if state == "changing" else 1)
+                    frames.append(frame)
+                    return frame
+
+                def colors(frame, color, **_kwargs):
+                    if not frame.painted:
+                        return 0
+                    return 2_000 if color == (57, 66, 78) else 20
+
+                driver = Mock(spec=ui_acceptance.WindowDriver)
+                driver.capture.side_effect = capture
+                with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(ui_acceptance.time, "sleep", side_effect=advance), \
+                        patch.object(ui_acceptance, "near_color_pixel_count", side_effect=colors), \
+                        patch.object(ui_acceptance, "bright_pixel_count", return_value=100), \
+                        patch.object(ui_acceptance, "image_difference", side_effect=
+                                     lambda a, b, **_kwargs: int(a.content != b.content)) as difference:
+                    if state == "delayed":
+                        ui_acceptance.wait_for_search_results(driver)
+                        self.assertGreaterEqual(clock[0], 0.65)
+                    else:
+                        with self.assertRaises(ui_acceptance.AcceptanceFailure):
+                            ui_acceptance.wait_for_search_results(driver)
+                        self.assertGreaterEqual(clock[0], ui_acceptance.SEARCH_WAIT_SECONDS)
+                self.assertLess(clock[0], ui_acceptance.SEARCH_WAIT_SECONDS + 0.2)
+                for call in difference.call_args_list:
+                    self.assertEqual(call.kwargs["crop"], ui_acceptance.SEARCH_RESULTS_CROP)
+                for frame in frames:
+                    frame.unlink.assert_called_once_with(missing_ok=True)
+                driver.type_text.assert_not_called()
+
+    def test_search_edit_waits_for_close_and_expected_selection_without_retyping(self):
+        for state in ("keyboard", "pointer", "open", "wrong_note", "unsaved"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                note = root / "notes" / "Expected.md"
+                note.parent.mkdir()
+                note.write_text("original body", encoding="utf-8")
+                settings = root / ".notrum" / "settings.json"
+                settings.parent.mkdir()
+                settings.write_text(json.dumps({
+                    "selected_note": "notes/Wrong.md" if state == "wrong_note"
+                    else "notes/Expected.md",
+                }), encoding="utf-8")
+                clock = [0.0]
+
+                def advance(seconds):
+                    clock[0] += seconds
+
+                driver = Mock(spec=ui_acceptance.WindowDriver)
+                driver.window_color_pixel_count.side_effect = lambda *_args, **_kwargs: (
+                    700 if state == "open" or clock[0] < 0.4 else 0
+                )
+
+                def type_marker(marker):
+                    self.assertGreaterEqual(clock[0], 0.4)
+                    driver.wait_for_stable_frame.assert_called_once()
+                    if state != "unsaved":
+                        note.write_text("original body\n" + marker, encoding="utf-8")
+
+                driver.type_text.side_effect = type_marker
+                with patch.object(ui_acceptance.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(ui_acceptance.time, "sleep", side_effect=advance):
+                    if state in {"keyboard", "pointer"}:
+                        ui_acceptance.select_search_result_and_edit(
+                            driver, root, note, "marker", click=state == "pointer"
+                        )
+                    else:
+                        with self.assertRaises(ui_acceptance.AcceptanceFailure):
+                            ui_acceptance.select_search_result_and_edit(driver, root, note, "marker")
+                if state in {"open", "wrong_note"}:
+                    driver.type_text.assert_not_called()
+                    driver.click.assert_not_called()
+                    driver.wait_for_stable_frame.assert_not_called()
+                    self.assertEqual(note.read_text(encoding="utf-8"), "original body")
+                else:
+                    driver.type_text.assert_called_once_with("marker")
+                if state == "pointer":
+                    driver.click_point.assert_called_once_with(128, 124)
+                    self.assertEqual(driver.key.call_count, 1)  # Newline in the editor only.
+                self.assertLess(clock[0], 2 * ui_acceptance.SEARCH_WAIT_SECONDS + 0.2)
+
+    def test_search_diagnostic_stages_preserve_only_known_context(self):
+        for stage in ("initial/index", "query/results", "selection/open", "selection/save",
+                      "external/index", "rebuild/index", "final/validation"):
+            try:
+                ui_acceptance.wait_until("SYNTHETIC_SECRET", lambda: False, timeout=0)
+            except ui_acceptance.AcceptanceFailure as error:
+                lines = ui_acceptance.failure_diagnostics("search", stage, error)
+            self.assertIn(f"stage={stage}", lines[0])
+            for line in lines:
+                self.assertEqual(ci.safe_line(line), line)
+                self.assertEqual(ci.safe_line(ci.safe_line(line)), line)
+                self.assertNotIn("SYNTHETIC_SECRET", line)
+                self.assertIsNone(ci.safe_line(line + " query=SYNTHETIC_SECRET"))
+            self.assertIsNone(ci.safe_line(lines[0].replace("scenario=search", "scenario=visual")))
+        with self.assertRaises(ValueError):
+            ui_acceptance.failure_diagnostics("search", "SYNTHETIC_SECRET", RuntimeError())
+
     def test_protection_waits_for_delayed_worker_but_requires_original_path(self):
         for result in ("delayed", "missing", "wrong_path"):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as directory:

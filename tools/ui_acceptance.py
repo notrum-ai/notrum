@@ -1318,7 +1318,7 @@ class WindowDriver:
         )
         self.click_point(x, y, settle=settle)
 
-    def wait_for_password_dialog(self) -> None:
+    def wait_for_password_dialog(self, *, opened: bool = True) -> None:
         if self.window_id is None:
             raise AcceptanceFailure("cannot wait for a password dialog without a window")
 
@@ -1334,9 +1334,9 @@ class WindowDriver:
                 environment=self.environment,
             )
             backdrop, padding = map(float, result.stdout.split())
-            return 0.1 < backdrop < 0.85 and padding > 0.95
+            return (0.1 < backdrop < 0.85 and padding > 0.95) if opened else backdrop > 0.95
 
-        wait_until("password dialog paint", painted, interval=0.03)
+        wait_until("password dialog visibility", painted, interval=0.03)
 
     def window_color_pixel_count(
         self,
@@ -1358,6 +1358,22 @@ class WindowDriver:
             environment=self.environment,
         )
         return count_near_color_pixels(completed.stdout, expected, tolerance=tolerance)
+
+    def window_image_signature(self, crop: tuple[int, int, int, int]) -> str:
+        """Compare native pixels in memory without creating a screenshot file."""
+        if self.window_id is None:
+            raise AcceptanceFailure("cannot sample a control without a window")
+        x, y, width, height = crop
+        result = run_command(
+            ["import", "-display", DISPLAY, "-window", self.window_id,
+             "-crop", f"{width}x{height}+{x}+{y}", "+repage",
+             "-format", "%#", "info:"],
+            environment=self.environment,
+        )
+        signature = result.stdout.strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", signature):
+            raise AcceptanceFailure("invalid in-memory image signature")
+        return signature
 
     def wait_for_password_field_focus(self, control: str) -> None:
         # Key delivery and Floem's queued focus change are separate. In
@@ -2275,14 +2291,12 @@ def prove_plaintext_search_result(
         raise AcceptanceFailure("decoy selection marker changed the target note")
     decoy_before = decoy.read_bytes()
     driver.key("ctrl+k")
+    wait_for_search_visibility(driver, opened=True)
     driver.type_sensitive_text(query)
-    driver.wait_for_stable_frame(
-        "live search result for protected plaintext fixture",
-        crop=(12, SIDEBAR_TREE_TOP, 232, 330),
-        minimum_dark_pixels=30,
-        timeout=4.0,
-    )
+    driver.move_to("editor")
+    wait_for_private_search_results(driver)
     driver.key("Return")
+    wait_for_search_visibility(driver, opened=False)
     driver.wait_for_stable_frame("selected plaintext search result", crop=EDITOR_CROP)
     driver.click("editor_below_document")
     driver.key("Return")
@@ -5530,12 +5544,24 @@ def secure_scenario(
     )
     driver.close_app()
     driver.start_app(secure_workspace, "locked-reopen")
+    # Restoring the selected protected note opens an unlock dialog. Dismiss
+    # that dialog before testing title search instead of typing into it.
+    driver.wait_for_password_dialog()
+    driver.key("Escape")
+    driver.wait_for_password_dialog(opened=False)
     driver.key("ctrl+k")
+    wait_for_search_visibility(driver, opened=True)
     driver.type_sensitive_text(title)
+    driver.move_to("editor")
+    wait_for_private_search_results(driver)
     driver.key("Return")
+    driver.wait_for_password_dialog()
     driver.key("Escape")
+    driver.wait_for_password_dialog(opened=False)
     driver.click_note(0, counts=locked_counts, categories=(tag,))
+    driver.wait_for_password_dialog()
     driver.key("Escape")
+    driver.wait_for_password_dialog(opened=False)
     assert_locked_editor_inaccessible(
         driver, markers=(title, body_marker, tag, edit_marker)
     )
@@ -5571,7 +5597,10 @@ def secure_scenario(
     if encrypted_note_body(protected) != armored_before_locked_metadata:
         raise AcceptanceFailure("locked metadata edit rewrote encrypted body bytes")
     driver.key("ctrl+k")
+    wait_for_search_visibility(driver, opened=True)
     driver.type_sensitive_text(tag_query)
+    driver.move_to("editor")
+    wait_for_private_search_results(driver)
     driver.key("Return")
     driver.click("password_unlock_primary")
     driver.type_sensitive_text(password)
@@ -6269,6 +6298,125 @@ def visual_scenario(driver: WindowDriver, workspace: Path) -> None:
         raise AcceptanceFailure(f"visual acceptance modified demo notes: {changed}")
 
 
+SEARCH_RESULTS_CROP = (12, 98, 232, 330)
+SEARCH_FIRST_RESULT_CROP = (12, 98, 232, 56)
+SEARCH_WAIT_SECONDS = 10.0
+
+
+def wait_for_private_search_results(driver: WindowDriver) -> None:
+    """The secure scenarios must never persist result snippets or note pixels."""
+    previous: str | None = None
+    stable_since: float | None = None
+
+    def ready() -> bool:
+        nonlocal previous, stable_since
+        current = driver.window_image_signature(SEARCH_RESULTS_CROP)
+        painted = (
+            driver.window_color_pixel_count(
+                (57, 66, 78), crop=SEARCH_FIRST_RESULT_CROP, tolerance=2
+            ) >= 1_000
+            and driver.window_color_pixel_count(
+                (143, 184, 220), crop=(204, 98, 36, 78), tolerance=40
+            ) >= 8
+            and driver.window_color_pixel_count(
+                (244, 246, 248), crop=(20, 98, 180, 78), tolerance=50
+            ) >= 20
+        )
+        unchanged = current == previous
+        previous = current
+        if not painted or not unchanged:
+            stable_since = None
+            return False
+        now = time.monotonic()
+        if stable_since is None:
+            stable_since = now
+        return now - stable_since >= 0.25
+
+    wait_until("painted current private search results", ready, timeout=SEARCH_WAIT_SECONDS)
+
+
+def wait_for_search_visibility(driver: WindowDriver, *, opened: bool) -> None:
+    # Sample the close button's background, outside text and the blinking caret.
+    # The tree shown after search closes has no button at this location.
+    def matches() -> bool:
+        pixels = driver.window_color_pixel_count(
+            (57, 66, 78), crop=(214, 56, 28, 28), tolerance=2
+        )
+        return pixels >= 400 if opened else pixels < 100
+
+    wait_until("search controls visibility", matches, timeout=SEARCH_WAIT_SECONDS)
+
+
+def wait_for_search_results(driver: WindowDriver) -> None:
+    """Require a painted result row, then a stable result list (not the input)."""
+    driver.set_stage("query/results")
+    previous: Path | None = None
+    stable_since: float | None = None
+
+    def ready() -> bool:
+        nonlocal previous, stable_since
+        current = driver.capture("search-results-ready")
+        try:
+            painted = (
+                near_color_pixel_count(current, (57, 66, 78),
+                                       crop=SEARCH_FIRST_RESULT_CROP, tolerance=2) >= 1_000
+                and near_color_pixel_count(current, (143, 184, 220),
+                                           crop=(204, 98, 36, 78), tolerance=40) >= 8
+                and bright_pixel_count(current, crop=SEARCH_FIRST_RESULT_CROP) >= 20
+            )
+            unchanged = previous is not None and image_difference(
+                previous, current, crop=SEARCH_RESULTS_CROP
+            ) == 0
+        finally:
+            if previous is not None:
+                previous.unlink(missing_ok=True)
+            previous = current
+        if not painted or not unchanged:
+            stable_since = None
+            return False
+        now = time.monotonic()
+        if stable_since is None:
+            stable_since = now
+        return now - stable_since >= 0.25
+
+    try:
+        wait_until("painted current search results", ready, timeout=SEARCH_WAIT_SECONDS)
+    finally:
+        if previous is not None:
+            previous.unlink(missing_ok=True)
+
+
+def select_search_result_and_edit(
+    driver: WindowDriver, workspace: Path, path: Path, marker: str, *, click: bool = False
+) -> None:
+    driver.set_stage("selection/open")
+    if click:
+        driver.click_point(128, 124)
+    else:
+        driver.key("Return")
+    wait_for_search_visibility(driver, opened=False)
+    expected = path.relative_to(workspace).as_posix()
+
+    def selected() -> bool:
+        settings = workspace / ".notrum" / "settings.json"
+        if not settings.is_file():
+            return False
+        saved = json.loads(read_text(settings))
+        return saved.get("selected_note") == expected
+
+    wait_until("expected search note selection", selected, timeout=SEARCH_WAIT_SECONDS)
+    driver.wait_for_stable_frame(
+        "selected search result before editing", crop=EDITOR_CROP,
+        minimum_dark_pixels=30, stable_for=0.15, timeout=SEARCH_WAIT_SECONDS,
+    )
+    driver.set_stage("selection/save")
+    driver.click("editor_below_document")
+    driver.key("Return")
+    driver.type_text(marker)
+    wait_until("search selection autosave", lambda: contains(path, marker),
+               timeout=SEARCH_WAIT_SECONDS)
+
+
 def search_scenario(driver: WindowDriver, workspace: Path) -> None:
     notes = workspace / "notes"
     title_note = notes / "Orbit Launch Plan.md"
@@ -6317,30 +6465,21 @@ def search_scenario(driver: WindowDriver, workspace: Path) -> None:
         return expected in catalog.read_text(encoding="utf-8").splitlines()
 
     def open_query(query: str, *, click: bool = False) -> None:
+        driver.set_stage("query/results")
         if click:
             driver.click("search")
         else:
             driver.key("ctrl+k")
+        wait_for_search_visibility(driver, opened=True)
         driver.type_text(query)
-        driver.wait_for_stable_frame(
-            f"stable live results for {query}",
-            crop=(12, SIDEBAR_TREE_TOP, 232, 330),
-            minimum_dark_pixels=30,
-            timeout=4.0,
-        )
+        driver.move_to("editor")
+        wait_for_search_results(driver)
 
-    def select_and_edit(path: Path, marker: str) -> None:
-        driver.key("Return")
-        driver.wait_for_stable_frame(
-            f"selected search result before editing {marker}", crop=EDITOR_CROP
-        )
-        driver.click("editor_below_document")
-        driver.key("Return")
-        driver.type_text(marker)
-        wait_until(f"search selection autosave for {marker}", lambda: contains(path, marker))
-        time.sleep(0.2)
+    def select_and_edit(path: Path, marker: str, *, click: bool = False) -> None:
+        select_search_result_and_edit(driver, workspace, path, marker, click=click)
 
     driver.start_app(workspace, "search")
+    driver.set_stage("initial/index")
     wait_until("initial disposable search index", wait_for_index, timeout=8.0)
 
     driver.click("search")
@@ -6363,7 +6502,7 @@ def search_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.key("Escape")
 
     open_query("Orbit", click=True)
-    select_and_edit(title_note, "title-search-click-marker")
+    select_and_edit(title_note, "title-search-click-marker", click=True)
 
     open_query("Galactic")
     select_and_edit(tag_note, "tag-search-keyboard-marker")
@@ -6382,6 +6521,7 @@ def search_scenario(driver: WindowDriver, workspace: Path) -> None:
     driver.key("ctrl+k")
     driver.type_text("escape query")
     driver.key("Escape")
+    wait_for_search_visibility(driver, opened=False)
     driver.type_text("escape-focus-marker")
     wait_until(
         "Escape returns focus to the editor",
@@ -6392,6 +6532,7 @@ def search_scenario(driver: WindowDriver, workspace: Path) -> None:
     body_note.write_text(
         read_text(body_note) + "\nexternalindexmarker\n", encoding="utf-8"
     )
+    driver.set_stage("external/index")
     wait_until(
         "external note reconciliation in the disposable index",
         lambda: indexed_stamp_matches(body_note),
@@ -6403,6 +6544,7 @@ def search_scenario(driver: WindowDriver, workspace: Path) -> None:
 
     shutil.rmtree(workspace / ".notrum" / "search")
     driver.start_app(workspace, "search-rebuild")
+    driver.set_stage("rebuild/index")
     wait_until("search index rebuild after deletion", wait_for_index, timeout=8.0)
     wait_until(
         "completed search generation publish",
@@ -6419,6 +6561,7 @@ def search_scenario(driver: WindowDriver, workspace: Path) -> None:
     select_and_edit(body_note, "rebuilt-index-marker")
     driver.close_app()
 
+    driver.set_stage("final/validation")
     if untouched.read_bytes() != untouched_before:
         raise AcceptanceFailure("search changed an unrelated canonical note")
     changed_overflow_notes = [

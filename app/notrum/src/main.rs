@@ -1116,6 +1116,8 @@ struct AppModel {
     search_indexing: bool,
     search_error: Option<UiText>,
     search_query_generation: u64,
+    search_query: String,
+    search_results_generation: Option<u64>,
     search_results: Vec<SearchResult>,
     rss_sender: Sender<RssWorkerEvent>,
     rss_receiver: Receiver<RssWorkerEvent>,
@@ -1178,6 +1180,8 @@ impl AppModel {
             search_indexing: false,
             search_error: None,
             search_query_generation: 0,
+            search_query: String::new(),
+            search_results_generation: None,
             search_results: Vec::new(),
             rss_sender,
             rss_receiver,
@@ -1349,6 +1353,8 @@ impl AppModel {
                     search_indexing: true,
                     search_error: None,
                     search_query_generation: 0,
+                    search_query: String::new(),
+                    search_results_generation: None,
                     search_results: Vec::new(),
                     rss_sender,
                     rss_receiver,
@@ -1407,6 +1413,8 @@ impl AppModel {
                 search_indexing: true,
                 search_error: None,
                 search_query_generation: 0,
+                search_query: String::new(),
+                search_results_generation: None,
                 search_results: Vec::new(),
                 rss_sender,
                 rss_receiver,
@@ -3050,11 +3058,9 @@ impl AppModel {
     }
 
     fn submit_search(&mut self, query: String) {
-        self.search_query_generation = self.search_query_generation.saturating_add(1);
+        self.invalidate_search_projection();
+        self.search_query.clone_from(&query);
         let generation = self.search_query_generation;
-        if query.trim().is_empty() {
-            self.search_results.clear();
-        }
         if self
             .search_sender
             .send(SearchCommand::Query { generation, query })
@@ -3462,7 +3468,30 @@ impl AppModel {
 
     fn invalidate_search_projection(&mut self) {
         self.search_query_generation = self.search_query_generation.saturating_add(1);
+        self.search_results_generation = None;
         self.search_results.clear();
+    }
+
+    fn accept_search_results(&mut self, generation: u64, results: Vec<SearchResult>) -> bool {
+        if !is_current_search_generation(self.search_query_generation, generation)
+            || self.search_indexing
+            || self.search_error.is_some()
+        {
+            return false;
+        }
+        self.search_results = results;
+        self.search_results_generation = Some(generation);
+        true
+    }
+
+    fn search_result_generation(&self, query: &str) -> Option<u64> {
+        self.search_results_generation.filter(|generation| {
+            *generation == self.search_query_generation
+                && self.search_query == query
+                && !query.trim().is_empty()
+                && !self.search_indexing
+                && self.search_error.is_none()
+        })
     }
 
     fn unlock_note(
@@ -3605,7 +3634,17 @@ impl AppModel {
         }
     }
 
-    fn open_search_result(&mut self, relative_path: &str) -> bool {
+    fn open_search_result(&mut self, generation: u64, query: &str, relative_path: &str) -> bool {
+        // A pointer event can outlive the row that produced it; keyboard events
+        // can arrive before the query effect. Validate both against the input.
+        if self.search_result_generation(query) != Some(generation)
+            || !self
+                .search_results
+                .iter()
+                .any(|result| result.relative_path == relative_path)
+        {
+            return false;
+        }
         let Some(workspace) = self.workspace.as_ref() else {
             self.error = Some(("workspace is not open".to_owned()).into());
             return false;
@@ -4424,11 +4463,13 @@ fn schedule_search_poll(
             for event in events {
                 match event {
                     SearchEvent::Indexing => {
+                        model.invalidate_search_projection();
                         model.search_indexing = true;
                         model.search_error = None;
                         changed = true;
                     }
                     SearchEvent::Ready => {
+                        rerun = true;
                         model.search_ready = true;
                         model.search_indexing = false;
                         model.search_error = None;
@@ -4441,12 +4482,10 @@ fn schedule_search_poll(
                     SearchEvent::Results {
                         generation,
                         results,
-                    } if is_current_search_generation(
-                        model.search_query_generation,
-                        generation,
-                    ) =>
-                    {
-                        model.search_results = results;
+                    } => {
+                        if !model.accept_search_results(generation, results) {
+                            continue;
+                        }
                         let max_selected = model.search_results.len().saturating_sub(1);
                         if selected_snapshot > max_selected {
                             selected_snapshot = max_selected;
@@ -4454,7 +4493,6 @@ fn schedule_search_poll(
                         }
                         changed = true;
                     }
-                    SearchEvent::Results { .. } => {}
                     SearchEvent::PurgeFinished {
                         operation_id,
                         result,
@@ -4474,6 +4512,7 @@ fn schedule_search_poll(
                         changed |= model.finish_password_change_search_suspend(operation_id);
                     }
                     SearchEvent::Error(error) => {
+                        model.invalidate_search_projection();
                         model.search_indexing = false;
                         model.search_error = Some(UiText::Failure {
                             details: error.to_string(),
@@ -4854,6 +4893,7 @@ fn app_view(
         let query = search_query.get();
         search_selected.set(0);
         search_effect_model.borrow_mut().submit_search(query);
+        revision.update(|value| *value += 1);
     });
     let search_tag_popover = tag_popover;
     let search_note_find = note_find;
@@ -10914,16 +10954,21 @@ fn sidebar_panel(
     let search_rows = dyn_stack(
         move || {
             revision.get();
-            search_rows_state_model
-                .borrow()
+            let query = search_query.get();
+            let model = search_rows_state_model.borrow();
+            let Some(generation) = model.search_result_generation(&query) else {
+                return Vec::new();
+            };
+            model
                 .search_results
                 .iter()
                 .cloned()
                 .enumerate()
+                .map(|(row_index, result)| (generation, row_index, result))
                 .collect::<Vec<_>>()
         },
-        |(_, result)| result.relative_path.clone(),
-        move |(row_index, result)| {
+        |(generation, _, result)| (*generation, result.relative_path.clone()),
+        move |(generation, row_index, result)| {
             let row_model = search_rows_view_model.clone();
             let relative_path = result.relative_path.clone();
             let kind = match result.match_kind {
@@ -10968,7 +11013,11 @@ fn sidebar_panel(
                 ))
                 .style(|style| style.width_full().gap(4.0)),
                 move || {
-                    let opened = row_model.borrow_mut().open_search_result(&relative_path);
+                    let opened = row_model.borrow_mut().open_search_result(
+                        generation,
+                        &search_query.get_untracked(),
+                        &relative_path,
+                    );
                     if opened {
                         search_open.set(false);
                         search_query.set(String::new());
@@ -11038,15 +11087,24 @@ fn sidebar_panel(
                 EventPropagation::Stop
             }
             Key::Named(NamedKey::Enter) => {
-                let relative_path = search_key_model
-                    .borrow()
-                    .search_results
-                    .get(search_selected.get_untracked())
-                    .map(|result| result.relative_path.clone());
-                if let Some(relative_path) = relative_path {
-                    let opened = search_key_model
-                        .borrow_mut()
-                        .open_search_result(&relative_path);
+                let query = search_query.get_untracked();
+                let target = {
+                    let model = search_key_model.borrow();
+                    model
+                        .search_result_generation(&query)
+                        .and_then(|generation| {
+                            model
+                                .search_results
+                                .get(search_selected.get_untracked())
+                                .map(|result| (generation, result.relative_path.clone()))
+                        })
+                };
+                if let Some((generation, relative_path)) = target {
+                    let opened = search_key_model.borrow_mut().open_search_result(
+                        generation,
+                        &query,
+                        &relative_path,
+                    );
                     if opened {
                         search_open.set(false);
                         search_query.set(String::new());
@@ -11071,6 +11129,7 @@ fn sidebar_panel(
         move || {
             let mut model = retry_search_model.borrow_mut();
             if model.search_sender.send(SearchCommand::Rebuild).is_ok() {
+                model.invalidate_search_projection();
                 model.search_indexing = true;
                 model.search_error = None;
             } else {
@@ -11129,6 +11188,7 @@ fn sidebar_panel(
         }
     })
     .style(move |style| {
+        revision.get();
         let hidden = !search_open.get()
             || (!search_input_model.borrow().search_indexing
                 && search_input_model.borrow().search_error.is_none()
@@ -16313,6 +16373,84 @@ mod tests {
         assert!(is_current_search_generation(42, 42));
         assert!(!is_current_search_generation(42, 41));
         assert!(!is_current_search_generation(42, 43));
+    }
+
+    #[test]
+    fn search_selection_requires_the_current_query_and_rendered_generation() {
+        let root = test_workspace("notrum-app-search-selection");
+        fs::create_dir_all(root.join("notes")).unwrap();
+        fs::write(root.join("notes/A.md"), "alpha\n").unwrap();
+        fs::write(root.join("notes/B.md"), "bravo\n").unwrap();
+        let mut model = AppModel::load(&root);
+        model.shutdown_search_worker();
+        // Drive responses explicitly: no worker scheduling or sleeps decide
+        // whether an old pointer event or an early Enter is accepted.
+        let (sender, commands) = std::sync::mpsc::channel();
+        model.search_sender = sender;
+        model.search_indexing = false;
+        model.search_error = None;
+        let result = notrum_search::SearchResult {
+            relative_path: "notes/B.md".to_owned(),
+            title: "bravo".to_owned(),
+            tags: Vec::new(),
+            snippet: String::new(),
+            match_kind: notrum_search::MatchKind::Title,
+            score: 1.0,
+        };
+
+        model.submit_search("br".to_owned());
+        let first = match Deadline::new().receive(&commands).unwrap() {
+            SearchCommand::Query { generation, .. } => generation,
+            _ => panic!("expected query"),
+        };
+        assert!(model.accept_search_results(first, vec![result.clone()]));
+        assert_eq!(model.search_result_generation("br"), Some(first));
+        // The input can already have changed before its reactive effect runs.
+        assert_eq!(model.search_result_generation("bravo"), None);
+        assert!(!model.open_search_result(first, "bravo", "notes/B.md"));
+
+        model.submit_search("bravo".to_owned());
+        let second = model.search_query_generation;
+        assert!(model.search_results.is_empty());
+        assert_eq!(model.search_result_generation("bravo"), None);
+        assert!(!model.open_search_result(first, "bravo", "notes/B.md"));
+        assert!(!model.accept_search_results(first, vec![result.clone()]));
+        assert_eq!(model.search_result_generation("bravo"), None);
+        assert!(model.accept_search_results(second, vec![result.clone()]));
+        assert!(!model.accept_search_results(first, Vec::new()));
+        assert_eq!(model.search_results, vec![result.clone()]);
+        // Even when the same path occurs in both queries, the old row is inert.
+        assert!(!model.open_search_result(first, "bravo", "notes/B.md"));
+        assert!(!model.open_search_result(second, "bravo", "notes/A.md"));
+        assert_eq!(model.workspace.as_ref().unwrap().selected_note(), Some(0));
+        assert!(model.open_search_result(second, "bravo", "notes/B.md"));
+        assert_eq!(model.workspace.as_ref().unwrap().selected_note(), Some(1));
+
+        // Reconciliation of the same query invalidates its earlier rows too.
+        model.submit_search("bravo".to_owned());
+        assert!(!model.open_search_result(second, "bravo", "notes/B.md"));
+        let reconciled = model.search_query_generation;
+        assert!(model.accept_search_results(reconciled, vec![result.clone()]));
+        assert!(model.open_search_result(reconciled, "bravo", "notes/B.md"));
+
+        model.invalidate_search_projection();
+        model.search_indexing = true;
+        let rebuilding = model.search_query_generation;
+        assert!(!model.accept_search_results(reconciled, vec![result.clone()]));
+        assert!(!model.accept_search_results(rebuilding, vec![result.clone()]));
+        assert!(!model.open_search_result(reconciled, "bravo", "notes/B.md"));
+        model.search_indexing = false;
+        model.submit_search("bravo".to_owned());
+        let rebuilt = model.search_query_generation;
+        assert!(model.accept_search_results(rebuilt, vec![result]));
+        assert!(model.open_search_result(rebuilt, "bravo", "notes/B.md"));
+
+        model.submit_search(String::new());
+        assert!(model.search_results.is_empty());
+        assert_eq!(model.search_result_generation(""), None);
+        assert!(!model.open_search_result(rebuilt, "", "notes/B.md"));
+        drop(model);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

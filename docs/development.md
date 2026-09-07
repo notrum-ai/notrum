@@ -43,7 +43,10 @@ Docker. See [GitHub CI](ci.md) for runners, caches, artifacts and validation.
 | `make build-linux-smoke` | Build and launch that Linux release executable under Xvfb in a temporary workspace |
 | `make native-smoke` | Generate demo data, build, and launch the bundle in a temporary workspace |
 | `make native-external-smoke` | Test Finder/Launch Services delivery to an existing bundle |
-| `make clean` | Remove Docker debug Cargo artifacts |
+| `make cache-size` | Show Docker Cargo build-cache sizes by profile and platform |
+| `make clean` | Remove Docker debug Cargo artifacts for Linux, Windows, and the macOS cross-check |
+| `make clean-all` | Empty the Docker Cargo target volume, including release and UI artifacts |
+| `make test-cache` | Verify cleanup on a disposable Docker volume |
 
 Use focused targets while developing. Before submitting a change, run
 `make ui-check` for UI changes, `make check` for the full container check, or
@@ -51,8 +54,37 @@ Use focused targets while developing. Before submitting a change, run
 prerequisites, so separate build and check runs are unnecessary. After fixing
 a failure, rerun the selected check.
 
-`make clean` retains release and macOS cross-target artifacts, Cargo registry
-and Git caches, benchmark data, and the native `.host-build/` directory.
+### Build-cache size and cleanup
+
+Local Docker dev/test builds use `line-tables-only` debug information: backtraces
+retain filenames and line numbers without full type and variable information.
+Incremental compilation remains enabled for fast rebuilds. CI retains its
+separate settings, and native macOS builds are unchanged.
+
+For full Docker debug information, override both profiles for the required run:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=2 CARGO_PROFILE_TEST_DEBUG=2 make ui-build
+```
+
+Changing debug settings requires recompilation and can leave old artifacts in
+the target volume. Use `make cache-size` to inspect it and `make clean` once when
+switching to the smaller defaults. This removes the top-level `debug` directory
+and the `debug` directories under `aarch64-apple-darwin` and
+`x86_64-pc-windows-gnu`. It retains release builds and UI acceptance artifacts.
+
+Use `make clean-all` when the entire build cache is no longer needed. It removes
+all contents of the `cargo-target` volume, including hidden files and UI
+artifacts, while retaining the volume's mount point. Both cleanup commands
+preserve Cargo registry and Git caches, benchmark data, packaged outputs in
+`dist/`, workspaces, and the native `.host-build/` directory. They operate on the
+fixed Docker target mount, regardless of a `CARGO_TARGET_DIR` override.
+
+Run cleanup only between builds and tests, with no other process using the
+volume. Cleanup is manual; it does not run after each command. The first build
+after cleanup recompiles the removed artifacts, and later builds reuse the new
+cache. `make test-cache` exercises the actual cleanup recipes on a separate
+anonymous Docker volume that is removed with its test container.
 
 ## UI acceptance
 

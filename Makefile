@@ -51,7 +51,11 @@ help:
 		"  make NATIVE=1 SOURCE_REVISION=<HEAD-SHA> native-check — macOS без Docker" \
 		"  make           — make check, затем native build" \
 		"  make publish   — patch version, Codex changelog, полный make и GitHub Release" \
-		"  make clean     — удалить Docker debug-артефакты Cargo" \
+		"  make cache-size — показать размеры Docker-кэша сборок" \
+		"  make clean     — удалить Docker debug-артефакты Linux, Windows и macOS" \
+		"  make clean-all — очистить весь cargo-target, включая release и UI-артефакты" \
+		"  make test-cache — проверить очистку на временном Docker-томе" \
+		"Очистку запускайте только между сборками и тестами." \
 		"  make build-macos — macOS release в dist/Notrum.app (make build — алиас)" \
 		"  make build-windows — Windows x64 release в dist/windows/x86_64/Notrum.exe через Docker" \
 		"  make test-windows-build — пакет Windows test EXE и PowerShell runner" \
@@ -72,8 +76,23 @@ check-linux: $(CHECK_HOST_TARGETS) audit diff-check
 
 check-windows-build: build-windows test-windows-build
 
+.PHONY: cache-size clean-all test-cache
+cache-size:
+	$(RUN) du -h --max-depth=2 /var/cache/notrum/target
+
+# Manual maintenance only: never attach cleanup to build/test prerequisites.
+# Fixed paths keep cleanup within cargo-target even if CARGO_TARGET_DIR changes.
 clean:
-	$(RUN) rm -rf -- /var/cache/notrum/target/debug
+	$(RUN) sh -eu -c 'root=/var/cache/notrum/target; rm -rf -- "$$root/debug"; \
+		for target in aarch64-apple-darwin x86_64-pc-windows-gnu; do \
+			if [ ! -L "$$root/$$target" ]; then rm -rf -- "$$root/$$target/debug"; fi; \
+		done'
+
+clean-all:
+	$(RUN) find /var/cache/notrum/target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+
+test-cache:
+	$(COMPOSE) run --rm -v /var/cache/notrum/target toolchain python3 -B tools/test_cargo_cache.py
 
 build: build-macos
 

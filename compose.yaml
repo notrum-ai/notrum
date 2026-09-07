@@ -4,6 +4,10 @@ services:
       context: .
       dockerfile: docker/rust/Dockerfile
     working_dir: /workspace
+    environment:
+      # Keep useful backtraces and incremental builds without full debug data.
+      CARGO_PROFILE_DEV_DEBUG: ${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}
+      CARGO_PROFILE_TEST_DEBUG: ${CARGO_PROFILE_TEST_DEBUG:-line-tables-only}
     volumes:
       - .:/workspace
       - cargo-registry:/usr/local/cargo/registry

@@ -160,7 +160,7 @@ fn form(
         status,
         h_stack((
             text_button(
-                msg!(RssAiRepeat),
+                msg!(RefreshFeed),
                 IconButtonTone::Secondary,
                 palette,
                 move || {

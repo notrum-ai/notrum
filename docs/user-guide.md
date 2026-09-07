@@ -188,7 +188,7 @@ Each visit grants one forced refresh and up to 99 classifications, including
 rechecks. Learning from explicit reactions remains allowed while paused.
 Requests use batches of at most ten entries; two RSS downloads and one AI request
 can run concurrently. Temporary AI errors retry on a later cycle. Key/model
-errors wait for corrected settings or the popup's Retry button.
+errors wait for corrected settings or the popup's Refresh feed button.
 
 ## Protected notes
 

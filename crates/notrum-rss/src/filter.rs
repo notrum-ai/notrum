@@ -4,53 +4,132 @@
 #![forbid(unsafe_code)]
 
 use super::*;
+use regex::{RegexBuilder, RegexSet, RegexSetBuilder};
 
 pub const MAX_PREFERENCE_BYTES: usize = 16 * 1024;
-pub const AI_VISIT_LIMIT: u16 = 99;
+const MAX_REGEX_BYTES: usize = 4 * 1024 * 1024;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RssPreferences {
-    pub likes: String,
-    pub dislikes: String,
-    pub alias: String,
+    pub blacklist: String,
+    pub whitelist: String,
     pub version: u64,
     #[serde(flatten)]
     pub additional: BTreeMap<String, serde_json::Value>,
 }
 
-impl Default for RssPreferences {
-    fn default() -> Self {
-        Self {
-            likes: String::new(),
-            dislikes: String::new(),
-            alias: "default".into(),
-            version: 0,
-            additional: BTreeMap::new(),
-        }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RssFilterError {
+    TooLong,
+    Invalid { blacklist: bool, line: usize },
+    TooComplex { blacklist: bool },
+}
+
+impl From<RssFilterError> for EngineError {
+    fn from(error: RssFilterError) -> Self {
+        let path = match error {
+            RssFilterError::TooLong => "rss/preferences/size".into(),
+            RssFilterError::Invalid { blacklist, line } => format!(
+                "rss/filter/{}/line/{line}",
+                if blacklist { "blacklist" } else { "whitelist" }
+            ),
+            RssFilterError::TooComplex { blacklist } => format!(
+                "rss/filter/{}/size",
+                if blacklist { "blacklist" } else { "whitelist" }
+            ),
+        };
+        Self::InvalidSetting(path)
     }
+}
+
+pub struct RssFilter {
+    blacklist: RegexSet,
+    whitelist: RegexSet,
 }
 
 impl RssPreferences {
-    pub fn enabled(&self) -> bool {
-        !self.likes.trim().is_empty() || !self.dislikes.trim().is_empty()
-    }
-    pub fn validate(&self) -> Result<(), EngineError> {
-        if self.likes.len() > MAX_PREFERENCE_BYTES
-            || self.dislikes.len() > MAX_PREFERENCE_BYTES
-            || self.alias.len() > MAX_PREFERENCE_BYTES
+    pub fn compile(&self) -> Result<RssFilter, RssFilterError> {
+        if self.blacklist.len() > MAX_PREFERENCE_BYTES
+            || self.whitelist.len() > MAX_PREFERENCE_BYTES
         {
-            return Err(EngineError::InvalidSetting("rss/preferences/size".into()));
+            return Err(RssFilterError::TooLong);
         }
-        Ok(())
+        Ok(RssFilter {
+            blacklist: compile_list(&self.blacklist, true)?,
+            whitelist: compile_list(&self.whitelist, false)?,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), EngineError> {
+        self.compile().map(|_| ()).map_err(Into::into)
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RssReaction {
-    Like,
-    Dislike,
+fn compile_list(text: &str, blacklist: bool) -> Result<RegexSet, RssFilterError> {
+    let lines = text
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    // Compile the whole list once in the normal path, with an aggregate memory limit.
+    if let Ok(set) = RegexSetBuilder::new(lines.iter().map(|(_, line)| *line))
+        .case_insensitive(true)
+        .size_limit(MAX_REGEX_BYTES)
+        .dfa_size_limit(MAX_REGEX_BYTES)
+        .build()
+    {
+        return Ok(set);
+    }
+    // On failure, identify the original physical line without exposing the pattern.
+    // Keep nonempty patterns verbatim: spaces can be meaningful in regexp.
+    for (index, pattern) in lines {
+        RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .size_limit(MAX_REGEX_BYTES)
+            .dfa_size_limit(MAX_REGEX_BYTES)
+            .build()
+            .map_err(|_| RssFilterError::Invalid {
+                blacklist,
+                line: index + 1,
+            })?;
+    }
+    Err(RssFilterError::TooComplex { blacklist })
+}
+
+impl RssFilter {
+    pub fn decision(&self, entry: &RssEntry) -> RssDecision {
+        let text = format!("{}\n{}", entry.title, entry.summary);
+        if self.blacklist.is_match(&text) && !self.whitelist.is_match(&text) {
+            RssDecision::Hide
+        } else {
+            RssDecision::Keep
+        }
+    }
+
+    pub(crate) fn apply(
+        &self,
+        feed: &RssFeedCache,
+        state: &mut RssReadState,
+        version: u64,
+        mode: RssFilterMode,
+    ) {
+        for article in &feed.entries {
+            let content_version = content_version(article);
+            let entry = state.entries.entry(article.id.clone()).or_default();
+            if mode == RssFilterMode::All || entry.content_version != content_version {
+                entry.decision = Some(self.decision(article));
+                entry.preferences_version = version;
+                entry.content_version = content_version;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RssFilterMode {
+    Changed,
+    All,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -63,9 +142,6 @@ pub enum RssDecision {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RssEntryState {
-    pub reaction: Option<RssReaction>,
-    pub reaction_version: u64,
-    pub learned_version: u64,
     pub decision: Option<RssDecision>,
     pub preferences_version: u64,
     pub content_version: String,
@@ -75,11 +151,7 @@ pub struct RssEntryState {
 
 impl RssEntryState {
     pub fn hidden(&self) -> bool {
-        match self.reaction {
-            Some(RssReaction::Like) => false,
-            Some(RssReaction::Dislike) => true,
-            None => self.decision == Some(RssDecision::Hide),
-        }
+        self.decision == Some(RssDecision::Hide)
     }
 }
 
@@ -89,7 +161,6 @@ pub struct RssSchedule {
     pub iteration: u32,
     pub next_check: u64,
     pub paused: bool,
-    pub ai_used: u16,
     pub forced: bool,
     pub filter_pending: bool,
     pub visit: u64,
@@ -102,7 +173,6 @@ impl RssSchedule {
         self.iteration = 0;
         self.next_check = now;
         self.paused = false;
-        self.ai_used = 0;
         self.forced = true;
         self.filter_pending = false;
         self.visit = self.visit.saturating_add(1);
@@ -144,14 +214,6 @@ pub fn content_version(entry: &RssEntry) -> String {
     digest_string(&serde_json::to_string(entry).expect("RSS entries serialize"))
 }
 
-#[derive(Clone, Debug)]
-pub struct RssCheck {
-    pub entry: RssEntry,
-    pub preferences_version: u64,
-    pub reaction_version: u64,
-    pub content_version: String,
-}
-
 impl RssEngine {
     pub fn preferences(&self, id: &ItemId) -> Result<RssPreferences, EngineError> {
         self.subscriptions
@@ -165,9 +227,19 @@ impl RssEngine {
         &mut self,
         id: &ItemId,
         expected: u64,
-        mut value: RssPreferences,
+        value: RssPreferences,
     ) -> Result<(), EngineError> {
-        value.validate()?;
+        self.save_filter(id, expected, value, false)
+    }
+
+    pub fn save_filter(
+        &mut self,
+        id: &ItemId,
+        expected: u64,
+        mut value: RssPreferences,
+        apply: bool,
+    ) -> Result<(), EngineError> {
+        let filter = value.compile()?;
         let _lock = self.operation_lock()?;
         let current = self.preferences(id)?;
         if current.version != expected {
@@ -178,18 +250,40 @@ impl RssEngine {
             .checked_add(1)
             .ok_or(EngineError::Conflict)?;
         value.additional = current.additional;
-        let enabled = value.enabled();
+        let version = value.version;
+        let feed = self.load_cache(id)?;
+        // Read state before writing preferences, so malformed state cannot cause a partial save.
+        self.load_read_state(id)?;
         self.update_subscription(id, |s| s.preferences = value)?;
         self.update_state(id, |state| {
-            state.schedule.filter_pending = enabled;
-            if !enabled {
-                for entry in state.entries.values_mut() {
-                    entry.decision = None;
+            if apply {
+                filter.apply(&feed, state, version, RssFilterMode::All);
+            } else {
+                // Establish a baseline for cached entries without filter state.
+                // Save alone must not turn them into new articles on the next refresh.
+                for article in &feed.entries {
+                    let entry = state.entries.entry(article.id.clone()).or_default();
+                    if entry.content_version.is_empty() {
+                        entry.content_version = content_version(article);
+                    }
                 }
             }
             Ok(())
-        })?;
-        Ok(())
+        })
+    }
+
+    pub fn apply_filter(&self, id: &ItemId, mode: RssFilterMode) -> Result<(), EngineError> {
+        let _lock = self.operation_lock()?;
+        let preferences = self.preferences(id)?;
+        if Self::open(&self.workspace)?.preferences(id)?.version != preferences.version {
+            return Err(EngineError::Conflict);
+        }
+        let filter = preferences.compile()?;
+        let feed = self.load_cache(id)?;
+        self.update_state(id, |state| {
+            filter.apply(&feed, state, preferences.version, mode);
+            Ok(())
+        })
     }
 
     pub fn update_state<T>(
@@ -209,215 +303,332 @@ impl RssEngine {
         write_json_atomic(&read_state_path(&self.workspace, id), &state)?;
         Ok(result)
     }
-
-    pub fn react(
-        &self,
-        id: &ItemId,
-        entry_id: &str,
-        reaction: RssReaction,
-    ) -> Result<bool, EngineError> {
-        if !self
-            .load_cache(id)?
-            .entries
-            .iter()
-            .any(|e| e.id == entry_id)
-        {
-            return Err(EngineError::Conflict);
-        }
-        self.update_state(id, |state| {
-            let entry = state.entries.entry(entry_id.into()).or_default();
-            if entry.reaction == Some(reaction) {
-                return Ok(false);
-            }
-            entry.reaction = Some(reaction);
-            entry.reaction_version = entry
-                .reaction_version
-                .checked_add(1)
-                .ok_or(EngineError::Conflict)?;
-            Ok(true)
-        })
-    }
-
-    pub fn checks(&self, id: &ItemId, learning: bool) -> Result<Vec<RssCheck>, EngineError> {
-        let preferences = self.preferences(id)?;
-        let (feed, mut state) = self.feed(id)?;
-        if !learning
-            && (!preferences.enabled()
-                || !state.schedule.allowed(state.all_unread(&feed))
-                || state.schedule.ai_used >= AI_VISIT_LIMIT)
-        {
-            return Ok(Vec::new());
-        }
-        let limit = if learning {
-            1
-        } else {
-            usize::from(AI_VISIT_LIMIT - state.schedule.ai_used).min(10)
-        };
-        Ok(feed
-            .entries
-            .into_iter()
-            .filter_map(|entry| {
-                let saved = state.entries.get(&entry.id).cloned().unwrap_or_default();
-                let version = content_version(&entry);
-                let needed = if learning {
-                    saved.reaction.is_some() && saved.learned_version != saved.reaction_version
-                } else {
-                    !state.read_entry_ids.contains(&entry.id)
-                        && saved.reaction.is_none()
-                        && (saved.decision.is_none()
-                            || saved.preferences_version != preferences.version
-                            || saved.content_version != version)
-                };
-                needed.then_some(RssCheck {
-                    entry,
-                    preferences_version: preferences.version,
-                    reaction_version: saved.reaction_version,
-                    content_version: version,
-                })
-            })
-            .take(limit)
-            .collect())
-    }
-
-    pub fn apply_decisions(
-        &self,
-        id: &ItemId,
-        checks: &[(RssCheck, RssDecision)],
-    ) -> Result<(), EngineError> {
-        let _lock = self.operation_lock()?;
-        let preferences = self.preferences(id)?;
-        let cache = self.load_cache(id)?;
-        self.update_state(id, |state| {
-            for (check, decision) in checks {
-                let entry = state.entries.entry(check.entry.id.clone()).or_default();
-                if preferences.enabled()
-                    && preferences.version == check.preferences_version
-                    && !state.read_entry_ids.contains(&check.entry.id)
-                    && entry.reaction_version == check.reaction_version
-                    && entry.reaction.is_none()
-                    && cache.entries.iter().any(|e| {
-                        e.id == check.entry.id && content_version(e) == check.content_version
-                    })
-                {
-                    entry.decision = Some(*decision);
-                    entry.preferences_version = check.preferences_version;
-                    entry.content_version = check.content_version.clone();
-                }
-            }
-            Ok(())
-        })
-    }
-
-    /// False means the response is stale; the pending reaction remains queued.
-    pub fn apply_learning(
-        &mut self,
-        id: &ItemId,
-        check: &RssCheck,
-        likes: &[String],
-        dislikes: &[String],
-    ) -> Result<bool, EngineError> {
-        let _lock = self.operation_lock()?;
-        let mut preferences = self.preferences(id)?;
-        let (feed, state) = self.feed(id)?;
-        if preferences.version != check.preferences_version
-            || state
-                .entries
-                .get(&check.entry.id)
-                .is_none_or(|e| e.reaction_version != check.reaction_version)
-            || !feed
-                .entries
-                .iter()
-                .any(|e| e.id == check.entry.id && content_version(e) == check.content_version)
-        {
-            return Ok(false);
-        }
-        append_unique(&mut preferences.likes, likes)?;
-        append_unique(&mut preferences.dislikes, dislikes)?;
-        self.save_preferences(id, check.preferences_version, preferences)?;
-        self.update_state(id, |state| {
-            state
-                .entries
-                .entry(check.entry.id.clone())
-                .or_default()
-                .learned_version = check.reaction_version;
-            Ok(())
-        })?;
-        Ok(true)
-    }
-}
-
-fn append_unique(text: &mut String, additions: &[String]) -> Result<(), EngineError> {
-    let mut known = text
-        .lines()
-        .map(|s| s.trim().to_lowercase())
-        .collect::<BTreeSet<_>>();
-    for line in additions
-        .iter()
-        .flat_map(|s| s.lines())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        if known.insert(line.to_lowercase()) {
-            if !text.is_empty() && !text.ends_with('\n') {
-                text.push('\n');
-            }
-            text.push_str(line);
-        }
-    }
-    if text.len() > MAX_PREFERENCE_BYTES {
-        return Err(EngineError::InvalidSetting("rss/preferences/size".into()));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn article(id: &str, title: &str, summary: &str) -> RssEntry {
+        RssEntry {
+            id: id.into(),
+            title: title.into(),
+            summary: summary.into(),
+            author: None,
+            published: None,
+            updated: None,
+            link: None,
+        }
+    }
+    fn preferences(blacklist: &str, whitelist: &str) -> RssPreferences {
+        RssPreferences {
+            blacklist: blacklist.into(),
+            whitelist: whitelist.into(),
+            ..Default::default()
+        }
+    }
     fn fixture() -> (tempfile::TempDir, RssEngine, ItemId) {
         let root = tempfile::tempdir().unwrap();
         let mut engine = RssEngine::open(root.path()).unwrap();
         let id = engine
-            .create_subscription(
-                "https://example.test/feed",
-                vec![],
-                false,
-                "2026-01-01T00:00:00Z",
-            )
+            .create_subscription("https://example.test/feed", vec![], false, "now")
             .unwrap();
         engine
             .apply_refresh(RssRefreshResult::Fetched {
                 item_id: id.clone(),
                 cache: RssFeedCache {
-                    fetched_at: Some("2026-01-01T00:00:00Z".into()),
-                    entries: (0..12)
-                        .map(|i| RssEntry {
-                            id: format!("entry/{i}"),
-                            title: format!("Title {i}"),
-                            summary: "RSS data".into(),
-                            author: None,
-                            published: None,
-                            updated: None,
-                            link: None,
-                        })
+                    entries: vec![
+                        article("first", "Promotion", "Buy now"),
+                        article("second", "Rust", "Sponsored news"),
+                    ],
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        (root, engine, id)
+    }
+
+    #[test]
+    fn blacklist_then_whitelist_truth_table_and_empty_lists() {
+        let entry = article("id", "Rust Promotion", "Useful news");
+        for (blacklist, whitelist, expected) in [
+            ("", "", RssDecision::Keep),
+            ("", "Rust", RssDecision::Keep),
+            ("unrelated", "", RssDecision::Keep),
+            ("promotion", "", RssDecision::Hide),
+            ("promotion", "unrelated", RssDecision::Hide),
+            ("promotion", "rust", RssDecision::Keep),
+            ("unrelated\nPROMOTION", "other\nuseful", RssDecision::Keep),
+            (" \n\t\n", "", RssDecision::Keep),
+        ] {
+            assert_eq!(
+                preferences(blacklist, whitelist)
+                    .compile()
+                    .unwrap()
+                    .decision(&entry),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn regexp_unicode_case_flags_boundaries_and_full_cached_text() {
+        let entry = article(
+            "id",
+            "РЕКЛАМА Rust",
+            &format!("{}\nUseful", "a".repeat(20_000)),
+        );
+        for (pattern, expected) in [
+            (r"\bреклама\b", RssDecision::Hide),
+            ("(?-i)rust", RssDecision::Keep),
+            ("(?-i)Rust", RssDecision::Hide),
+            ("USEFUL$", RssDecision::Hide),
+            ("Rust\\na", RssDecision::Hide),
+            ("^Useful", RssDecision::Keep),
+            ("(?m)^Useful", RssDecision::Hide),
+            (" Rust ", RssDecision::Keep),
+        ] {
+            assert_eq!(
+                preferences(pattern, "").compile().unwrap().decision(&entry),
+                expected,
+                "{pattern}"
+            );
+        }
+        assert_eq!(
+            preferences("Реклама\r\nOther", "")
+                .compile()
+                .unwrap()
+                .decision(&entry),
+            RssDecision::Hide
+        );
+    }
+
+    #[test]
+    fn validation_reports_physical_line_and_bounds() {
+        assert_eq!(
+            preferences("\nvalid\n[", "").compile().err(),
+            Some(RssFilterError::Invalid {
+                blacklist: true,
+                line: 3
+            })
+        );
+        assert_eq!(
+            preferences("", "ok\n(?=no)").compile().err(),
+            Some(RssFilterError::Invalid {
+                blacklist: false,
+                line: 2
+            })
+        );
+        assert_eq!(
+            preferences(&"я".repeat(8193), "").compile().err(),
+            Some(RssFilterError::TooLong)
+        );
+        assert!(
+            preferences(&" ".repeat(MAX_PREFERENCE_BYTES), "")
+                .validate()
+                .is_ok()
+        );
+        assert!(preferences("a{100000000}", "").validate().is_err());
+    }
+
+    #[test]
+    fn save_only_preserves_decisions_across_restart_and_refresh() {
+        let (root, mut engine, id) = fixture();
+        engine
+            .save_preferences(&id, 0, preferences("promotion|sponsored", ""))
+            .unwrap();
+        let mut engine = RssEngine::open(root.path()).unwrap();
+        let (mut feed, state) = engine.feed(&id).unwrap();
+        assert!(!state.hidden("first") && !state.hidden("second"));
+        engine
+            .apply_refresh(RssRefreshResult::Fetched {
+                item_id: id.clone(),
+                cache: feed.clone(),
+            })
+            .unwrap();
+        assert!(!engine.feed(&id).unwrap().1.hidden("first"));
+        feed.entries[1].summary.push('!');
+        feed.entries.push(article("third", "PROMOTION", "New"));
+        engine.mark_read(&id, "second", "read").unwrap();
+        engine
+            .apply_refresh(RssRefreshResult::Fetched {
+                item_id: id.clone(),
+                cache: feed,
+            })
+            .unwrap();
+        let (_, state) = engine.feed(&id).unwrap();
+        assert!(!state.hidden("first"));
+        assert!(state.hidden("second") && state.hidden("third"));
+        assert!(state.read_entry_ids.contains("second"));
+        engine
+            .save_preferences(&id, 1, preferences("", ""))
+            .unwrap();
+        engine.apply_filter(&id, RssFilterMode::Changed).unwrap();
+        assert!(engine.feed(&id).unwrap().1.hidden("second"));
+    }
+
+    #[test]
+    fn http_304_recovers_changed_cache_without_reapplying_rules_to_unchanged_entries() {
+        let (root, mut engine, id) = fixture();
+        engine
+            .save_preferences(&id, 0, preferences("promotion|sponsored", ""))
+            .unwrap();
+        let state_path = read_state_path(root.path(), &id);
+        let before = fs::read(&state_path).unwrap();
+        let (mut cache, _) = engine.feed(&id).unwrap();
+        cache.entries[1].summary.push('!');
+        engine
+            .apply_refresh(RssRefreshResult::Fetched {
+                item_id: id.clone(),
+                cache,
+            })
+            .unwrap();
+        // Reproduce a cache commit followed by failure before the state replacement.
+        fs::write(&state_path, before).unwrap();
+        let mut engine = RssEngine::open(root.path()).unwrap();
+        engine
+            .apply_refresh(RssRefreshResult::NotModified {
+                item_id: id.clone(),
+                fetched_at: "later".into(),
+            })
+            .unwrap();
+        let (_, state) = engine.feed(&id).unwrap();
+        assert!(!state.hidden("first"));
+        assert!(state.hidden("second"));
+    }
+
+    #[test]
+    fn full_apply_hides_and_unhides_read_articles_even_when_paused() {
+        let (root, mut engine, id) = fixture();
+        engine.mark_read(&id, "first", "read").unwrap();
+        engine
+            .update_state(&id, |s| {
+                s.schedule.paused = true;
+                Ok(())
+            })
+            .unwrap();
+        engine
+            .save_filter(&id, 0, preferences("promotion|sponsored", "rust"), true)
+            .unwrap();
+        let (_, state) = engine.feed(&id).unwrap();
+        assert!(state.hidden("first"));
+        assert!(!state.hidden("second"));
+        assert!(state.schedule.paused);
+        assert_eq!(engine.summaries()[0].unread, 1);
+        let mut engine = RssEngine::open(root.path()).unwrap();
+        assert!(engine.feed(&id).unwrap().1.hidden("first"));
+        engine
+            .save_filter(&id, 1, preferences("", ""), true)
+            .unwrap();
+        let (_, after) = engine.feed(&id).unwrap();
+        assert!(!after.hidden("first"));
+        assert_eq!(state.read_entry_ids, after.read_entry_ids);
+        assert_eq!(state.last_read_at, after.last_read_at);
+    }
+
+    #[test]
+    fn full_filter_has_no_old_ai_visit_or_batch_limit() {
+        let (_root, mut engine, id) = fixture();
+        engine
+            .apply_refresh(RssRefreshResult::Fetched {
+                item_id: id.clone(),
+                cache: RssFeedCache {
+                    entries: (0..150)
+                        .map(|i| article(&format!("entry/{i}"), "Promotion", ""))
                         .collect(),
-                    ..RssFeedCache::default()
+                    ..Default::default()
                 },
             })
             .unwrap();
         engine
-            .save_preferences(
-                &id,
-                0,
-                RssPreferences {
-                    likes: "Rust".into(),
-                    ..RssPreferences::default()
-                },
-            )
+            .save_filter(&id, 0, preferences("promotion", ""), true)
             .unwrap();
-        (root, engine, id)
+        let (feed, state) = engine.feed(&id).unwrap();
+        assert_eq!(feed.entries.len(), 150);
+        assert!(feed.entries.iter().all(|e| state.hidden(&e.id)));
     }
+
     #[test]
-    fn schedule_both_formulas_fractional_delay_cap_restart_and_reset() {
+    fn invalid_rules_and_conflicts_do_not_change_files() {
+        let (root, mut engine, id) = fixture();
+        let config = fs::read(config_path(root.path())).unwrap();
+        let state = fs::read(read_state_path(root.path(), &id)).unwrap();
+        assert!(
+            engine
+                .save_filter(&id, 0, preferences("[", ""), true)
+                .is_err()
+        );
+        assert!(
+            engine
+                .save_filter(&id, 2, preferences("rust", ""), true)
+                .is_err()
+        );
+        assert_eq!(fs::read(config_path(root.path())).unwrap(), config);
+        assert_eq!(fs::read(read_state_path(root.path(), &id)).unwrap(), state);
+        let mut stale = RssEngine::open(root.path()).unwrap();
+        engine
+            .save_preferences(&id, 0, preferences("new", ""))
+            .unwrap();
+        assert!(
+            stale
+                .save_filter(&id, 0, preferences("old", ""), true)
+                .is_err()
+        );
+        assert!(stale.apply_filter(&id, RssFilterMode::All).is_err());
+        assert_eq!(
+            RssEngine::open(root.path())
+                .unwrap()
+                .preferences(&id)
+                .unwrap()
+                .blacklist,
+            "new"
+        );
+    }
+
+    #[test]
+    fn unknown_fields_survive_and_open_does_not_migrate() {
+        let (root, _, id) = fixture();
+        let config_path = config_path(root.path());
+        let state_path = read_state_path(root.path(), &id);
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        config["future"] = serde_json::json!(true);
+        config["subscriptions"][0]["preferences"]["future"] = serde_json::json!(42);
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        state["entries"]["first"]["reaction"] = serde_json::json!("dislike");
+        state["entries"]["first"]["future"] = serde_json::json!(43);
+        state["future"] = serde_json::json!(44);
+        fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+        let before = (
+            fs::read(&config_path).unwrap(),
+            fs::read(&state_path).unwrap(),
+        );
+        let mut engine = RssEngine::open(root.path()).unwrap();
+        assert!(!engine.feed(&id).unwrap().1.hidden("first"));
+        assert_eq!(
+            before,
+            (
+                fs::read(&config_path).unwrap(),
+                fs::read(&state_path).unwrap()
+            )
+        );
+        engine
+            .save_filter(&id, 0, preferences("promotion", ""), true)
+            .unwrap();
+        let config: serde_json::Value =
+            serde_json::from_slice(&fs::read(config_path).unwrap()).unwrap();
+        let state: serde_json::Value =
+            serde_json::from_slice(&fs::read(state_path).unwrap()).unwrap();
+        assert_eq!(config["future"], true);
+        assert_eq!(config["subscriptions"][0]["preferences"]["future"], 42);
+        assert_eq!(state["entries"]["first"]["future"], 43);
+        assert_eq!(state["future"], 44);
+    }
+
+    #[test]
+    fn schedule_formulas_pause_and_forced_cycle_survive_restart() {
         for unread in [0, 1] {
             let mut schedule = RssSchedule::default();
             for i in 0..80 {
@@ -429,214 +640,21 @@ mod tests {
                 );
                 schedule = serde_json::from_slice(&serde_json::to_vec(&schedule).unwrap()).unwrap();
             }
-            schedule.paused = true;
-            schedule.ai_used = 99;
-            schedule.visit(99);
-            assert_eq!(schedule.next_check, 99);
-            assert_eq!(schedule.iteration, 0);
-            assert!(!schedule.paused);
-            assert!(schedule.forced);
-            assert_eq!(schedule.ai_used, 0);
         }
-    }
-    #[test]
-    fn pause_boundaries_and_one_forced_cycle_are_persistent() {
         for unread in [98, 99, 100] {
             let mut schedule = RssSchedule::default();
             assert_eq!(schedule.allowed(unread), unread < 99);
             schedule.visit(10);
             assert!(schedule.allowed(unread));
-            schedule.finish(20, unread); // All attempts, including HTTP 304/errors, use this path.
-            let restarted: RssSchedule =
-                serde_json::from_value(serde_json::to_value(&schedule).unwrap()).unwrap();
-            assert!(restarted.filter_pending); // Resume filtering, never fetch a second forced cycle.
-            schedule.finish_cycle(unread);
-            assert!(!schedule.filter_pending);
-            assert_eq!(schedule.iteration, 1);
-            assert_eq!(schedule.allowed(unread), unread < 99);
+            assert_eq!(schedule.iteration, 0);
+            assert_eq!(schedule.next_check, 10);
+            schedule.finish(20, unread);
             let restored: RssSchedule =
                 serde_json::from_value(serde_json::to_value(&schedule).unwrap()).unwrap();
-            assert_eq!(schedule, restored);
+            assert!(restored.filter_pending);
+            schedule.finish_cycle(unread);
+            assert!(!schedule.filter_pending);
+            assert_eq!(schedule.allowed(unread), unread < 99);
         }
-    }
-    #[test]
-    fn filtering_keeps_results_rechecks_changed_preferences_and_respects_reads_reactions() {
-        let (_root, mut engine, id) = fixture();
-        let checks = engine.checks(&id, false).unwrap();
-        assert_eq!(checks.len(), 10);
-        engine.mark_read(&id, &checks[0].entry.id, "now").unwrap();
-        assert!(
-            engine
-                .react(&id, &checks[1].entry.id, RssReaction::Like)
-                .unwrap()
-        );
-        assert!(
-            !engine
-                .react(&id, &checks[1].entry.id, RssReaction::Like)
-                .unwrap()
-        );
-        engine
-            .apply_decisions(
-                &id,
-                &checks
-                    .iter()
-                    .cloned()
-                    .map(|c| (c, RssDecision::Hide))
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap();
-        let (_, state) = engine.feed(&id).unwrap();
-        assert!(!state.hidden(&checks[0].entry.id));
-        assert!(!state.hidden(&checks[1].entry.id));
-        assert!(state.hidden(&checks[2].entry.id));
-        assert_eq!(engine.summaries()[0].unread, 1);
-        assert!(engine.checks(&id, false).unwrap().is_empty());
-        engine
-            .save_preferences(
-                &id,
-                1,
-                RssPreferences {
-                    likes: "Science".into(),
-                    ..RssPreferences::default()
-                },
-            )
-            .unwrap();
-        let rechecks = engine.checks(&id, false).unwrap();
-        assert_eq!(rechecks.len(), 8);
-        engine
-            .apply_decisions(
-                &id,
-                &rechecks
-                    .into_iter()
-                    .map(|c| (c, RssDecision::Keep))
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap();
-        assert_eq!(engine.summaries()[0].unread, 9);
-        assert!(engine.checks(&id, false).unwrap().is_empty());
-        engine
-            .react(&id, &checks[1].entry.id, RssReaction::Dislike)
-            .unwrap();
-        engine
-            .save_preferences(&id, 2, RssPreferences::default())
-            .unwrap();
-        assert!(engine.feed(&id).unwrap().1.hidden(&checks[1].entry.id));
-        assert!(!engine.feed(&id).unwrap().1.hidden(&checks[2].entry.id));
-    }
-    #[test]
-    fn stale_content_learning_and_manual_edits_never_overwrite_current_state() {
-        let (root, mut engine, id) = fixture();
-        let old = engine.checks(&id, false).unwrap();
-        let (mut cache, _) = engine.feed(&id).unwrap();
-        cache.entries[0].summary = "changed".into();
-        engine
-            .apply_refresh(RssRefreshResult::Fetched {
-                item_id: id.clone(),
-                cache,
-            })
-            .unwrap();
-        engine
-            .apply_decisions(&id, &[(old[0].clone(), RssDecision::Hide)])
-            .unwrap();
-        assert!(!engine.feed(&id).unwrap().1.hidden(&old[0].entry.id));
-        engine
-            .react(&id, &old[0].entry.id, RssReaction::Dislike)
-            .unwrap();
-        let learning = engine.checks(&id, true).unwrap().remove(0);
-        engine
-            .save_preferences(
-                &id,
-                1,
-                RssPreferences {
-                    likes: "Manual text".into(),
-                    ..RssPreferences::default()
-                },
-            )
-            .unwrap();
-        assert!(
-            !engine
-                .apply_learning(&id, &learning, &["stale".into()], &[])
-                .unwrap()
-        );
-        let fresh = engine.checks(&id, true).unwrap().remove(0);
-        assert!(
-            engine
-                .apply_learning(
-                    &id,
-                    &fresh,
-                    &["Manual text".into(), "New topic".into(), "new topic".into()],
-                    &[]
-                )
-                .unwrap()
-        );
-        assert_eq!(
-            engine.preferences(&id).unwrap().likes,
-            "Manual text\nNew topic"
-        );
-        assert!(engine.checks(&id, true).unwrap().is_empty());
-        let reopened = RssEngine::open(root.path()).unwrap();
-        assert_eq!(
-            engine.preferences(&id).unwrap(),
-            reopened.preferences(&id).unwrap()
-        );
-        assert!(reopened.feed(&id).unwrap().1.hidden(&old[0].entry.id));
-    }
-    #[test]
-    fn classification_budget_includes_rechecks_and_learning_bypasses_pause() {
-        let (_root, engine, id) = fixture();
-        engine
-            .update_state(&id, |s| {
-                s.schedule.ai_used = 98;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(engine.checks(&id, false).unwrap().len(), 1);
-        engine
-            .update_state(&id, |s| {
-                s.schedule.ai_used = 99;
-                s.schedule.paused = true;
-                Ok(())
-            })
-            .unwrap();
-        assert!(engine.checks(&id, false).unwrap().is_empty());
-        engine.react(&id, "entry/0", RssReaction::Dislike).unwrap();
-        assert_eq!(engine.checks(&id, true).unwrap().len(), 1);
-    }
-    #[test]
-    fn size_conflict_unknown_fields_and_read_only_loading() {
-        let (root, mut engine, id) = fixture();
-        let path = config_path(root.path());
-        let mut raw: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        raw["future"] = serde_json::json!({"untouched":true});
-        raw["subscriptions"][0]["future"] = serde_json::json!(42);
-        raw["subscriptions"][0]["preferences"]["future"] = serde_json::json!(43);
-        fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
-        let before = fs::read(&path).unwrap();
-        let mut loaded = RssEngine::open(root.path()).unwrap();
-        assert_eq!(fs::read(&path).unwrap(), before);
-        loaded
-            .save_preferences(&id, 1, RssPreferences::default())
-            .unwrap();
-        let after: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(after["future"], raw["future"]);
-        assert_eq!(after["subscriptions"][0]["future"], 42);
-        assert_eq!(after["subscriptions"][0]["preferences"]["future"], 43);
-        assert!(
-            engine
-                .save_preferences(&id, 1, RssPreferences::default())
-                .is_err()
-        );
-        assert!(
-            loaded
-                .save_preferences(
-                    &id,
-                    2,
-                    RssPreferences {
-                        likes: "я".repeat(8193),
-                        ..RssPreferences::default()
-                    }
-                )
-                .is_err()
-        );
     }
 }

@@ -161,20 +161,31 @@ system browser. Subscriptions, cached entries, and read status have different
 storage roles; see the
 [storage guide](storage.md).
 
-### Personal AI filters
+### RSS filters
 
-The RSS toolbar's **AI filters** popup has multiline **Likes** and **Dislikes**
-fields (16 KiB each) and a model alias from global AI settings. The initial alias
-is `default`; a missing alias falls back to it, while an existing unavailable
-model reports an error. Enter inserts a newline; J/K type normally; Escape and
-Cancel discard the draft. Background learning never replaces an open draft.
+Open **Filters** in the RSS toolbar. **Blacklist** and **Whitelist** accept one
+regular expression per nonempty line (16 KiB per field), without enclosing `/`.
+Search covers the title, a newline, and all cached RSS article text; the linked
+page is never downloaded. Matching ignores case by default. Use `(?-i)` for
+case-sensitive matching, or `(?m)` for line anchors. Expressions use Rust's
+`regex` syntax; look-around and backreferences are not supported. Invalid or
+excessively complex expressions block saving and identify the list and line.
 
-Filtering sends preferences and bounded RSS text to the selected provider; it
-never downloads the linked page. Ambiguous entries stay visible. Like overrides
-automatic hiding, and Dislike collapses the card without marking it read. Click
-a collapsed title to expand and read it inside Notrum; it remains hidden from
-J/K navigation. Hidden unread entries do not contribute to the visible badge.
-Clear both fields to remove automatic hiding while keeping explicit reactions.
+An article is hidden only when a blacklist expression matches and no whitelist
+expression matches. For example, blacklist `promotion|sponsored` and whitelist
+`rust` hide promotions except those mentioning Rust. An empty blacklist keeps
+all articles visible. Blank lines are ignored; spaces in nonempty expressions
+are significant.
+
+**Cancel** and Escape discard the draft. **Save** saves rules for new or changed
+articles and closes the popup, preserving existing hiding decisions even after
+restart. **Save and Apply** also recalculates every cached article, including
+read articles, and closes on success. It can both hide and reveal articles;
+clearing the blacklist and choosing **Save and Apply** removes filtering.
+Read marks are preserved. Filtering runs locally and needs no AI provider or key.
+
+Click a collapsed title to expand and read it inside Notrum; it remains hidden
+from J/K navigation. Hidden unread entries do not contribute to the visible badge.
 
 Every refresh attempt, including errors and HTTP 304, advances a persisted
 backoff counter. After cycle `i`, the delay is `min(86400, 60 + 2^i)` seconds
@@ -183,12 +194,10 @@ entries count here. A visit or manual refresh resets the counter and requests
 an immediate cycle; an existing download is reused. An overdue schedule runs
 once after restart. No updates run while the application is closed.
 
-At 99 unread entries automatic refresh and classification pause until a visit.
-Each visit grants one forced refresh and up to 99 classifications, including
-rechecks. Learning from explicit reactions remains allowed while paused.
-Requests use batches of at most ten entries; two RSS downloads and one AI request
-can run concurrently. Temporary AI errors retry on a later cycle. Key/model
-errors wait for corrected settings or the toolbar's Refresh feed button.
+At 99 unread entries automatic refresh pauses until a visit. Each visit grants
+one forced refresh. Two RSS downloads can run concurrently. **Save and Apply**
+works on cached articles even while automatic refresh is paused, without
+requesting a download. There is no classification budget.
 
 ## Protected notes
 

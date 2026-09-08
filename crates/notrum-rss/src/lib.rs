@@ -62,14 +62,6 @@ pub struct RssReadState {
     pub entries: BTreeMap<String, RssEntryState>,
     #[serde(default)]
     pub schedule: RssSchedule,
-    #[serde(default)]
-    pub model_version: String,
-    #[serde(default)]
-    pub ai_error: Option<String>,
-    #[serde(default)]
-    pub ai_error_model: String,
-    #[serde(default)]
-    pub ai_error_iteration: u32,
     #[serde(flatten)]
     pub additional: BTreeMap<String, serde_json::Value>,
 }
@@ -171,7 +163,7 @@ impl FileEngineFactory for RssEngineFactory {
             presentation: ItemPresentation::Feed,
             toolbar_actions: vec![
                 ToolbarAction::Refresh,
-                ToolbarAction::AiFilters,
+                ToolbarAction::Filters,
                 ToolbarAction::Rename,
                 ToolbarAction::Categories,
                 ToolbarAction::Pin,
@@ -400,6 +392,9 @@ impl RssEngine {
                 let mut cache = self.load_cache(&item_id).unwrap_or_default();
                 cache.fetched_at = Some(fetched_at);
                 write_json_atomic(&cache_path(&self.workspace, &item_id), &cache)?;
+                // A previous refresh may have committed the cache but failed to
+                // persist its decisions. HTTP 304 must finish that local work.
+                self.apply_filter(&item_id, RssFilterMode::Changed)?;
             }
             RssRefreshResult::Fetched { mut cache, .. } => {
                 let previous = self.load_cache(&item_id).unwrap_or_default();
@@ -424,6 +419,13 @@ impl RssEngine {
                 state
                     .entries
                     .retain(|entry_id, _| current_ids.contains(entry_id.as_str()));
+                let preferences = self.preferences(&item_id)?;
+                preferences.compile()?.apply(
+                    &cache,
+                    &mut state,
+                    preferences.version,
+                    RssFilterMode::Changed,
+                );
                 state.revision = state.revision.checked_add(1).ok_or(EngineError::Conflict)?;
                 let changed = previous.title != cache.title || previous.entries != cache.entries;
                 write_json_atomic(&cache_path(&self.workspace, &item_id), &cache)?;

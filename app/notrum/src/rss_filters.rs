@@ -6,9 +6,6 @@
 use crate::*;
 use notrum_core::RssPreferences;
 
-pub(crate) const LIKE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 10h4v11H3zM7 10l5-8h1c2 0 2 3 1 6h5c2 0 2 2 2 3l-2 8c0 1-1 2-2 2H7"/></svg>"#;
-pub(crate) const DISLIKE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 3h4v11H3zM7 14l5 8h1c2 0 2-3 1-6h5c2 0 2-2 2-3l-2-8c0-1-1-2-2-2H7"/></svg>"#;
-
 pub(crate) fn control(
     model: Rc<RefCell<AppModel>>,
     id: ItemId,
@@ -18,7 +15,7 @@ pub(crate) fn control(
 ) -> AnyView {
     model.borrow_mut().rss_filters_open = Some(open);
     let trigger = toolbar_action_button(
-        ToolbarAction::AiFilters,
+        ToolbarAction::Filters,
         ToolbarSubject::Feed,
         palette,
         move || open.get(),
@@ -74,6 +71,18 @@ fn multiline(value: RwSignal<String>, open: RwSignal<bool>, palette: Palette) ->
     .into_any()
 }
 
+fn validation_message(error: notrum_core::RssFilterError) -> String {
+    use notrum_core::RssFilterError;
+    match error {
+        RssFilterError::TooLong => tr!(RssFilterTooLong),
+        RssFilterError::Invalid { blacklist, line } => tr!(RssFilterInvalid,
+            "list" => if blacklist { tr!(RssFilterBlacklist) } else { tr!(RssFilterWhitelist) },
+            "line" => line),
+        RssFilterError::TooComplex { blacklist } => tr!(RssFilterTooComplex,
+            "list" => if blacklist { tr!(RssFilterBlacklist) } else { tr!(RssFilterWhitelist) }),
+    }
+}
+
 fn form(
     model: Rc<RefCell<AppModel>>,
     id: ItemId,
@@ -88,22 +97,18 @@ fn form(
         .and_then(|w| w.rss_preferences(&id).ok())
         .unwrap_or_default();
     let expected = preferences.version;
-    let likes = create_rw_signal(preferences.likes);
-    let dislikes = create_rw_signal(preferences.dislikes);
-    let alias = create_rw_signal(Some(preferences.alias));
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let settings = GlobalSettingsStore::load(home.as_deref()).settings.ai;
-    let aliases = settings.aliases.keys().cloned().collect::<Vec<_>>();
-    let dropdown = ai_settings::alias_dropdown(
-        alias,
-        aliases,
-        |s| s.unwrap_or_else(|| "default".into()),
-        move |s| alias.set(Some(s)),
-        || true,
-        palette,
-    );
-    let status_model = model.clone();
-    let status_id = id.clone();
+    let blacklist = create_rw_signal(preferences.blacklist);
+    let whitelist = create_rw_signal(preferences.whitelist);
+    let validation = floem::reactive::create_memo(move |_| {
+        RssPreferences {
+            blacklist: blacklist.get(),
+            whitelist: whitelist.get(),
+            ..Default::default()
+        }
+        .compile()
+        .err()
+        .map(validation_message)
+    });
     let error = create_rw_signal(false);
     let pending = create_rw_signal(None::<u64>);
     let save_model = model.clone();
@@ -124,37 +129,79 @@ fn form(
         }
     });
     let status = label(move || {
-        revision.get();
-        if likes.get().len() > 16 * 1024 || dislikes.get().len() > 16 * 1024 {
-            return tr!(RssAiTooLong);
+        if let Some(message) = validation.get() {
+            return message;
         }
         if error.get() {
-            return tr!(RssAiConflict);
+            return tr!(RssFilterConflict);
         }
-        match status_model
-            .borrow()
-            .rss_status
-            .get(status_id.as_str())
-            .copied()
-            .unwrap_or(rss_service::Status::Idle)
-        {
-            rss_service::Status::Idle | rss_service::Status::Saved => tr!(RssAiReady),
-            rss_service::Status::Busy => tr!(RssAiBusy),
-            rss_service::Status::Paused => tr!(RssAiPaused),
-            rss_service::Status::Retry => tr!(RssAiRetry),
-            rss_service::Status::Settings => tr!(RssAiSettings),
-            rss_service::Status::Conflict => tr!(RssAiConflict),
+        if pending.get().is_some() {
+            return tr!(RssFilterBusy);
         }
+        String::new()
     })
-    .style(move |s| s.font_size(12.0).color(palette.muted).width_full());
+    .style(move |s| {
+        s.font_size(12.0)
+            .color(palette.muted)
+            .width_full()
+            .height(36.0)
+    });
+    let save_button = |apply: bool| {
+        let model = model.clone();
+        let id = id.clone();
+        action_button(
+            move || {
+                if apply {
+                    tr!(RssFilterSaveApply)
+                } else {
+                    tr!(Save)
+                }
+            },
+            if apply {
+                IconButtonTone::Primary
+            } else {
+                IconButtonTone::Secondary
+            },
+            palette,
+            move || pending.get().is_none() && validation.get().is_none(),
+            move || {
+                let value = RssPreferences {
+                    blacklist: blacklist.get_untracked(),
+                    whitelist: whitelist.get_untracked(),
+                    ..Default::default()
+                };
+                if value.validate().is_err() {
+                    error.set(true);
+                    return;
+                }
+                error.set(false);
+                let mut model = model.borrow_mut();
+                model.rss_save_sequence += 1;
+                let token = model.rss_save_sequence;
+                let accepted = model.rss_command(rss_service::Command::Preferences(
+                    id.clone(),
+                    token,
+                    expected,
+                    value,
+                    apply,
+                ));
+                drop(model);
+                if accepted {
+                    pending.set(Some(token));
+                } else {
+                    error.set(true);
+                }
+            },
+        )
+    };
     v_stack((
-        label(move || tr!(RssAiFilters)).style(move |s| s.font_size(16.0).color(palette.ink)),
-        label(move || tr!(RssAiLikes)),
-        multiline(likes, open, palette),
-        label(move || tr!(RssAiDislikes)),
-        multiline(dislikes, open, palette),
-        label(move || tr!(AiModels)),
-        dropdown,
+        label(move || tr!(RssFilters)).style(move |s| s.font_size(16.0).color(palette.ink)),
+        label(move || tr!(RssFilterHint))
+            .style(move |s| s.width_full().font_size(12.0).color(palette.muted)),
+        label(move || tr!(RssFilterBlacklist)),
+        multiline(blacklist, open, palette),
+        label(move || tr!(RssFilterWhitelist)),
+        multiline(whitelist, open, palette),
         status,
         h_stack((
             empty().style(|s| s.flex_grow(1.0)),
@@ -164,39 +211,8 @@ fn form(
                 palette,
                 move || open.set(false),
             ),
-            action_button(
-                move || tr!(Save),
-                IconButtonTone::Primary,
-                palette,
-                move || pending.get().is_none(),
-                move || {
-                    let value = RssPreferences {
-                        likes: likes.get_untracked(),
-                        dislikes: dislikes.get_untracked(),
-                        alias: alias.get_untracked().unwrap_or_else(|| "default".into()),
-                        ..RssPreferences::default()
-                    };
-                    if value.validate().is_err() {
-                        error.set(true);
-                        return;
-                    }
-                    let mut model = model.borrow_mut();
-                    model.rss_save_sequence += 1;
-                    let token = model.rss_save_sequence;
-                    let accepted = model.rss_command(rss_service::Command::Preferences(
-                        id.clone(),
-                        token,
-                        expected,
-                        value,
-                    ));
-                    drop(model);
-                    if accepted {
-                        pending.set(Some(token));
-                    } else {
-                        error.set(true);
-                    }
-                },
-            ),
+            save_button(false),
+            save_button(true),
         ))
         .style(|s| s.width_full().items_center().gap(8.0)),
     ))

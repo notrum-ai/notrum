@@ -31,8 +31,7 @@
   shell. Save conflicts and security operations must block restart.
   The only network exceptions are the restricted `ureq` HTTP/HTTPS client in `notrum-rss`
   (any host or port), the HTTPS client in `notrum-ai` (fixed OpenAI/Anthropic
-  model catalog endpoints and generation through OpenAI `/v1/responses` and
-  Anthropic `/v1/messages` only) and the HTTPS client in `notrum-update` (release
+  model catalog endpoints only) and the HTTPS client in `notrum-update` (release
   metadata and release assets on a fixed GitHub host allowlist, redirects
   checked per hop); HTTP/HTTPS opening in the system browser is allowed only
   through the RSS crate's dedicated hardened opener. The test-only RSS and

@@ -3,17 +3,8 @@
 
 #![forbid(unsafe_code)]
 
-//! One coordinator per workspace session. Only workers touch credentials/network/save files.
-use crate::settings::GlobalSettingsStore;
-use notrum_ai::{
-    AiError, AiSettings, ApiKey, FilterInput, FilterOutput, GenerationTransport,
-    HttpsGenerationTransport,
-};
-use notrum_core::{
-    AI_VISIT_LIMIT, ItemId, RssCheck, RssDecision, RssEngine, RssPreferences, RssReaction,
-    RssRefreshResult, execute_rss_refresh,
-};
-use notrum_platform::credentials::{CredentialStore, SystemCredentials};
+//! One coordinator per workspace session. Only workers touch network/save files.
+use notrum_core::{ItemId, RssEngine, RssPreferences, RssRefreshResult, execute_rss_refresh};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,7 +16,6 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static RSS_REQUESTS: AtomicUsize = AtomicUsize::new(0);
-static AI_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 
 struct RequestSlot(&'static AtomicUsize);
 impl RequestSlot {
@@ -46,18 +36,15 @@ impl Drop for RequestSlot {
 
 pub(crate) enum Command {
     Visit(ItemId),
-    Preferences(ItemId, u64, u64, RssPreferences),
-    Reaction(ItemId, String, u64, RssReaction),
+    Preferences(ItemId, u64, u64, RssPreferences, bool),
     Read(ItemId, String, String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Status {
     Idle,
-    Busy,
     Paused,
     Retry,
-    Settings,
     Conflict,
     Saved,
 }
@@ -67,7 +54,6 @@ pub(crate) struct Snapshot {
     pub refreshing: BTreeSet<String>,
     pub status: BTreeMap<String, Status>,
     pub saves: BTreeMap<String, (u64, bool)>,
-    pub reaction_sequence: u64,
 }
 
 pub(crate) struct Service {
@@ -84,13 +70,6 @@ impl Drop for Service {
 
 enum Completion {
     Fetch(ItemId, u64, Result<RssRefreshResult, ()>),
-    Ai(
-        ItemId,
-        Vec<RssCheck>,
-        bool,
-        AiSettings,
-        Result<FilterOutput, AiError>,
-    ),
 }
 
 impl Service {
@@ -116,21 +95,12 @@ fn now() -> u64 {
         .min(u128::from(u64::MAX)) as u64
 }
 
-fn settings() -> AiSettings {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    GlobalSettingsStore::load(home.as_deref()).settings.ai
-}
-
 struct Coordinator {
     root: PathBuf,
     fetching: BTreeSet<String>,
     cycles: BTreeSet<String>,
-    ai_busy: bool,
     status: BTreeMap<String, Status>,
-    blocked: BTreeMap<String, AiSettings>,
-    retry: BTreeSet<String>,
     saves: BTreeMap<String, (u64, bool)>,
-    reaction_sequence: u64,
 }
 
 fn run(
@@ -144,12 +114,8 @@ fn run(
         root,
         fetching: BTreeSet::new(),
         cycles: BTreeSet::new(),
-        ai_busy: false,
         status: BTreeMap::new(),
-        blocked: BTreeMap::new(),
-        retry: BTreeSet::new(),
         saves: BTreeMap::new(),
-        reaction_sequence: 0,
     };
     let mut dirty = true;
     let mut last_tick = 0;
@@ -168,6 +134,14 @@ fn run(
             continue;
         };
         let Ok(_lock) = engine.operation_lock() else {
+            // Do not lose a save token when the workspace becomes unwritable.
+            if let Some(command) = command {
+                coordinator.reject(command);
+                dirty = true;
+            }
+            if dirty && snapshots.try_send(coordinator.snapshot(engine)).is_ok() {
+                dirty = false;
+            }
             continue;
         };
         let Ok(fresh) = RssEngine::open(&coordinator.root) else {
@@ -178,8 +152,7 @@ fn run(
             dirty = true;
             coordinator.command(&mut engine, command);
         }
-        // User edits/reactions already queued take precedence over arriving AI
-        // responses. Drain only the bounded command capacity per turn.
+        // Drain only the bounded command capacity before applying refresh results.
         for _ in 0..64 {
             let Ok(command) = commands.try_recv() else {
                 break;
@@ -195,75 +168,50 @@ fn run(
             last_tick = now() / 1000;
             dirty |= coordinator.dispatch(&mut engine, &results);
         }
-        if dirty
-            && snapshots
-                .try_send(Snapshot {
-                    engine,
-                    refreshing: coordinator.fetching.clone(),
-                    status: coordinator.status.clone(),
-                    saves: coordinator.saves.clone(),
-                    reaction_sequence: coordinator.reaction_sequence,
-                })
-                .is_ok()
-        {
+        if dirty && snapshots.try_send(coordinator.snapshot(engine)).is_ok() {
             dirty = false;
         }
     }
 }
 
 impl Coordinator {
+    fn snapshot(&self, engine: RssEngine) -> Snapshot {
+        Snapshot {
+            engine,
+            refreshing: self.fetching.clone(),
+            status: self.status.clone(),
+            saves: self.saves.clone(),
+        }
+    }
+
+    fn reject(&mut self, command: Command) {
+        let id = match command {
+            Command::Preferences(id, token, ..) => {
+                self.saves.insert(id.as_str().into(), (token, false));
+                id
+            }
+            Command::Visit(id) | Command::Read(id, ..) => id,
+        };
+        self.status.insert(id.as_str().into(), Status::Conflict);
+    }
+
     fn command(&mut self, engine: &mut RssEngine, command: Command) {
         let id = match &command {
-            Command::Visit(id)
-            | Command::Preferences(id, ..)
-            | Command::Reaction(id, ..)
-            | Command::Read(id, ..) => id.clone(),
+            Command::Visit(id) | Command::Preferences(id, ..) | Command::Read(id, ..) => id.clone(),
         };
         let result = match command {
             Command::Visit(_) => {
                 self.cycles.remove(id.as_str());
-                self.blocked.remove(id.as_str());
-                self.retry.remove(id.as_str());
                 engine.update_state(&id, |s| {
                     s.schedule.visit(now());
-                    s.ai_error = None;
                     Ok(())
                 })
             }
-            Command::Preferences(_, token, expected, preferences) => {
-                let result = engine.save_preferences(&id, expected, preferences);
+            Command::Preferences(_, token, expected, preferences, apply) => {
+                let result = engine.save_filter(&id, expected, preferences, apply);
                 self.saves
                     .insert(id.as_str().into(), (token, result.is_ok()));
-                if result.is_ok() {
-                    self.cycles.insert(id.as_str().into());
-                    self.blocked.remove(id.as_str());
-                    self.retry.remove(id.as_str());
-                    if engine
-                        .update_state(&id, |s| {
-                            s.ai_error = None;
-                            Ok(())
-                        })
-                        .is_err()
-                    {
-                        self.saves.insert(id.as_str().into(), (token, false));
-                    }
-                }
                 result
-            }
-            Command::Reaction(_, entry, token, reaction) => {
-                self.reaction_sequence = self.reaction_sequence.max(token);
-                self.retry.remove(id.as_str());
-                self.blocked.remove(id.as_str());
-                engine.react(&id, &entry, reaction).and_then(|changed| {
-                    if changed {
-                        engine.update_state(&id, |s| {
-                            s.ai_error = None;
-                            Ok(())
-                        })
-                    } else {
-                        Ok(())
-                    }
-                })
             }
             Command::Read(_, entry, timestamp) => {
                 engine.mark_read(&id, &entry, &timestamp).map(|_| ())
@@ -299,7 +247,6 @@ impl Coordinator {
                     }
                     Ok(())
                 });
-                self.retry.remove(id.as_str());
                 self.cycles.insert(id.as_str().into());
                 self.status.insert(
                     id.as_str().into(),
@@ -312,84 +259,6 @@ impl Coordinator {
                     },
                 );
             }
-            Completion::Ai(id, checks, learning, expected_settings, result) => {
-                self.ai_busy = false;
-                if engine.preferences(&id).is_err() {
-                    return;
-                }
-                if settings() != expected_settings {
-                    return;
-                }
-                match result {
-                    Ok(output) => {
-                        let result = if learning {
-                            engine
-                                .apply_learning(&id, &checks[0], &output.likes, &output.dislikes)
-                                .map(|_| ())
-                        } else {
-                            let decisions = checks
-                                .into_iter()
-                                .zip(output.decisions)
-                                .map(|(check, decision)| {
-                                    (
-                                        check,
-                                        match decision {
-                                            notrum_ai::FilterDecision::Keep => RssDecision::Keep,
-                                            notrum_ai::FilterDecision::Hide => RssDecision::Hide,
-                                        },
-                                    )
-                                })
-                                .collect::<Vec<_>>();
-                            engine.apply_decisions(&id, &decisions)
-                        };
-                        self.status.insert(
-                            id.as_str().into(),
-                            if result.is_ok() {
-                                Status::Idle
-                            } else {
-                                Status::Conflict
-                            },
-                        );
-                        if result.is_err() {
-                            self.retry.insert(id.as_str().into());
-                        }
-                        if learning && result.is_ok() {
-                            self.cycles.insert(id.as_str().into());
-                        }
-                    }
-                    Err(error) => {
-                        let blocked = !matches!(
-                            error,
-                            AiError::Network | AiError::RateLimited | AiError::Response
-                        );
-                        if blocked {
-                            self.blocked.insert(id.as_str().into(), expected_settings);
-                        } else {
-                            self.retry.insert(id.as_str().into());
-                        }
-                        self.status.insert(
-                            id.as_str().into(),
-                            if blocked {
-                                Status::Settings
-                            } else {
-                                Status::Retry
-                            },
-                        );
-                        if engine
-                            .update_state(&id, |s| {
-                                s.ai_error =
-                                    Some(if blocked { "settings" } else { "temporary" }.into());
-                                s.ai_error_model = s.model_version.clone();
-                                s.ai_error_iteration = s.schedule.iteration;
-                                Ok(())
-                            })
-                            .is_err()
-                        {
-                            self.status.insert(id.as_str().into(), Status::Conflict);
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -401,7 +270,6 @@ impl Coordinator {
             .filter(|s| !s.deleted)
             .map(|s| s.id.clone())
             .collect::<Vec<_>>();
-        let current_settings = settings();
         for id in &ids {
             if engine
                 .feed(id)
@@ -409,65 +277,6 @@ impl Coordinator {
             {
                 self.cycles.insert(id.as_str().into());
             }
-            let Ok(preferences) = engine.preferences(id) else {
-                continue;
-            };
-            let selection = current_settings.resolve(&preferences.alias).ok();
-            let model_version = serde_json::to_string(&(
-                current_settings
-                    .connection
-                    .as_ref()
-                    .map(|c| (c.provider, &c.credential, c.checked_at)),
-                selection,
-            ))
-            .unwrap_or_default();
-            if let Ok((_, state)) = engine.feed(id)
-                && state.model_version != model_version
-            {
-                if engine
-                    .update_state(id, |state| {
-                        state.model_version = model_version;
-                        state.ai_error = None;
-                        state.schedule.filter_pending = true;
-                        for entry in state.entries.values_mut() {
-                            entry.content_version.clear();
-                        }
-                        Ok(())
-                    })
-                    .is_ok()
-                {
-                    self.cycles.insert(id.as_str().into());
-                    self.retry.remove(id.as_str());
-                    self.blocked.remove(id.as_str());
-                    changed = true;
-                } else {
-                    self.status.insert(id.as_str().into(), Status::Conflict);
-                }
-            }
-            if let Ok((_, state)) = engine.feed(id)
-                && let Some(error) = state.ai_error
-            {
-                if error == "settings" && state.ai_error_model == state.model_version {
-                    self.blocked
-                        .insert(id.as_str().into(), current_settings.clone());
-                    self.status.insert(id.as_str().into(), Status::Settings);
-                } else if error == "temporary"
-                    && state.ai_error_iteration == state.schedule.iteration
-                {
-                    self.retry.insert(id.as_str().into());
-                    self.status.insert(id.as_str().into(), Status::Retry);
-                }
-            }
-        }
-        let unblocked = self
-            .blocked
-            .iter()
-            .filter(|(_, old)| **old != current_settings)
-            .map(|(id, _)| id.clone())
-            .collect::<Vec<_>>();
-        for id in unblocked {
-            self.blocked.remove(&id);
-            self.cycles.insert(id);
         }
         for id in &ids {
             if self.fetching.len() >= 2 {
@@ -479,8 +288,7 @@ impl Coordinator {
             let Ok((feed, state)) = engine.feed(id) else {
                 continue;
             };
-            // A model/preference recheck must not consume a newly requested
-            // visit before its forced download has started.
+            // Finish an earlier cycle before starting its next download.
             if self.cycles.contains(id.as_str()) && state.schedule.iteration != 0 {
                 continue;
             }
@@ -522,92 +330,7 @@ impl Coordinator {
                 let _ = results.send(Completion::Fetch(id, visit, result));
             });
         }
-        if self.ai_busy {
-            return changed;
-        }
-        // Learning always wins over classification, including for paused feeds.
-        for learning in [true, false] {
-            for id in &ids {
-                if self.blocked.contains_key(id.as_str()) || self.retry.contains(id.as_str()) {
-                    continue;
-                }
-                if !learning
-                    && (!self.cycles.contains(id.as_str()) || self.fetching.contains(id.as_str()))
-                {
-                    continue;
-                }
-                let Ok(mut checks) = engine.checks(id, learning) else {
-                    continue;
-                };
-                if checks.is_empty() {
-                    continue;
-                }
-                let Some(slot) = RequestSlot::take(&AI_REQUESTS, 1) else {
-                    return changed;
-                };
-                let Ok(preferences) = engine.preferences(id) else {
-                    continue;
-                };
-                let Ok((_, state)) = engine.feed(id) else {
-                    continue;
-                };
-                let reaction = learning.then(|| {
-                    state.entries[&checks[0].entry.id].reaction == Some(RssReaction::Like)
-                });
-                let profile = current_settings.resolve(&preferences.alias).cloned();
-                let mut input = FilterInput {
-                    likes: preferences.likes,
-                    dislikes: preferences.dislikes,
-                    entries: Vec::new(),
-                    reaction,
-                };
-                for check in &checks {
-                    let mut text = format!("{}\n{}", check.entry.title, check.entry.summary);
-                    let mut end = text.len().min(notrum_ai::MAX_RSS_TEXT_BYTES);
-                    while !text.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    text.truncate(end);
-                    input.entries.push(text);
-                }
-                if let (Ok(profile), Some(connection)) = (&profile, &current_settings.connection) {
-                    while input.entries.len() > 1
-                        && notrum_ai::generation_body(connection.provider, profile, &input).is_err()
-                    {
-                        input.entries.pop();
-                        checks.pop();
-                    }
-                }
-                if !learning
-                    && engine
-                        .update_state(id, |s| {
-                            if !s.schedule.allowed(state.all_unread(&engine.feed(id)?.0))
-                                || s.schedule.ai_used.saturating_add(checks.len() as u16)
-                                    > AI_VISIT_LIMIT
-                            {
-                                return Err(notrum_core::EngineError::Conflict);
-                            }
-                            s.schedule.ai_used += checks.len() as u16;
-                            Ok(())
-                        })
-                        .is_err()
-                {
-                    continue;
-                }
-                self.ai_busy = true;
-                self.status.insert(id.as_str().into(), Status::Busy);
-                let results = results.clone();
-                let id = id.clone();
-                let settings = current_settings.clone();
-                thread::spawn(move || {
-                    let _slot = slot;
-                    let result = generate(&settings, profile, &input);
-                    let _ = results.send(Completion::Ai(id, checks, learning, settings, result));
-                });
-                return true;
-            }
-        }
-        // No remaining runnable checks: release the forced cycle, including on errors.
+        // Release completed download cycles, including HTTP 304 and errors.
         let finished = self
             .cycles
             .iter()
@@ -638,61 +361,113 @@ impl Coordinator {
     }
 }
 
-fn generate(
-    settings: &AiSettings,
-    profile: Result<notrum_ai::AiProfile, AiError>,
-    input: &FilterInput,
-) -> Result<FilterOutput, AiError> {
-    let profile = profile?;
-    #[cfg(feature = "test-utils")]
-    if std::env::var("NOTRUM_TEST_RSS_AI").as_deref() == Ok("1") {
-        thread::sleep(Duration::from_millis(700));
-        return Ok(if input.reaction.is_some() {
-            FilterOutput {
-                decisions: vec![],
-                likes: if input.reaction == Some(true) {
-                    vec!["Useful articles".into()]
-                } else {
-                    vec![]
-                },
-                dislikes: if input.reaction == Some(false) {
-                    vec!["Promotions".into()]
-                } else {
-                    vec![]
-                },
-            }
-        } else {
-            FilterOutput {
-                decisions: input
-                    .entries
-                    .iter()
-                    .map(|text| {
-                        if text.contains("Promotion") {
-                            notrum_ai::FilterDecision::Hide
-                        } else {
-                            notrum_ai::FilterDecision::Keep
-                        }
-                    })
-                    .collect(),
-                likes: vec![],
-                dislikes: vec![],
-            }
-        });
-    }
-    let connection = settings.connection.as_ref().ok_or(AiError::Incomplete)?;
-    let value = SystemCredentials
-        .read(&connection.credential)
-        .map_err(|_| AiError::Unauthorized)?;
-    let (provider, key) = ApiKey::parse(value)?;
-    if provider != connection.provider {
-        return Err(AiError::KeyFormat);
-    }
-    HttpsGenerationTransport.generate(provider, &profile, &key, input)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancelled_session_does_not_write_queued_preferences() {
+        let root = std::env::temp_dir().join(format!("rss-cancelled-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut engine = RssEngine::open(&root).unwrap();
+        let id = engine
+            .create_subscription("https://example.test/feed", vec![], false, "now")
+            .unwrap();
+        let before = engine.feed(&id).unwrap().1;
+        let (sender, commands) = mpsc::sync_channel(1);
+        sender
+            .send(Command::Preferences(
+                id.clone(),
+                1,
+                0,
+                RssPreferences {
+                    blacklist: "promotion".into(),
+                    ..Default::default()
+                },
+                true,
+            ))
+            .unwrap();
+        let (snapshots, receiver) = mpsc::sync_channel(1);
+        run(
+            root.clone(),
+            commands,
+            snapshots,
+            Arc::new(Mutex::new(false)),
+        );
+        let engine = RssEngine::open(&root).unwrap();
+        assert_eq!(engine.preferences(&id).unwrap(), RssPreferences::default());
+        assert_eq!(engine.feed(&id).unwrap().1, before);
+        assert!(receiver.try_recv().is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn save_conflicts_are_acknowledged_without_scheduling_a_download() {
+        let root = std::env::temp_dir().join(format!("rss-save-conflict-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut engine = RssEngine::open(&root).unwrap();
+        let id = engine
+            .create_subscription("https://example.test/feed", vec![], false, "now")
+            .unwrap();
+        let mut coordinator = Coordinator {
+            root: root.clone(),
+            fetching: BTreeSet::new(),
+            cycles: BTreeSet::new(),
+            status: BTreeMap::new(),
+            saves: BTreeMap::new(),
+        };
+        coordinator.command(
+            &mut engine,
+            Command::Preferences(id.clone(), 1, 0, RssPreferences::default(), false),
+        );
+        assert_eq!(coordinator.saves[id.as_str()], (1, true));
+        coordinator.command(
+            &mut engine,
+            Command::Preferences(id.clone(), 2, 0, RssPreferences::default(), true),
+        );
+        assert_eq!(coordinator.saves[id.as_str()], (2, false));
+        assert_eq!(coordinator.status[id.as_str()], Status::Conflict);
+        assert!(coordinator.cycles.is_empty() && coordinator.fetching.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unwritable_workspace_reports_save_failure_instead_of_losing_token() {
+        let root = std::env::temp_dir().join(format!("rss-unwritable-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut engine = RssEngine::open(&root).unwrap();
+        let id = engine
+            .create_subscription("https://example.test/feed", vec![], false, "now")
+            .unwrap();
+        let directory = root.join(".notrum/engines/rss");
+        std::fs::rename(&directory, root.join("saved_rss")).unwrap();
+        std::fs::write(directory, "blocks directory creation").unwrap();
+        let service = Service::start(root.clone());
+        service
+            .sender
+            .send(Command::Preferences(
+                id.clone(),
+                7,
+                0,
+                RssPreferences::default(),
+                true,
+            ))
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(std::time::Instant::now() < deadline);
+            let snapshot = service
+                .receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            if snapshot.saves.get(id.as_str()) == Some(&(7, false)) {
+                assert_eq!(snapshot.status[id.as_str()], Status::Conflict);
+                break;
+            }
+        }
+        drop(service);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn request_slots_survive_session_replacement_and_release_on_drop() {
         static COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -716,12 +491,8 @@ mod tests {
             root: root.clone(),
             fetching: BTreeSet::new(),
             cycles: BTreeSet::new(),
-            ai_busy: false,
             status: BTreeMap::new(),
-            blocked: BTreeMap::new(),
-            retry: BTreeSet::new(),
             saves: BTreeMap::new(),
-            reaction_sequence: 0,
         };
         c.command(&mut engine, Command::Visit(id.clone()));
         c.fetching.insert(id.as_str().into());

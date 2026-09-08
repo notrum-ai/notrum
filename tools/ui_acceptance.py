@@ -7216,105 +7216,118 @@ def rss_filters_scenario(driver: WindowDriver, workspace: Path) -> None:
     workspace, config_path, cache = cached_rss_workspace(driver, "rss-filters", [
         {"id": f"entry/{i}", "title": title, "author": None, "published": None,
          "updated": None, "summary": "Native RSS content", "link": None}
-        for i, title in enumerate(["Promotion", "Ambiguous news", "Rust article"])
+        for i, title in enumerate(["Promotion", "Ambiguous news", "Rust promotion"])
     ])
     config = json.loads(config_path.read_text())
     config["subscriptions"][0]["deleted"] = False
-    config["subscriptions"][0]["preferences"] = {"likes": "Rust", "dislikes": "Promotions", "alias": "default", "version": 1}
+    config["subscriptions"][0]["preferences"] = {
+        "blacklist": "nothingmatches", "whitelist": "nothingmatches", "version": 1,
+    }
     config_path.write_text(json.dumps(config))
-    (cache / "state.json").write_text(json.dumps({"read_entry_ids": [], "last_read_at": None,
-        "schedule": {"next_check": 9999999999999}}))
-    global_path = driver.home / ".notrum.cfg"
-    global_path.write_text(json.dumps({"version": 1, "locale": "en", "ai": {
-        "connection": {"provider": "openai", "credential": "ai/key/fixture", "checked_at": 1,
-            "models": [{"id": "fixture", "name": "Fixture", "efforts": []}]},
-        "aliases": {"default": {"model": "fixture", "effort": None}, "reading": {"model": "fixture", "effort": None}}
-    }}))
-    driver.start_app(workspace, "filters", environment_overrides={"NOTRUM_TEST_RSS_AI": "1"})
-    driver.click_note(1, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
-    likes = "jk\nsecond line"
-    dislikes = "Promotions\nSponsored posts"
-
-    def edit_preferences() -> None:
-        driver.click_point(1014, 28)
-        for y, original, draft in ((150, "Rust", likes), (300, "Promotions", dislikes)):
-            driver.click_point(640, y)
-            wait_for_rss_filter_text(driver, original, "RSS preference field receives focus")
-            first, second = draft.split("\n")
-            driver.type_text(first)
-            driver.key("Return")
-            driver.type_text(second)
-            wait_for_rss_filter_text(driver, draft, "RSS preference accepts multiline input")
-        # Switching back must preserve the first field's independent draft.
-        driver.click_point(640, 150)
-        wait_for_rss_filter_text(driver, likes, "switching fields preserves the RSS draft")
-
-    edit_preferences()
-    driver.capture("rss-filter-multiline")
-    # Escape discards both lines, even while a delayed background result arrives.
-    driver.key("Escape")
-    preferences = json.loads(config_path.read_text())["subscriptions"][0]["preferences"]
-    if (preferences["likes"], preferences["dislikes"]) != ("Rust", "Promotions"):
-        raise AcceptanceFailure("Escape saved the RSS preference draft")
-    edit_preferences()
-    driver.capture("rss-filter-save-draft")
-    driver.click_point(790, 441)
-    driver.key("Down")
-    driver.key("Down")
-    driver.key("Return")
-    driver.click_point(970, 506)
-    wait_until("multiline RSS preferences saved", lambda: all(
-        json.loads(config_path.read_text())["subscriptions"][0]["preferences"][field] == value
-        for field, value in (("likes", likes), ("dislikes", dislikes), ("alias", "reading"))
-    ))
     state_path = cache / "state.json"
+    state_path.write_text(json.dumps({"read_entry_ids": ["entry/0"], "last_read_at": "before",
+        "schedule": {"next_check": 9999999999999}}))
+    # A real local regexp filter must work without credentials, aliases, or an AI stub.
+    (driver.home / ".notrum.cfg").write_text(json.dumps({"version": 1, "locale": "en"}))
+    driver.start_app(workspace, "filters")
+    driver.click_note(1, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
+    blacklist = "promotion\nsponsored"
+    whitelist = "rust\nuseful"
+    black_y, white_y, footer_y = 225, 365, 510
+
+    def preferences() -> dict:
+        return json.loads(config_path.read_text())["subscriptions"][0]["preferences"]
+
     def state() -> dict:
         return json.loads(state_path.read_text())
-    wait_until("soft AI filter keeps ambiguous entry", lambda: state().get("entries", {}).get("entry/1", {}).get("decision") == "keep")
-    wait_until("AI hides promotion", lambda: state().get("entries", {}).get("entry/0", {}).get("decision") == "hide")
-    driver.key("j")
-    wait_until("J skips hidden entry", lambda: "entry/1" in state()["read_entry_ids"])
-    if "entry/0" in state()["read_entry_ids"]:
-        raise AcceptanceFailure("J selected a hidden entry")
-    driver.wait_for_stable_frame("filtered selection", crop=EDITOR_CROP, stable_for=0.2)
-    read_before = set(state()["read_entry_ids"])
-    driver.click_point(1054, 116)
-    wait_until("dislike persists", lambda: state()["entries"]["entry/1"].get("reaction") == "dislike")
-    if set(state()["read_entry_ids"]) != read_before:
-        raise AcceptanceFailure("reaction marked a card read")
-    # A hidden title expands inside the app while retaining its hidden state.
-    driver.click_point(440, 117)
-    driver.wait_for_stable_frame("hidden card expanded", crop=EDITOR_CROP, stable_for=0.2)
-    if state()["entries"]["entry/1"]["reaction"] != "dislike":
-        raise AcceptanceFailure("expansion removed a reaction")
-    driver.key("j")
-    wait_until("J selects the next visible entry", lambda: "entry/2" in state()["read_entry_ids"])
-    driver.click_point(1016, 116)
-    wait_until("like persists", lambda: state()["entries"]["entry/2"].get("reaction") == "like")
-    reaction_version = state()["entries"]["entry/2"]["reaction_version"]
-    driver.click_point(1016, 116)
-    driver.wait_for_stable_frame("repeated like", crop=EDITOR_CROP, stable_for=0.2)
-    if state()["entries"]["entry/2"]["reaction_version"] != reaction_version:
-        raise AcceptanceFailure("repeated reaction was not idempotent")
-    # A fresh opposite reaction completes while the popup owns an unsaved draft.
-    driver.click_point(1054, 116)
-    wait_until("opposite reaction", lambda: state()["entries"]["entry/2"].get("reaction") == "dislike")
-    driver.click_point(1014, 28)
-    driver.click_point(640, 150)
-    driver.key("ctrl+a")
-    driver.type_text("draft jk")
-    driver.key("Return")
-    driver.type_text("still here")
-    wait_until("learning completes while editing", lambda: state()["entries"]["entry/2"].get("learned_version") == state()["entries"]["entry/2"]["reaction_version"])
-    wait_for_rss_filter_text(driver, "draft jk\nstill here", "background result preserves text and focus")
-    persisted = json.loads(config_path.read_text())["subscriptions"][0]["preferences"]["likes"]
-    driver.click_note(0, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
-    driver.wait_for_stable_frame("leave feed with open popup", crop=EDITOR_CROP, stable_for=0.2)
-    driver.click_note(1, expanded_groups=("all",), categories=(), counts={"all": 2, "favorites": 0, "trash": 0})
-    driver.click_point(1014, 28)
-    driver.click_point(640, 150)
-    wait_for_rss_filter_text(driver, persisted, "returning to feed loads saved preferences")
+
+    def open_filters() -> None:
+        before = driver.wait_for_stable_frame(
+            "feed ready for filter controls", crop=EDITOR_CROP, stable_for=0.3,
+        )
+        driver.click_point(1014, 28)
+        driver.wait_for_visual_change("filter popup painted", before, crop=EDITOR_CROP)
+
+    def field(y: int, value: str) -> None:
+        driver.click_point(640, y)
+        driver.key("ctrl+a")
+        if value:
+            for i, line in enumerate(value.split("\n")):
+                if i:
+                    driver.key("Return")
+                driver.type_text(line)
+            wait_for_rss_filter_text(driver, value, "regexp field retains exact multiline text")
+        else:
+            driver.key("BackSpace")
+
+    def edit_preferences() -> None:
+        open_filters()
+        driver.capture("rss-filter-controls")
+        field(black_y, blacklist)
+        field(white_y, whitelist)
+        driver.click_point(640, black_y)
+        wait_for_rss_filter_text(driver, blacklist, "switching fields preserves independent drafts")
+
+    edit_preferences()
     driver.key("Escape")
+    if preferences()["blacklist"] != "nothingmatches":
+        raise AcceptanceFailure("Escape saved the regexp draft")
+    edit_preferences()
+    driver.click_point(785, footer_y)  # Cancel
+    if preferences()["blacklist"] != "nothingmatches":
+        raise AcceptanceFailure("Cancel saved the regexp draft")
+    edit_preferences()
+    decisions_before = state().get("entries", {})
+    driver.click_point(855, footer_y)  # Save
+    wait_until("regexp rules saved", lambda: preferences()["blacklist"] == blacklist
+               and preferences()["whitelist"] == whitelist)
+    if any(entry.get("decision") == "hide" for entry in state().get("entries", {}).values()):
+        raise AcceptanceFailure("Save applied the regexp rules")
+    for entry_id, saved in decisions_before.items():
+        if state()["entries"][entry_id].get("decision") != saved.get("decision"):
+            raise AcceptanceFailure("Save changed an existing decision")
+    open_filters()
+    read_before = state()["read_entry_ids"]
+    driver.click_point(960, footer_y)  # Save and Apply
+    wait_until("blacklist hides the read promotion", lambda:
+               state().get("entries", {}).get("entry/0", {}).get("decision") == "hide")
+    if state()["read_entry_ids"] != read_before:
+        raise AcceptanceFailure("filtering changed read marks")
+    if any(state()["entries"][entry]["decision"] != "keep" for entry in ("entry/1", "entry/2")):
+        raise AcceptanceFailure("blacklist/whitelist precedence is incorrect")
+    driver.capture("rss-filter-applied")
+    driver.key("j")
+    wait_until("J skips hidden promotion", lambda: "entry/1" in state()["read_entry_ids"])
+    driver.click_point(440, 116)
+    driver.wait_for_stable_frame("hidden title expands", crop=EDITOR_CROP, stable_for=0.2)
+    if state()["entries"]["entry/0"]["decision"] != "hide":
+        raise AcceptanceFailure("expanding a hidden article changed its filter decision")
+    driver.key("j")
+    driver.key("j")
+    wait_until("J reaches whitelist exception", lambda: "entry/2" in state()["read_entry_ids"])
+
+    open_filters()
+    field(black_y, "promotion\n[")
+    before = (config_path.read_bytes(), state_path.read_bytes())
+    driver.capture("rss-filter-invalid-line")
+    driver.click_point(960, footer_y)
+    if (config_path.read_bytes(), state_path.read_bytes()) != before:
+        raise AcceptanceFailure("invalid regexp changed persisted rules or decisions")
+    driver.key("Escape")
+    open_filters()
+    field(white_y, "")
+    driver.click_point(960, footer_y)
+    wait_until("removing whitelist hides its previous exception", lambda:
+               state()["entries"]["entry/2"]["decision"] == "hide")
+    open_filters()
+    field(black_y, "")
+    driver.click_point(960, footer_y)
+    wait_until("empty blacklist reveals all articles", lambda:
+               all(entry["decision"] == "keep" for entry in state()["entries"].values()))
+    driver.close_app()
+    driver.start_app(workspace, "filters-restored")
+    if any(entry["decision"] != "keep" for entry in state()["entries"].values()):
+        raise AcceptanceFailure("regexp decisions changed after restart")
     driver.close_app()
 
 

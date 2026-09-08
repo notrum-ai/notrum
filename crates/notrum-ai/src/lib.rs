@@ -3,7 +3,7 @@
 
 #![forbid(unsafe_code)]
 
-//! Shared AI configuration and bounded RSS generation. This crate never reads notes.
+//! Shared AI configuration and model catalogs. This crate never reads notes.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -12,8 +12,6 @@ use zeroize::Zeroizing;
 mod models;
 mod transport;
 pub use transport::{CatalogTransport, HttpsCatalogTransport};
-mod generation;
-pub use generation::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

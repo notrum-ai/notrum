@@ -85,24 +85,28 @@ Checking and refreshing use only the fixed HTTPS model catalog endpoints at
 disabled; requests have time, page, model-count, and response-size limits.
 These operations never read or transmit notes, protected bodies, or RSS articles.
 
-RSS filtering additionally permits generation at exactly
-`https://api.openai.com/v1/responses` and `https://api.anthropic.com/v1/messages`.
-These clients disable redirects and proxies, bound total request and response
-sizes to 256 KiB and time to 60 seconds, and use typed JSON results. RSS text is
-untrusted data, never an instruction source. Keys and request/response contents
-are excluded from errors and diagnostics. See the provider specifications:
-[OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
-and [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create).
+RSS filtering is entirely local. No RSS preferences or article text are sent to
+an AI provider, and filtering never reads credentials or fetches linked pages.
+Each subscription's `preferences` holds `blacklist`, `whitelist`, and a version.
+Each nonempty line is a case-insensitive Rust regular expression; input and
+compiled-expression sizes are bounded. A blacklist match hides an article only
+when the whitelist does not match.
 
-RSS subscription configuration retains each feed's `preferences` (likes,
-dislikes, alias and version). Its `state.json` retains read IDs, versioned
-reactions and automatic decisions (including keep), pending learning and
-`schedule`: iteration, next check in Unix milliseconds, pause, visit generation,
-forced-cycle permission and the classification budget used. These fields default
-in memory when absent; reading does not migrate files. Unknown fields survive
-writes. RSS mutations use a cross-process operation lock, revision checks and
-atomic replacement. Background results recheck the workspace session, feed,
-preferences, reaction, content and read state before saving.
+RSS `state.json` retains read IDs, automatic decisions (including keep), the
+preferences version used for each decision, a content fingerprint, and the
+refresh `schedule`. New and changed entries are classified on refresh. Saving
+rules alone preserves existing decisions; saving and applying recomputes every
+cached entry without changing read marks. Content fingerprints prevent a rule
+edit or application restart from silently reclassifying unchanged entries.
+An HTTP 304 response also finishes local filtering if a previous cache write
+succeeded before its updated decisions could be persisted.
+
+These fields default in memory when absent; reading does not migrate files.
+Unknown fields survive writes. Former reaction fields have no effect on
+visibility. RSS mutations use a cross-process operation lock, revision checks,
+and atomic file replacement. The worker's session gate prevents a closed
+workspace session from applying results. Preferences and state are separate
+files: a write failure is reported and can require reopening the form to retry.
 
 ### Workspace encryption
 

@@ -32,8 +32,8 @@ use notrum_frontmatter::{
 use notrum_markdown::{MarkdownEngineFactory, markdown_engine_id};
 use notrum_recovery::{RecoveryError, RecoveryKey, RecoveryRecord, RecoveryStore};
 pub use notrum_rss::{
-    AI_VISIT_LIMIT, RssCheck, RssDecision, RssEngine, RssEntry, RssFeedCache, RssPreferences,
-    RssReaction, RssReadState, RssRefreshRequest, RssRefreshResult, RssSchedule, RssSubscription,
+    RssDecision, RssEngine, RssEntry, RssFeedCache, RssFilterError, RssFilterMode, RssPreferences,
+    RssReadState, RssRefreshRequest, RssRefreshResult, RssSchedule, RssSubscription,
     RssSubscriptionSummary, execute_refresh as execute_rss_refresh,
     open_original as open_rss_original,
 };
@@ -433,7 +433,6 @@ impl WorkspaceSession {
         self.rss_engine
             .update_state(id, |state| {
                 state.schedule.visit(now);
-                state.ai_error = None;
                 Ok(())
             })
             .map_err(|e| CoreError::Workspace(e.to_string()))
@@ -447,17 +446,6 @@ impl WorkspaceSession {
     ) -> Result<(), CoreError> {
         self.rss_engine
             .save_preferences(id, expected, preferences)
-            .map_err(|e| CoreError::Workspace(e.to_string()))
-    }
-
-    pub fn react_rss(
-        &self,
-        id: &ItemId,
-        entry: &str,
-        reaction: RssReaction,
-    ) -> Result<bool, CoreError> {
-        self.rss_engine
-            .react(id, entry, reaction)
             .map_err(|e| CoreError::Workspace(e.to_string()))
     }
 
@@ -5601,7 +5589,7 @@ mod tests {
             session.rss_toolbar_actions(),
             vec![
                 ToolbarAction::Refresh,
-                ToolbarAction::AiFilters,
+                ToolbarAction::Filters,
                 ToolbarAction::Rename,
                 ToolbarAction::Categories,
                 ToolbarAction::Pin,

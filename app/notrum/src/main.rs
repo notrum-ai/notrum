@@ -1173,7 +1173,6 @@ struct AppModel {
     rss_status: BTreeMap<String, rss_service::Status>,
     rss_saves: BTreeMap<String, (u64, bool)>,
     rss_save_sequence: u64,
-    rss_pending_reactions: BTreeMap<(String, String), (u64, notrum_core::RssReaction)>,
     expanded_rss_entry: Option<String>,
     rss_refreshing: BTreeSet<String>,
     selected_rss_entry: Option<String>,
@@ -1243,7 +1242,6 @@ impl AppModel {
             rss_status: BTreeMap::new(),
             rss_saves: BTreeMap::new(),
             rss_save_sequence: 0,
-            rss_pending_reactions: BTreeMap::new(),
             expanded_rss_entry: None,
             rss_refreshing: BTreeSet::new(),
             selected_rss_entry: None,
@@ -1422,7 +1420,6 @@ impl AppModel {
                     rss_status: BTreeMap::new(),
                     rss_saves: BTreeMap::new(),
                     rss_save_sequence: 0,
-                    rss_pending_reactions: BTreeMap::new(),
                     expanded_rss_entry: None,
                     rss_refreshing: BTreeSet::new(),
                     selected_rss_entry: None,
@@ -1489,7 +1486,6 @@ impl AppModel {
                 rss_status: BTreeMap::new(),
                 rss_saves: BTreeMap::new(),
                 rss_save_sequence: 0,
-                rss_pending_reactions: BTreeMap::new(),
                 expanded_rss_entry: None,
                 rss_refreshing: BTreeSet::new(),
                 selected_rss_entry: None,
@@ -1572,50 +1568,10 @@ impl AppModel {
             .try_send(command)
             .is_err()
         {
-            self.error = Some(msg!(RssAiConflict).into());
+            self.error = Some(msg!(RssFilterConflict).into());
             return false;
         }
         true
-    }
-
-    fn rss_hidden(&self, feed: &ItemId, entry: &str, saved: bool) -> bool {
-        self.rss_pending_reactions
-            .get(&(feed.as_str().into(), entry.into()))
-            .map_or(saved, |(_, reaction)| {
-                *reaction == notrum_core::RssReaction::Dislike
-            })
-    }
-
-    fn react_rss_entry(&mut self, feed: ItemId, entry: String, reaction: notrum_core::RssReaction) {
-        let key = (feed.as_str().into(), entry.clone());
-        let current = self
-            .rss_pending_reactions
-            .get(&key)
-            .map(|(_, r)| *r)
-            .or_else(|| {
-                self.workspace
-                    .as_ref()
-                    .and_then(|w| w.rss_feed(&feed).ok())
-                    .and_then(|(_, s)| s.entries.get(&entry).and_then(|e| e.reaction))
-            });
-        if current == Some(reaction) {
-            return;
-        }
-        self.rss_save_sequence += 1;
-        let token = self.rss_save_sequence;
-        if self.rss_command(rss_service::Command::Reaction(
-            feed,
-            entry.clone(),
-            token,
-            reaction,
-        )) {
-            self.rss_pending_reactions.insert(key, (token, reaction));
-            if reaction == notrum_core::RssReaction::Dislike
-                && self.expanded_rss_entry.as_deref() == Some(&entry)
-            {
-                self.expanded_rss_entry = None;
-            }
-        }
     }
 
     fn start_rss_refresh(&mut self, item_id: ItemId) -> bool {
@@ -1637,8 +1593,6 @@ impl AppModel {
                 self.rss_refreshing = snapshot.refreshing;
                 self.rss_status = snapshot.status;
                 self.rss_saves = snapshot.saves;
-                self.rss_pending_reactions
-                    .retain(|_, (token, _)| *token > snapshot.reaction_sequence);
                 changed = true;
             }
         }
@@ -1665,11 +1619,8 @@ impl AppModel {
                     .workspace
                     .as_ref()
                     .and_then(|w| {
-                        w.selected_rss().and_then(|id| {
-                            w.rss_feed(id)
-                                .ok()
-                                .map(|(_, s)| self.rss_hidden(id, entry_id, s.hidden(entry_id)))
-                        })
+                        w.selected_rss()
+                            .and_then(|id| w.rss_feed(id).ok().map(|(_, s)| s.hidden(entry_id)))
                     })
                     .unwrap_or(false);
                 self.expanded_rss_entry = hidden.then(|| entry_id.to_owned());
@@ -1709,20 +1660,16 @@ impl AppModel {
                 };
                 indices
                     .filter_map(|i| feed.entries.get(i))
-                    .find(|entry| !self.rss_hidden(&item_id, &entry.id, state.hidden(&entry.id)))
+                    .find(|entry| !state.hidden(&entry.id))
                     .map(|e| e.id.clone())
                     .unwrap_or_default()
             }
             None => feed
                 .entries
                 .iter()
-                .filter(|e| !self.rss_hidden(&item_id, &e.id, state.hidden(&e.id)))
+                .filter(|e| !state.hidden(&e.id))
                 .find(|e| !state.read_entry_ids.contains(&e.id))
-                .or_else(|| {
-                    feed.entries
-                        .iter()
-                        .find(|e| !self.rss_hidden(&item_id, &e.id, state.hidden(&e.id)))
-                })
+                .or_else(|| feed.entries.iter().find(|e| !state.hidden(&e.id)))
                 .map(|e| e.id.clone())
                 .unwrap_or_default(),
         };
@@ -11464,7 +11411,6 @@ struct NoteFindSignals {
 struct RssCardData {
     expanded: bool,
     hidden: bool,
-    reaction: Option<notrum_core::RssReaction>,
     entry: RssEntry,
     unread: bool,
     selected: bool,
@@ -11526,7 +11472,7 @@ fn rss_subscription_summary(
 
 #[derive(Clone, Copy)]
 struct RssToolbarSignals {
-    ai_open: RwSignal<bool>,
+    filters_open: RwSignal<bool>,
     rename: ToolbarEditBar,
     categories: ToolbarEditBar,
 }
@@ -11547,8 +11493,8 @@ fn rss_toolbar_control(
         rss_subscription_summary(&state_model, &state_id)
     };
     match action {
-        ToolbarAction::AiFilters => {
-            rss_filters::control(model, item_id, revision, signals.ai_open, palette)
+        ToolbarAction::Filters => {
+            rss_filters::control(model, item_id, revision, signals.filters_open, palette)
         }
         ToolbarAction::Refresh => {
             let busy_model = model.clone();
@@ -11699,7 +11645,7 @@ fn rss_panel(
     let scroll_target = create_rw_signal(None::<Point>);
     let viewport_height = create_rw_signal(0.0_f64);
     let signals = RssToolbarSignals {
-        ai_open: create_rw_signal(false),
+        filters_open: create_rw_signal(false),
         rename: ToolbarEditBar {
             open: create_rw_signal(false),
             value: create_rw_signal(String::new()),
@@ -11810,7 +11756,6 @@ fn rss_panel(
     let entries_model = model.clone();
     let entries_id = item_id.clone();
     let card_model = model.clone();
-    let card_feed_id = item_id.clone();
     let last_revealed = Rc::new(RefCell::new(None::<String>));
     let cards = dyn_stack(
         move || {
@@ -11825,18 +11770,9 @@ fn rss_panel(
                     feed.entries
                         .into_iter()
                         .map(|entry| RssCardData {
-                            hidden: model.rss_hidden(
-                                &entries_id,
-                                &entry.id,
-                                state.hidden(&entry.id),
-                            ),
+                            hidden: state.hidden(&entry.id),
                             expanded: model.expanded_rss_entry.as_deref()
                                 == Some(entry.id.as_str()),
-                            reaction: model
-                                .rss_pending_reactions
-                                .get(&(entries_id.as_str().into(), entry.id.clone()))
-                                .map(|(_, r)| *r)
-                                .or_else(|| state.entries.get(&entry.id).and_then(|e| e.reaction)),
                             unread: !state.read_entry_ids.contains(&entry.id),
                             selected: selected == Some(entry.id.as_str()),
                             entry,
@@ -11852,7 +11788,6 @@ fn rss_panel(
                 card.selected,
                 card.hidden,
                 card.expanded,
-                card.reaction,
             )
         },
         move |card| {
@@ -11929,47 +11864,9 @@ fn rss_panel(
             } else {
                 rss_title(card.entry.title.clone(), ink).into_any()
             };
-            let buttons = [
-                notrum_core::RssReaction::Like,
-                notrum_core::RssReaction::Dislike,
-            ]
-            .into_iter()
-            .map(|reaction| {
-                let model = card_model.clone();
-                let feed_id = card_feed_id.clone();
-                let entry = card.entry.id.clone();
-                let caption = match reaction {
-                    notrum_core::RssReaction::Like => msg!(RssAiLike),
-                    notrum_core::RssReaction::Dislike => msg!(RssAiDislike),
-                };
-                icon_toggle_button(
-                    if reaction == notrum_core::RssReaction::Like {
-                        rss_filters::LIKE
-                    } else {
-                        rss_filters::DISLIKE
-                    },
-                    move || caption.to_string(),
-                    palette,
-                    move || card.reaction == Some(reaction),
-                    move || {
-                        if card.reaction != Some(reaction) {
-                            let mut model = model.borrow_mut();
-                            model.react_rss_entry(feed_id.clone(), entry.clone(), reaction);
-                            drop(model);
-                            revision.update(|r| *r += 1);
-                        }
-                    },
-                )
-                .into_any()
-            })
-            .collect::<Vec<_>>();
             let select_pointer = select_entry.clone();
             let view = v_stack((
-                h_stack((
-                    title,
-                    h_stack_from_iter(buttons).style(|s| s.gap(4.0).flex_shrink(0.0)),
-                ))
-                .style(|s| s.width_full().items_center().justify_between().gap(8.0)),
+                title,
                 h_stack((
                     label(metadata)
                         .pointer_events(|| false)
@@ -12107,8 +12004,9 @@ fn rss_panel(
     let focus_id = panel.id();
     create_effect(move |mounted: Option<()>| {
         feed_focus_request.get();
-        let editing =
-            signals.rename.open.get() || signals.categories.open.get() || signals.ai_open.get();
+        let editing = signals.rename.open.get()
+            || signals.categories.open.get()
+            || signals.filters_open.get();
         if !editing {
             if mounted.is_some() {
                 // The panel survives form closure and card replacement. Queue
@@ -12119,7 +12017,7 @@ fn rss_panel(
                 exec_after(Duration::from_millis(10), move |_| {
                     if signals.rename.open.try_get_untracked() == Some(false)
                         && signals.categories.open.try_get_untracked() == Some(false)
-                        && signals.ai_open.try_get_untracked() == Some(false)
+                        && signals.filters_open.try_get_untracked() == Some(false)
                     {
                         focus_id.request_focus();
                     }
@@ -15050,7 +14948,7 @@ enum ToolbarSubject {
 
 fn toolbar_action_icon(action: ToolbarAction) -> &'static str {
     match action {
-        ToolbarAction::AiFilters => ICON_SETTINGS,
+        ToolbarAction::Filters => ICON_SETTINGS,
         ToolbarAction::Refresh => ICON_RETRY,
         ToolbarAction::Rename => ICON_RENAME,
         ToolbarAction::Categories => ICON_TAG,
@@ -15077,7 +14975,7 @@ fn toolbar_action_is_toggle(action: ToolbarAction) -> bool {
 
 fn toolbar_action_title(action: ToolbarAction, subject: ToolbarSubject, active: bool) -> String {
     match action {
-        ToolbarAction::AiFilters => tr!(RssAiFilters),
+        ToolbarAction::Filters => tr!(RssFilters),
         ToolbarAction::Refresh => {
             if active {
                 tr!(Refreshing)
@@ -17054,7 +16952,7 @@ mod tests {
                 field_width: 100.0,
             };
             let signals = super::RssToolbarSignals {
-                ai_open: super::create_rw_signal(false),
+                filters_open: super::create_rw_signal(false),
                 rename: bar(),
                 categories: bar(),
             };
@@ -18462,16 +18360,39 @@ mod tests {
             .selected_rss()
             .unwrap()
             .clone();
-        model.react_rss_entry(
-            feed_id.clone(),
-            "second".into(),
-            notrum_core::RssReaction::Dislike,
-        );
+        let set_filter = |model: &mut AppModel, blacklist: &str| {
+            model.rss_save_sequence += 1;
+            let token = model.rss_save_sequence;
+            let expected = model
+                .workspace
+                .as_ref()
+                .unwrap()
+                .rss_preferences(&feed_id)
+                .unwrap()
+                .version;
+            assert!(model.rss_command(super::rss_service::Command::Preferences(
+                feed_id.clone(),
+                token,
+                expected,
+                notrum_core::RssPreferences {
+                    blacklist: blacklist.into(),
+                    ..Default::default()
+                },
+                true,
+            )));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while model.rss_saves.get(feed_id.as_str()) != Some(&(token, true)) {
+                assert!(std::time::Instant::now() < deadline);
+                model.poll_rss();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        set_filter(&mut model, "second");
         assert_eq!(model.selected_rss_entry.as_deref(), Some("second"));
         assert!(model.move_rss_selection(-1));
         assert_eq!(model.selected_rss_entry.as_deref(), Some("first"));
         assert!(!model.move_rss_selection(1));
-        model.react_rss_entry(feed_id, "second".into(), notrum_core::RssReaction::Like);
+        set_filter(&mut model, "");
         assert!(model.move_rss_selection(1));
 
         model.shutdown_search_worker();

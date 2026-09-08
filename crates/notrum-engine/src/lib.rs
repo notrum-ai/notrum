@@ -144,7 +144,7 @@ pub enum EngineIcon {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ToolbarAction {
-    AiFilters,
+    Filters,
     Refresh,
     Rename,
     Categories,

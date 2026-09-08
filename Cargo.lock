@@ -3792,6 +3792,7 @@ dependencies = [
  "html2text",
  "notrum-engine",
  "notrum-platform",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",

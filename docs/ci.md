@@ -146,8 +146,9 @@ The `rss_filters` scenario checks field focus through Copy and exact text values
 without sampling caret pixels or blink phases. It clears stale clipboard content
 and retries only Select All / Copy while focus settles. Distinct multiline drafts
 in both fields must survive focus changes, cancel correctly, and save together
-with the selected model alias. Filtering, reactions, and background draft
-preservation remain part of the same scenario.
+without an AI connection. The scenario distinguishes Save from Save and Apply,
+checks invalid regexp rejection, whitelist exceptions, revealing previously
+hidden entries, and navigation past hidden articles.
 
 The `rss_cards` scenario is a basic open/read smoke check with one cached article
 restored at startup. After first paint, one title click must open the expected

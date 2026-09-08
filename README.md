@@ -64,8 +64,9 @@ request. Control notification sounds for each connected mailbox.
 ### Follow what matters
 
 Read RSS and Atom feeds, or create a feed from a website that does not publish
-one. Ask AI to filter out the noise and focus your reading on what matters to
-you. Choose which feeds announce new items with a notification sound.
+one. Use local regular-expression filters to hide unwanted articles and keep
+whitelist exceptions visible. Choose which feeds announce new items with a
+notification sound.
 
 With **Watch Pages**, add a URL, view the page in Notrum, and see what changed
 between versions. Keep up with the pages you care about through their diffs.
